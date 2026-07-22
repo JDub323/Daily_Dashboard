@@ -1,0 +1,7 @@
+# secrets — never commit
+.env
+
+# personal data (changes constantly; back up separately if you care)
+state.json
+
+__pycache__/

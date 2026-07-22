@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>daily dashboard</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #131a22; --border: #2a3644;
+    --accent: #7aa2f7; --fg: #c9d4e3; --dim: rgba(201,212,227,.55); --faint: rgba(201,212,227,.32);
+    --ok: #7ece87; --bad: #e06c75;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.55 "Cascadia Code", Consolas, monospace; padding: 18px; }
+  header { display:flex; align-items:baseline; gap:14px; margin-bottom:18px; flex-wrap:wrap; }
+  header h1 { font-size: 22px; font-weight: 700; color: var(--accent); margin: 0; letter-spacing:.5px; }
+  header .sub { color: var(--dim); font-size: 12px; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; }
+  @media (max-width: 640px) { #grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+           padding: 14px 16px; overflow-wrap:anywhere; }
+  .panel h2 { margin: 0 0 10px; font-size: 15px; font-weight: 700; color: var(--accent);
+              text-transform: lowercase; letter-spacing: .8px;
+              border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  .err { color: var(--bad); opacity:.85; font-size: 12.5px; }
+  .dim { color: var(--dim); } .faint { color: var(--faint); font-size: 12px; }
+  .big { font-size: 17px; font-weight: 600; }
+  button { background: transparent; border: 1px solid var(--border); color: var(--fg);
+           font: inherit; font-size: 12.5px; padding: 3px 10px; border-radius: 5px; cursor: pointer; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  input, textarea { background: var(--bg); border: 1px solid var(--border); color: var(--fg);
+                    font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 5px; width: 100%; }
+  textarea { resize: vertical; }
+  a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+  .row { display:flex; gap:8px; align-items:center; margin: 6px 0; flex-wrap:wrap; }
+  .rating { font-size: 20px; font-weight: 700; color: var(--accent); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  /* KaTeX tuned to sit against 14px mono body */
+  .katex { font-size: 1.12em; }
+  .katex-display { margin: .7em 0; }
+  ul.clean { list-style:none; margin:6px 0; padding:0; } ul.clean li { margin: 5px 0; }
+  .tag { font-size: 11px; border:1px solid var(--border); border-radius:4px; padding:0 6px; color:var(--dim); }
+</style>
+</head><body>
+<header>
+  <h1>daily dashboard</h1>
+  <span class="sub" id="hdr-date"></span>
+  <span class="sub" id="hdr-topic"></span>
+</header>
+<div id="grid"></div>
+
+<script>
+"use strict";
+// ========================================================================
+// Framework: each panel is a self-contained object pushed into PANELS.
+// {id, title, async render(bodyEl)} — throw inside render => inline error.
+// Global STATE mirrors state.json; saveState() pushes it back to disk.
+// ========================================================================
+const PANELS = [];
+let STATE = null, CONFIG = null;
+const $ = (sel, el=document) => el.querySelector(sel);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const today = () => new Date().toISOString().slice(0,10);
+
+async function api(path, body) {
+  const r = await fetch(path, body ? {method:"POST", body: JSON.stringify(body)} : {});
+  const j = await r.json();
+  if (j && j.error) throw new Error(j.error);
+  return j;
+}
+const saveState = () => api("/api/state", STATE);
+function typeset(el) {
+  if (window.renderMathInElement) renderMathInElement(el, {delimiters: [
+    {left:"$$", right:"$$", display:true}, {left:"$", right:"$", display:false}]});
+}
+function eloUpdate(rating, oppRating, score, K=24) {
+  const exp = 1 / (1 + Math.pow(10, (oppRating - rating) / 400));
+  return Math.round(rating + K * (score - exp));
+}
+function successRate(hist, n=10) {
+  const h = hist.slice(-n);
+  return h.length ? Math.round(100 * h.filter(x => x.score > 0.5).length / h.length) : null;
+}
+function sparkline(vals, w=120, h=28) {
+  if (vals.length < 2) return "";
+  const min = Math.min(...vals), max = Math.max(...vals), r = max - min || 1;
+  const pts = vals.map((v,i) => `${(i/(vals.length-1)*w).toFixed(1)},${(h-2-(v-min)/r*(h-4)).toFixed(1)}`).join(" ");
+  const up = vals[vals.length-1] >= vals[0];
+  return `<svg width="${w}" height="${h}"><polyline points="${pts}" fill="none"
+          stroke="${up ? "var(--ok)" : "var(--bad)"}" stroke-width="1.5"/></svg>`;
+}
+
+// ======================================================== math panel ====
+PANELS.push({ id: "math", title: "math · " + "problem of the day", async render(el) {
+  const m = STATE.math;
+  const rate = successRate(m.history);
+  const head = `<div class="row"><span class="rating">${m.rating}</span>
+    <span class="faint">elo${rate !== null ? ` · ${rate}% last ${Math.min(m.history.length,10)}` : ""}</span></div>`;
+  if (!m.current || m.current.date !== today() || m.current.done) {
+    if (m.current && !m.current.done && m.current.date !== today()) m.current = null; // stale, unfinished
+    el.innerHTML = head + `<button id="new">get today's problem</button>
+      <div class="faint">topic: ${esc(CONFIG.topic)} · problems.json is hand-editable</div>`;
+    if (m.current && m.current.done) el.innerHTML = head +
+      `<div class="ok">done for today ✓ (${esc(m.current.source)})</div>`;
+    const btn = $("#new", el);
+    if (btn) btn.onclick = async () => {
+      btn.textContent = "asking the llm…"; btn.disabled = true;
+      m.current = await api("/api/math/new", {});
+      STATE.math = (await api("/api/state")).math;   // server saved seen-list
+      this.render(el);
+    };
+    return;
+  }
+  const p = m.current;
+  const hints = [
+    `<a href="${esc(p.textbook.url)}" target="_blank">${esc(p.textbook.title)}</a> · theorems: ` +
+      p.theorems.map(t => `<a href="${esc(t.url)}" target="_blank">${esc(t.name)}</a>`).join(", "),
+    esc(p.hint1), esc(p.hint2), esc(p.hint3)];
+  el.innerHTML = head +
+    `<div class="faint">${esc(p.source)} · tier ${esc(p.tier)} (${p.anchor})</div>
+     <div id="stmt" style="margin:8px 0">${p.statement}</div>
+     <div id="hints"></div>
+     <div class="row">
+       <button id="hint">hint ${p.hints_revealed}/4</button>
+       <button id="solved" class="ok">solved</button>
+       <button id="failed" class="bad">couldn't solve</button>
+     </div><div id="ans"></div>`;
+  const hintsEl = $("#hints", el);
+  for (let i = 0; i < p.hints_revealed; i++)
+    hintsEl.innerHTML += `<div class="dim">▸ ${hints[i]}</div>`;
+  typeset(el);
+  $("#hint", el).onclick = () => {
+    if (p.hints_revealed < 4) { p.hints_revealed++; saveState(); this.render(el); }
+  };
+  const finish = score => {
+    m.rating = eloUpdate(m.rating, p.anchor, score);
+    m.history.push({date: p.date, source: p.source, score, hints: p.hints_revealed});
+    p.done = true; saveState();
+    $("#ans", el).innerHTML = `<div style="margin-top:8px">answer: ${p.answer}
+      <span class="faint">→ rating ${m.rating}</span></div>`;
+    typeset($("#ans", el));
+  };
+  $("#solved", el).onclick = () => finish(Math.max(0.25, 1 - 0.15 * p.hints_revealed));
+  $("#failed", el).onclick = () => finish(0);
+}});
+
+// ======================================================= chess panel ====
+PANELS.push({ id: "chess", title: "chess puzzle", async render(el) {
+  const c = STATE.chess;
+  const rate = successRate(c.history);
+  const head = `<div class="row"><span class="rating">${c.rating}</span>
+    <span class="faint">elo${rate !== null ? ` · ${rate}% last ${Math.min(c.history.length,10)}` : ""}</span></div>`;
+  if (!c.current || c.current.date !== today() || c.current.done) {
+    el.innerHTML = head + (c.current?.done && c.current.date === today()
+      ? `<div class="ok">done for today ✓</div>`
+      : `<button id="new">get puzzle near ${c.rating}</button>`);
+    const btn = $("#new", el);
+    if (btn) btn.onclick = async () => {
+      const p = await api("/api/chess/puzzle");
+      c.current = {...p, date: today(), done: false}; await saveState(); this.render(el);
+    };
+    return;
+  }
+  const p = c.current;
+  el.innerHTML = head +
+    `<div>puzzle <a href="${esc(p.url)}" target="_blank">${esc(p.id)}</a>
+       <span class="tag">rated ${p.rating}</span></div>
+     <div class="faint">${p.themes.map(esc).join(" · ")}</div>
+     <div class="faint" style="margin:6px 0">solve it on lichess, then report honestly:</div>
+     <div class="row">
+       <button id="win" class="ok">solved clean</button>
+       <button id="messy">solved w/ mistakes</button>
+       <button id="loss" class="bad">failed</button>
+     </div>`;
+  const finish = score => {
+    c.rating = eloUpdate(c.rating, p.rating, score);
+    c.history.push({date: p.date, id: p.id, opp: p.rating, score});
+    p.done = true; saveState(); this.render(el);
+  };
+  $("#win", el).onclick = () => finish(1);
+  $("#messy", el).onclick = () => finish(0.5);
+  $("#loss", el).onclick = () => finish(0);
+}});
+
+// ==================================================== calendar panel ====
+PANELS.push({ id: "cal", title: "calendar", async render(el) {
+  el.innerHTML = `<div class="faint">loading gcalcli via wsl…</div>`;
+  const addBox = `<div class="row"><input id="q" placeholder='quick add: "essay due Fri 5pm"'>
+    <button id="add">add</button></div><div id="addmsg" class="faint"></div>`;
+  try {
+    const c = await api("/api/calendar");
+    const fmt = ev => `<li><span class="dim">${esc(ev.start || "all day")}</span> ${esc(ev.title)}</li>`;
+    el.innerHTML =
+      `<div class="big">today</div><ul class="clean">${c.today.map(fmt).join("") || "<li class='faint'>nothing scheduled</li>"}</ul>
+       <div class="big">this week</div><ul class="clean">${
+         c.week.map(ev => `<li><span class="dim">${esc(ev.date)}</span> ${esc(ev.title)}</li>`).join("") || "<li class='faint'>clear</li>"
+       }</ul>` + addBox;
+  } catch (e) {
+    el.innerHTML = `<div class="err">calendar: ${esc(e.message)}</div>` + addBox;
+  }
+  $("#add", el).onclick = async () => {
+    const q = $("#q", el).value.trim(); if (!q) return;
+    $("#addmsg", el).textContent = "adding…";
+    try { await api("/api/calendar/add", {text: q}); this.render(el); }
+    catch (e) { $("#addmsg", el).textContent = "failed: " + e.message; }
+  };
+}});
+
+// ======================================================== news panel ====
+PANELS.push({ id: "news", title: "headlines", async render(el) {
+  el.innerHTML = `<div class="faint">fetching feeds…</div>`;
+  const items = await api("/api/news");
+  el.innerHTML = `<ul class="clean">` + items.map(i =>
+    `<li><span class="tag">${esc(i.cat)}</span> <a href="${esc(i.link)}" target="_blank">${esc(i.title)}</a></li>`
+  ).join("") + `</ul>`;
+}});
+
+// ===================================================== markets panel ====
+PANELS.push({ id: "mkt", title: "markets", async render(el) {
+  el.innerHTML = `<div class="faint">fetching quotes…</div>`;
+  const rows = await api("/api/markets");
+  el.innerHTML = rows.map(r => r.error
+    ? `<div class="row"><b>${esc(r.ticker)}</b> <span class="err">${esc(r.error)}</span></div>`
+    : `<div class="row" style="justify-content:space-between">
+         <span><b>${esc(r.ticker)}</b> <span class="big">${r.price.toFixed(2)}</span>
+         <span class="${r.change_pct >= 0 ? "ok" : "bad"}">${r.change_pct >= 0 ? "+" : ""}${r.change_pct}%</span></span>
+         ${sparkline(r.spark)}</div>`).join("");
+}});
+
+// ==================================================== word of the day ====
+PANELS.push({ id: "word", title: "word of the day", async render(el) {
+  const w = STATE.word.byDate[today()] ||= {};
+  if (!w.word) {
+    el.innerHTML = `<button id="get">get today's word</button>`;
+    $("#get", el).onclick = async () => {
+      Object.assign(w, await api("/api/word/today", {})); await saveState(); this.render(el);
+    };
+    return;
+  }
+  if (w.result) {
+    el.innerHTML = `<div class="big">${esc(w.word)}</div><div class="dim">${esc(w.definition)}</div>
+      <div class="${w.result.distinct ? "ok" : "bad"}" style="margin-top:6px">${esc(w.result.verdict)}</div>
+      <ul class="clean">${w.result.per_sentence.map((r,i) =>
+        `<li><span class="${r.ok ? "ok" : "bad"}">${r.ok ? "✓" : "✗"}</span> ${esc(w.sentences[i])} <span class="faint">${esc(r.note)}</span></li>`).join("")}</ul>`;
+    return;
+  }
+  el.innerHTML = `<div class="big">${esc(w.word)} <span class="faint">${esc(w.pos)}</span></div>
+    <div class="dim">${esc(w.definition)}</div>
+    <div class="faint" style="margin:6px 0">five semantically distinct sentences:</div>` +
+    [0,1,2,3,4].map(i => `<input class="s" style="margin:3px 0" value="${esc(w.sentences?.[i] || "")}">`).join("") +
+    `<div class="row"><button id="check">check</button><span id="msg" class="faint"></span></div>`;
+  el.querySelectorAll(".s").forEach((inp,i) => inp.onchange = () => {
+    (w.sentences ||= ["","","","",""])[i] = inp.value; saveState();
+  });
+  $("#check", el).onclick = async () => {
+    const s = [...el.querySelectorAll(".s")].map(i => i.value.trim());
+    if (s.some(x => !x)) { $("#msg", el).textContent = "need all five"; return; }
+    $("#msg", el).textContent = "judging…";
+    w.sentences = s; w.result = await api("/api/word/check", {word: w.word, sentences: s});
+    await saveState(); this.render(el);
+  };
+}});
+
+// ================================================ wordle + pokedoku ====
+PANELS.push({ id: "games", title: "wordle / pokedoku", async render(el) {
+  const g = STATE.games;
+  const streak = list => {  // consecutive days ending today/yesterday
+    const days = new Set(list.map(e => e.date)); let n = 0;
+    for (let d = new Date(); ; d.setDate(d.getDate()-1)) {
+      const k = d.toISOString().slice(0,10);
+      if (days.has(k)) n++; else if (k !== today()) break;
+      if (!days.has(k) && k !== today()) break;
+    }
+    return n;
+  };
+  const wAvg = g.wordle.filter(e => e.guesses).map(e => e.guesses);
+  el.innerHTML =
+    `<div class="row"><span class="big">wordle</span> <span class="faint">streak ${streak(g.wordle)}
+       · avg ${wAvg.length ? (wAvg.reduce((a,b)=>a+b,0)/wAvg.length).toFixed(2) : "—"} · ${g.wordle.length} logged</span></div>
+     <div class="row"><span class="big">pokedoku</span> <span class="faint">streak ${streak(g.pokedoku)}
+       · ${g.pokedoku.length} logged</span></div>
+     <textarea id="paste" rows="3" placeholder="paste a share string"></textarea>
+     <div class="row"><button id="log">parse & log</button><span id="msg" class="faint"></span></div>`;
+  $("#log", el).onclick = async () => {
+    const t = $("#paste", el).value, msg = $("#msg", el);
+    let m;
+    if ((m = t.match(/Wordle\s+([\d,]+)\s+(X|\d)\/6/i))) {
+      g.wordle.push({date: today(), n: m[1], guesses: m[2] === "X" ? null : +m[2], won: m[2] !== "X"});
+      msg.textContent = `wordle #${m[1]} logged`;
+    } else if (/pokedoku/i.test(t)) {
+      const hits = (t.match(/🟩|✅/g) || []).length;
+      const score = (t.match(/score[:\s]+(\d+)/i) || [])[1];
+      g.pokedoku.push({date: today(), correct: hits, score: score ? +score : null});
+      msg.textContent = `pokedoku logged (${hits}/9${score ? ", score " + score : ""})`;
+    } else { msg.textContent = "couldn't parse that"; return; }
+    await saveState(); this.render(el);
+  };
+}});
+
+// =============================================== theorem recall card ====
+PANELS.push({ id: "thm", title: "theorem recall", async render(el) {
+  const T = STATE.theorems;
+  const due = T.cards.filter(c => c.due <= today()).sort((a,b) => a.due < b.due ? -1 : 1);
+  const newBtn = `<div class="row"><button id="new">+ card from this week's topic</button></div>`;
+  if (!due.length) {
+    el.innerHTML = `<div class="faint">no cards due · ${T.cards.length} in deck</div>` + newBtn;
+  } else {
+    const c = due[0];
+    el.innerHTML = `<div class="big">${esc(c.name)}</div><div class="faint">${esc(c.topic)} · try to recall it, then reveal</div>
+      <div class="row"><button id="reveal">reveal</button></div><div id="body"></div>` + newBtn;
+    $("#reveal", el).onclick = () => {
+      $("#body", el).innerHTML = `<div style="margin:8px 0">${c.statement}</div>
+        <div class="row">${[1,2,3,4].map(q =>
+          `<button class="g" data-q="${q}">${["blank","hard","good","easy"][q-1]}</button>`).join("")}</div>`;
+      typeset($("#body", el));
+      el.querySelectorAll(".g").forEach(b => b.onclick = () => {
+        const q = +b.dataset.q;   // SM-2-lite
+        c.ease = Math.max(1.3, (c.ease || 2.5) + (q - 3) * 0.15);
+        c.interval = q === 1 ? 1 : Math.round((c.interval || 1) * (q === 2 ? 1.2 : c.ease));
+        const d = new Date(); d.setDate(d.getDate() + c.interval);
+        c.due = d.toISOString().slice(0,10);
+        saveState(); this.render(el);
+      });
+    };
+  }
+  $("#new", el).onclick = async () => {
+    const card = await api("/api/theorem/new", {});
+    T.cards.push({...card, due: today(), interval: 1, ease: 2.5});
+    await saveState(); this.render(el);
+  };
+}});
+
+// ========================================================== day log ====
+PANELS.push({ id: "log", title: "day log", async render(el) {
+  const ago = n => { const d = new Date(); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); };
+  const echo = [[7, "a week ago"], [30, "a month ago"]]
+    .map(([n, lbl]) => STATE.daylog[ago(n)] ? `<div class="faint">${lbl}: ${esc(STATE.daylog[ago(n)])}</div>` : "")
+    .join("");
+  el.innerHTML = echo +
+    `<input id="line" placeholder="one line about today" value="${esc(STATE.daylog[today()] || "")}">
+     <div class="faint" id="msg" style="margin-top:4px">${STATE.daylog[today()] ? "saved ✓" : ""}</div>`;
+  $("#line", el).onchange = async e => {
+    STATE.daylog[today()] = e.target.value; await saveState();
+    $("#msg", el).textContent = "saved ✓";
+  };
+}});
+
+// ===================================================== paper of day ====
+PANELS.push({ id: "paper", title: "ai paper of the day", async render(el) {
+  const P = STATE.papers;
+  // yesterday's unmarked paper auto-queues
+  if (P.current && P.current.date !== today() && !P.current.marked) {
+    P.queue.push({title: P.current.title, link: P.current.link, added: P.current.date});
+    P.current = null; await saveState();
+  }
+  if (!P.current || P.current.date !== today()) {
+    el.innerHTML = `<div class="faint">fetching arXiv…</div>`;
+    const p = await api("/api/paper");
+    P.current = {...p, date: today(), marked: false}; await saveState();
+  }
+  const p = P.current;
+  el.innerHTML =
+    `<div class="tag">${p.fresh ? "new — " + esc(p.published) : "new-ish — " + esc(p.published)}</div>
+     <div class="big" style="margin:6px 0"><a href="${esc(p.link)}" target="_blank">${esc(p.title)}</a></div>
+     <div class="dim" style="font-size:12.5px">${esc(p.summary)}…</div>
+     <div class="row" style="margin-top:8px">${p.marked
+       ? `<span class="ok">marked: ${esc(p.marked)}</span>`
+       : `<button id="read">read it</button><button id="queue">→ queue</button><button id="skip">skip</button>`}</div>`;
+  const mark = async v => {
+    p.marked = v;
+    if (v === "queued") P.queue.push({title: p.title, link: p.link, added: today()});
+    await saveState(); this.render(el); PANELS.find(x => x.id === "queue").refresh?.();
+  };
+  if (!p.marked) {
+    $("#read", el).onclick = () => mark("read");
+    $("#queue", el).onclick = () => mark("queued");
+    $("#skip", el).onclick = () => mark("skipped");
+  }
+}});
+
+// ==================================================== reading queue ====
+PANELS.push({ id: "queue", title: "reading queue", async render(el) {
+  this.refresh = () => this.render(el);
+  const Q = STATE.papers.queue;
+  const item = (q, i) =>
+    `<li><span class="faint">${i+1}.</span> <a href="${esc(q.link)}" target="_blank">${esc(q.title)}</a>
+       <span class="row" style="display:inline-flex;gap:4px;margin:0">
+         <button data-a="up" data-i="${i}">↑</button><button data-a="down" data-i="${i}">↓</button>
+         <button data-a="read" data-i="${i}" class="ok">read</button>
+         <button data-a="drop" data-i="${i}" class="bad">×</button></span></li>`;
+  const done = STATE.papers.archive.length;
+  el.innerHTML = `<ul class="clean">${Q.map(item).join("") || "<li class='faint'>queue empty</li>"}</ul>
+    <div class="row"><input id="url" placeholder="paste a link to queue it"><button id="add">add</button></div>
+    <div class="faint">${done} cleared</div>`;
+  el.querySelectorAll("button[data-a]").forEach(b => b.onclick = async () => {
+    const i = +b.dataset.i, a = b.dataset.a;
+    if (a === "up" && i > 0) [Q[i-1], Q[i]] = [Q[i], Q[i-1]];
+    if (a === "down" && i < Q.length-1) [Q[i+1], Q[i]] = [Q[i], Q[i+1]];
+    if (a === "read") STATE.papers.archive.push({...Q.splice(i,1)[0], cleared: today()});
+    if (a === "drop") Q.splice(i,1);
+    await saveState(); this.render(el);
+  });
+  $("#add", el).onclick = async () => {
+    const u = $("#url", el).value.trim(); if (!u) return;
+    Q.push({title: u.replace(/^https?:\/\//,""), link: u, added: today()});
+    await saveState(); this.render(el);
+  };
+}});
+
+// ========================================================= bootstrap ====
+async function boot() {
+  $("#hdr-date").textContent = new Date().toDateString();
+  try { CONFIG = await api("/api/config"); $("#hdr-topic").textContent = "topic: " + CONFIG.topic; }
+  catch { CONFIG = {topic: "?", tickers: []}; }
+  STATE = await api("/api/state");
+  const grid = $("#grid");
+  for (const p of PANELS) {
+    const card = document.createElement("section");
+    card.className = "panel"; card.id = "panel-" + p.id;
+    card.innerHTML = `<h2>${p.title}</h2><div class="body"></div>`;
+    grid.appendChild(card);
+    p.render($(".body", card)).catch(e =>
+      $(".body", card).innerHTML = `<div class="err">${esc(e.message)}</div>`);
+  }
+}
+window.addEventListener("DOMContentLoaded", boot);
+</script>
+</body></html>
