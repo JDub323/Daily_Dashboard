@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ============================================================================
 # CONFIG — edit everything here
 # ============================================================================
-PORT = 8501
+PORT = int(os.environ.get("PORT") or 8502)
 TOPIC_OF_WEEK = "generating functions"          # weekly math topic
 TICKERS = ["^SPX", "AAPL", "MSFT", "NVDA"]      # markets panel
 LLM_MODEL = "claude-sonnet-5"
@@ -78,7 +78,7 @@ def http_get(url, headers=None, timeout=15):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read().decode("utf-8", "replace")
 
-def llm(system, user, max_tokens=2500):
+def llm(system, user, max_tokens=8000):
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         raise RuntimeError("ANTHROPIC_API_KEY missing from .env")
@@ -88,14 +88,23 @@ def llm(system, user, max_tokens=2500):
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body,
         headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                  "content-type": "application/json"})
-    with urllib.request.urlopen(req, timeout=90) as r:
+    with urllib.request.urlopen(req, timeout=240) as r:
         out = json.load(r)
-    return out["content"][0]["text"]
+    # content may lead with non-text blocks (e.g. thinking) — take the text one
+    txt = "".join(b.get("text", "") for b in out["content"] if b.get("type") == "text")
+    if not txt:
+        raise RuntimeError(f"LLM returned no text (stop_reason={out.get('stop_reason')})")
+    return txt
 
 def llm_json(system, user, **kw):
     txt = llm(system, user, **kw)
     m = re.search(r"\{.*\}|\[.*\]", txt, re.S)
-    return json.loads(m.group(0) if m else txt)
+    raw = m.group(0) if m else txt
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # LaTeX in responses often has singly-escaped backslashes — repair
+        return json.loads(re.sub(r'\\(?![\\"/bfnrtu])', r"\\\\", raw))
 
 def proxify(link):
     if any(d in link for d in PAYWALLED):
@@ -125,12 +134,15 @@ def get_news():
 def get_markets():
     out = []
     for t in TICKERS:
-        sym = t.lower() if t.startswith("^") else t.lower() + ".us"
+        sym = "^GSPC" if t == "^SPX" else t  # yahoo's S&P symbol
         try:
-            rows = list(csv.DictReader(io.StringIO(
-                http_get(f"https://stooq.com/q/d/l/?s={urllib.parse.quote(sym)}&i=d"))))
-            closes = [float(r["Close"]) for r in rows[-30:] if r.get("Close")]
-            last, prev = closes[-1], closes[-2]
+            d = json.loads(http_get(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(sym)}"
+                "?range=1mo&interval=1d", headers={"User-Agent": "Mozilla/5.0"}))
+            res = d["chart"]["result"][0]
+            closes = [c for c in res["indicators"]["quote"][0]["close"] if c is not None][-30:]
+            last = res["meta"].get("regularMarketPrice", closes[-1])
+            prev = res["meta"].get("regularMarketPreviousClose", closes[-2])
             out.append({"ticker": t, "price": last,
                         "change_pct": round((last - prev) / prev * 100, 2),
                         "spark": closes})
@@ -140,7 +152,9 @@ def get_markets():
 
 def wsl_gcalcli(args):
     cmd = "gcalcli --nocolor " + args
-    r = subprocess.run(["wsl", "-e", "bash", "-lc", cmd],
+    # server may run on Windows (shell through wsl) or inside WSL (call directly)
+    prefix = ["wsl", "-e"] if os.name == "nt" else []
+    r = subprocess.run(prefix + ["bash", "-lc", cmd],
                        capture_output=True, text=True, timeout=45)
     if r.returncode != 0:
         raise RuntimeError((r.stderr or r.stdout).strip()[:300] or "gcalcli failed")
@@ -155,6 +169,8 @@ def get_calendar():
         ev = []
         for line in tsv.strip().splitlines():
             p = line.split("\t")
+            if p and p[0] == "start_date":  # gcalcli tsv header row
+                continue
             if len(p) >= 5:
                 ev.append({"date": p[0], "start": p[1], "end": p[3], "title": p[4]})
         return ev
@@ -162,8 +178,9 @@ def get_calendar():
 
 def get_chess_puzzle(rating):
     # anonymous /api/puzzle/next difficulty is relative to ~1500
-    diff = ("easiest" if rating < 1250 else "easier" if rating < 1450 else
-            "normal" if rating < 1650 else "harder" if rating < 1850 else "hardest")
+    # anonymous difficulties are offsets from ~1500: easiest -600 … hardest +600
+    diff = ("easiest" if rating < 1050 else "easier" if rating < 1350 else
+            "normal" if rating < 1650 else "harder" if rating < 1950 else "hardest")
     d = json.loads(http_get(f"https://lichess.org/api/puzzle/next?difficulty={diff}"))
     p = d["puzzle"]
     return {"id": p["id"], "rating": p["rating"], "themes": p.get("themes", []),
@@ -301,7 +318,13 @@ def main():
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     url = f"http://localhost:{PORT}"
     print(f"Daily Dashboard → {url}   (Ctrl+C to stop)")
-    threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    def open_tab():
+        if os.name != "nt" and os.path.exists("/mnt/c/Windows/System32/cmd.exe"):
+            subprocess.run(["/mnt/c/Windows/System32/cmd.exe", "/c", "start", url],
+                           cwd="/mnt/c", capture_output=True)
+        else:
+            webbrowser.open(url)
+    threading.Timer(0.6, open_tab).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

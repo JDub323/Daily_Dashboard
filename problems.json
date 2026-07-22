@@ -1,1 +1,32 @@
-[]
+[
+  {
+    "source": "AIME 1993 Problem 9",
+    "tier": "aime-late",
+    "statement": "Let $n$ be the number of ordered quadruples $(x_1,x_2,x_3,x_4)$ of positive odd integers that satisfy $\\sum_{i=1}^4 x_i = 98$. Find $\\dfrac{n}{100}$.",
+    "answer": "196",
+    "hint1": "Use a generating function per variable",
+    "hint2": "Each $x_i$ contributes factor $x+x^3+x^5+\\cdots = \\dfrac{x}{1-x^2}$; you need the coefficient of $x^{98}$ in $\\left(\\dfrac{x}{1-x^2}\\right)^4$.",
+    "hint3": "Substitute $x_i = 2y_i-1$ with $y_i\\ge1$ to turn the condition into $\\sum y_i = 51$, then use stars and bars: $n=\\binom{50}{3}$.",
+    "textbook": {
+      "title": "generatingfunctionology (Wilf) - Chapter 1: Generating functions for combinatorial problems",
+      "url": "https://www2.math.upenn.edu/~wilf/gfologyLinked2.pdf"
+    },
+    "theorems": [
+      {
+        "name": "Stars and Bars Theorem",
+        "url": "https://en.wikipedia.org/wiki/Stars_and_bars_(combinatorics)"
+      },
+      {
+        "name": "Generating Function for Compositions",
+        "url": "https://en.wikipedia.org/wiki/Generating_function#Ordinary_generating_function"
+      },
+      {
+        "name": "Coefficient Extraction via Cauchy Product",
+        "url": "https://en.wikipedia.org/wiki/Cauchy_product"
+      }
+    ],
+    "anchor": 1500,
+    "date": "2026-07-23",
+    "hints_revealed": 0
+  }
+]
