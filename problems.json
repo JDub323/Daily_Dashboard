@@ -28,5 +28,31 @@
     "anchor": 1500,
     "date": "2026-07-23",
     "hints_revealed": 0
+  },
+  {
+    "source": "USAMO 1988 Problem 5",
+    "tier": "olympiad-hard",
+    "statement": "Let $p(x)$ be the polynomial $(1-x)^a(1-x^2)^b(1-x^3)^c\\cdots(1-x^{32})^k$, where $a, b, c, \\ldots, k$ are integers. When expanded in powers of $x$, the coefficient of $x^1$ is $-2$ and the coefficients of $x^2, x^3, \\ldots, x^{32}$ are all zero. Find $k$.",
+    "answer": "$k = 2^{27} - 2^{11} = 134215680$",
+    "hint1": "Consider $p(x)p(-x)$.",
+    "hint2": "Multiplying by the negated version doubles even-indexed exponents and kills odd terms, letting you square the generating function repeatedly.",
+    "hint3": "Iterate: form $q(x^2)=p(x)p(-x)$, then $r(x^4)=q(x^2)q(-x^2)$, and so on up to a function in $x^{16}$; tracking the leading correction term through each squaring forces the exponent to be $2^{16}$, and matching the vanishing $x^{32}$ coefficient (a binomial coefficient $\\binom{2^{16}}{2}$ split among $16k$) pins down $k$.",
+    "verified_url": "https://artofproblemsolving.com/wiki/index.php/1988_USAMO_Problems/Problem_5",
+    "anchor": 1900,
+    "date": "2026-07-24",
+    "hints_revealed": 0
+  },
+  {
+    "source": "IMO 1987 Problem 1",
+    "tier": "olympiad-easy",
+    "statement": "Let $p_n(k)$ be the number of permutations of the set $\\{1, 2, \\ldots, n\\}$, $n \\ge 1$, which have exactly $k$ fixed points. Prove that $$\\sum_{k=0}^{n} k \\cdot p_n(k) = n!.$$",
+    "answer": "The identity holds; using $p_n(k) = \\binom{n}{k} D_{n-k}$ (with $D_m$ the number of derangements of $m$ elements) and the derangement exponential generating function $\\sum_{m\\ge 0} D_m x^m/m! = e^{-x}/(1-x)$, one shows $\\sum_{k=0}^n k\\,p_n(k) = n!$.",
+    "hint1": "Count fixed-point pairs directly.",
+    "hint2": "Rewrite the sum as counting pairs $(i,\\sigma)$ with $\\sigma(i)=i$, then use $p_n(k)=\\binom{n}{k}D_{n-k}$.",
+    "hint3": "Consider the exponential generating function $F(x,t)=\\sum_n\\sum_k p_n(k)x^k t^n/n! = e^{xt}/(1-t)$ (built from choosing which points are fixed via $e^{xt}$ and derangement EGF $e^{-t}/(1-t)$ for the rest). Differentiate with respect to $x$ and set $x=1$ to extract $\\sum_k k\\,p_n(k)$ and show it equals $n!$.",
+    "verified_url": "https://artofproblemsolving.com/wiki/index.php/1987_IMO_Problems/Problem_1",
+    "anchor": 1650,
+    "date": "2026-07-25",
+    "hints_revealed": 0
   }
 ]

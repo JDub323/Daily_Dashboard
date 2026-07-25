@@ -3,5 +3,6 @@
 
 # personal data (changes constantly; back up separately if you care)
 state.json
+metrics.jsonl
 
 __pycache__/
