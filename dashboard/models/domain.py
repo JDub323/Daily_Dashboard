@@ -1,0 +1,275 @@
+"""Persisted models. Each of these becomes a SQLite table.
+
+Column vs. JSON rule: real columns for anything filtered, sorted, or
+aggregated; JSON for validated leaf blobs that are only ever rendered whole
+(`grid`, `per_sentence`, `themes`, `hints`).
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+
+from pydantic import Field, computed_field
+
+from .common import (
+    Base,
+    ChessStatus,
+    HealthMetric,
+    MathStatus,
+    PaperStatus,
+    Provenance,
+    Rating,
+    ReviewQuality,
+    Score,
+    Track,
+    Url,
+)
+
+# --- ratings ---------------------------------------------------------------
+
+
+class RatingEvent(Base):
+    """One elo-affecting result, append-only, both tracks.
+
+    There is deliberately no `rating` column anywhere else in the schema. The
+    current rating is derived -- the last measured `rating_after`, or the seed
+    from config if there is none. In state.json, `math.rating` and
+    `math.history[-1].rating` were two independent sources of truth that could
+    (and did) disagree.
+
+    Storing `rating_before`, `rating_after` and the `k` actually applied makes
+    every row self-auditing: the arithmetic can be re-checked years later even
+    if the config that produced it has changed.
+    """
+
+    id: int | None = None
+    track: Track
+    date: dt.date
+    """Local calendar day, supplied by the browser -- see api.DateBody."""
+
+    ref: str
+    """math: the problem source string. chess: the lichess puzzle id."""
+
+    opponent: Rating
+    """math: the tier anchor. chess: the puzzle rating. Frozen at write time
+    so a later config edit cannot retroactively rewrite history."""
+
+    score: Score
+    k: int = Field(ge=1)
+
+    rating_before: Rating | None = None
+    rating_after: Rating | None = None
+    """NULL exactly when provenance is `reconstructed`."""
+
+    provenance: Provenance = Provenance.measured
+
+    @computed_field
+    @property
+    def delta(self) -> int | None:
+        if self.rating_before is None or self.rating_after is None:
+            return None
+        return self.rating_after - self.rating_before
+
+
+# --- math ------------------------------------------------------------------
+
+
+class MathProblem(Base):
+    """Immutable generated content. Separate from the attempt at it."""
+
+    id: int | None = None
+
+    source: str = Field(min_length=3)
+    """UNIQUE. Replaces the unbounded `math.seen` list -- "already served"
+    is now `SELECT source FROM math_problem`."""
+
+    tier: str
+    """Left as a plain str rather than an enum precisely because the tier
+    anchors are moving to config.toml; an enum would freeze in code the one
+    thing being moved out of it. Validated against loaded config at the
+    boundary."""
+
+    anchor: Rating
+    statement: str
+    answer: str
+
+    hints: list[str] = Field(min_length=3, max_length=3)
+    """Was hint1/hint2/hint3. The client immediately built an array anyway.
+    These are the three real hints; the topic/textbook links are not hints and
+    are not counted here."""
+
+    verified_url: Url | None = None
+    model: str
+    generated_at: dt.datetime
+
+
+class MathAttempt(Base):
+    date: dt.date
+    """PK -- one problem per day."""
+
+    problem_id: int
+    hints_revealed: int = Field(ge=0, le=3, default=0)
+    status: MathStatus = MathStatus.open
+    score: Score | None = None
+    """NULL while open. Derived server-side from status + hints_revealed."""
+
+
+# --- chess -----------------------------------------------------------------
+
+
+class ChessPuzzle(Base):
+    """What survives deleting the inline board: enough to link out, plus the
+    rating, which is still the elo opponent."""
+
+    id: str = Field(pattern=r"^[A-Za-z0-9]{4,8}$")
+    rating: Rating
+    themes: list[str] = Field(default_factory=list)
+    url: Url
+
+
+class ChessAttempt(Base):
+    date: dt.date
+    puzzle_id: str
+    status: ChessStatus = ChessStatus.open
+    score: Score | None = None
+    """Self-reported via the three buttons; `mistakes` and `hints` were
+    derived from board interaction and left the schema with it."""
+
+
+# --- word ------------------------------------------------------------------
+
+
+class SentenceGrade(Base):
+    ok: bool
+    note: str
+
+
+class WordGrade(Base):
+    distinct: bool
+    verdict: str
+    per_sentence: list[SentenceGrade] = Field(min_length=5, max_length=5)
+
+
+class WordOfDay(Base):
+    date: dt.date
+    word: str
+    pos: str
+    definition: str
+    sentences: list[str] = Field(default_factory=list, max_length=5)
+    grade: WordGrade | None = None
+
+
+# --- games -----------------------------------------------------------------
+
+
+class WordleResult(Base):
+    date: dt.date
+
+    puzzle_no: int | None = Field(default=None, ge=1)
+    """Normalised to an int on parse. state.json stored "1,861" as a string."""
+
+    guesses: int | None = Field(default=None, ge=1, le=6)
+    """NULL means lost (the X/6 case)."""
+
+    won: bool
+    grid: list[str] = Field(default_factory=list, max_length=6)
+
+
+class PokedokuResult(Base):
+    date: dt.date
+    correct: int = Field(ge=0, le=9)
+    score: int | None = Field(default=None, ge=0)
+    grid: list[str] = Field(default_factory=list, max_length=3)
+
+
+# --- theorems --------------------------------------------------------------
+
+
+class TheoremCard(Base):
+    id: int | None = None
+    name: str
+    statement: str
+    topic: str
+    due: dt.date
+    interval: int = Field(ge=1, default=1)
+    ease: float = Field(ge=1.3, le=3.0, default=2.5)
+
+
+class TheoremReview(Base):
+    """Append-only review log. No equivalent in state.json.
+
+    Costs one table and makes the SM-2 scheduler testable against a real
+    history rather than only against its next output.
+    """
+
+    id: int | None = None
+    card_id: int
+    date: dt.date
+    quality: ReviewQuality
+    interval_after: int = Field(ge=1)
+    ease_after: float = Field(ge=1.3, le=3.0)
+
+
+# --- papers ----------------------------------------------------------------
+
+
+class Paper(Base):
+    """One table replacing current/queue/archive -- three states of one
+    entity, previously moved between three lists by hand-rolled splicing."""
+
+    id: int | None = None
+    title: str
+    link: Url
+    summary: str | None = None
+    published: dt.date | None = None
+
+    status: PaperStatus
+    surfaced_on: dt.date | None = None
+    """Set when arXiv served this as the day's triage candidate."""
+
+    added: dt.date
+    queue_pos: int | None = Field(default=None, ge=0)
+    """Ordering within the queue; NULL when not queued."""
+
+
+# --- misc daily ------------------------------------------------------------
+
+
+class HealthEntry(Base):
+    metric: HealthMetric
+    date: dt.date
+    value: float = Field(gt=0)
+    """UNIQUE(metric, date) -- the find-then-mutate-else-append dance becomes
+    a single UPSERT."""
+
+
+class DayLog(Base):
+    date: dt.date
+    text: str = Field(max_length=2000)
+
+
+class DayCompletion(Base):
+    date: dt.date
+    done: int = Field(ge=0)
+    total: int = Field(gt=0)
+
+    @computed_field
+    @property
+    def pct(self) -> float:
+        """Computed, not stored. state.json persisted `pct` alongside
+        done/total, so the three could disagree."""
+        return self.done / self.total
+
+
+# --- topic cache -----------------------------------------------------------
+
+
+class Link(Base):
+    title: str
+    url: Url
+
+
+class TopicInfo(Base):
+    topic: str
+    textbook: Link
+    theorems: list[Link] = Field(min_length=1, max_length=8)

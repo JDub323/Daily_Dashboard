@@ -1,0 +1,118 @@
+# Daily Dashboard configuration.
+#
+# Everything here used to be a constant in dashboard.py, which meant editing
+# Python to change a ticker -- and `topic_of_week` is a *weekly* edit. Loaded
+# by dashboard/config.py through tomllib and validated into Pydantic models,
+# so a typo here is a startup error naming the field, not a KeyError at 07:00.
+#
+# Relative paths resolve against this file's directory.
+
+[server]
+host = "127.0.0.1"          # localhost-only by decision; see REWRITE_PLAN.md
+port = 8502
+open_browser = true
+log_level = "INFO"
+log_file = "dashboard.log"
+
+[paths]
+db = "dashboard.db"
+problems = "problems.json"  # hand-curated seed pool, read-only to the server
+metrics = "metrics.jsonl"
+static = "web"        # index.html, style.css, app/*.js, data/, vendor/katex
+
+[llm]
+model = "claude-sonnet-5"
+max_tokens = 16000
+timeout_seconds = 300
+max_pause_continuations = 6
+web_search_max_uses = 4
+web_search_cost_usd = 0.01
+
+# Approx $/token for the retrieval-efficiency log. Sonnet 5 is at intro
+# pricing through 2026-08-31; update when it reverts to $3/$15.
+[llm.pricing.claude-sonnet-5]
+input = 2e-6
+output = 10e-6
+
+[llm.pricing.claude-opus-4-8]
+input = 5e-6
+output = 25e-6
+
+[llm.pricing.claude-haiku-4-5]
+input = 1e-6
+output = 5e-6
+
+[math]
+topic_of_week = "generating functions"
+
+# Fixed elo anchors per problem tier. The LLM picks a tier, never a number,
+# so the math rating scale cannot drift.
+[math.anchors]
+amc = 1100
+"aime-early" = 1300
+"aime-late" = 1500
+"olympiad-easy" = 1650
+"putnam-early" = 1750
+"olympiad-hard" = 1900
+"putnam-late" = 2050
+
+[markets]
+tickers = ["^SPX", "AAPL", "MSFT", "NVDA"]
+cache_seconds = 600
+
+[calendar]
+# argv, not a shell string -- see feeds.gcalcli. `wsl -e` is prepended
+# automatically when the server runs on Windows.
+command = ["gcalcli", "--nocolor"]
+cache_seconds = 300
+timeout_seconds = 60
+
+[news]
+cache_seconds = 900
+proxy_prefix = "https://login.proxy.library.nd.edu/login?url="
+paywalled = [
+    "wsj.com",
+    "ft.com",
+    "nytimes.com",
+    "economist.com",
+    "bloomberg.com",
+    "washingtonpost.com",
+]
+# How many headlines to take from each category, in order.
+quotas = [
+    { cat = "uspolitics", n = 2 },
+    { cat = "world", n = 1 },
+    { cat = "finance", n = 1 },
+    { cat = "other", n = 1 },
+]
+feeds = [
+    { cat = "uspolitics", url = "https://rss.politico.com/politics-news.xml" },
+    { cat = "uspolitics", url = "https://feeds.npr.org/1014/rss.xml" },
+    { cat = "world", url = "https://feeds.bbci.co.uk/news/world/rss.xml" },
+    { cat = "finance", url = "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
+    { cat = "finance", url = "https://www.ft.com/rss/home" },
+    { cat = "other", url = "https://feeds.arstechnica.com/arstechnica/index" },
+]
+
+[arxiv]
+cache_seconds = 3600
+max_results = 20
+query = """
+(cat:cs.AI OR cat:cs.LG OR cat:cs.CL) AND (abs:"language model" OR abs:JEPA OR \
+abs:"joint embedding" OR abs:"game playing" OR abs:poker OR \
+abs:"imperfect information" OR abs:"branching factor" OR \
+abs:"reinforcement learning" AND abs:game)\
+"""
+
+# Hand-curated theorem lists + free textbook links, so the LLM never has to
+# regenerate them. Unknown topics get generated once and cached in SQLite.
+[topic_library."generating functions"]
+textbook = { title = "generatingfunctionology (Wilf) — free full PDF", url = "https://www2.math.upenn.edu/~wilf/gfologyLinked2.pdf" }
+theorems = [
+    { title = "Stars and Bars", url = "https://en.wikipedia.org/wiki/Stars_and_bars_(combinatorics)" },
+    { title = "Generalized Binomial Theorem", url = "https://en.wikipedia.org/wiki/Binomial_series" },
+    { title = "Generating Functions (overview + linear recurrences)", url = "https://en.wikipedia.org/wiki/Generating_function" },
+    { title = "Partial Fraction Decomposition", url = "https://en.wikipedia.org/wiki/Partial_fraction_decomposition" },
+    { title = "Catalan Numbers via GFs", url = "https://en.wikipedia.org/wiki/Catalan_number" },
+    { title = "Exponential Generating Functions", url = "https://en.wikipedia.org/wiki/Generating_function#Exponential_generating_function_(EGF)" },
+]

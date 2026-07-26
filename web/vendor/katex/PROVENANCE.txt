@@ -1,0 +1,5 @@
+katex 0.16.11 — https://registry.npmjs.org/katex/-/katex-0.16.11.tgz
+tarball sha256 8c5494c5f7d8e8bf73ff3fe64d4bd09a340e4878b7eec9bbd9ef8d8f3e24193f
+Vendored: katex.min.css, katex.min.js, contrib/auto-render.min.js, dist/fonts/*.woff2, LICENSE.
+woff2 only — the @font-face rules list woff2 first and browsers stop at the
+first supported format, so the woff/ttf fallbacks are never requested.

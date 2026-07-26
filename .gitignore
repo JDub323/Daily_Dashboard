@@ -5,4 +5,17 @@
 state.json
 metrics.jsonl
 
+# pre-migration snapshots of the above — irreplaceable, never committed
+backups/
+
+# the SQLite database and its WAL sidecars — personal data, same as state.json
+*.db
+*.db-wal
+*.db-shm
+
+# server log — rotated in place, never useful in a diff
+dashboard.log*
+
+.venv/
 __pycache__/
+.pytest_cache/

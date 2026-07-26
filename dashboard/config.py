@@ -1,0 +1,211 @@
+"""`config.toml` -> validated settings.
+
+Every constant that used to require editing Python lives in config.toml now.
+The models here are the same `Base` as everything else, so `extra="forbid"`
+applies: a misspelled key in the TOML is a startup ValidationError naming the
+field, not a silently-ignored line.
+
+Deliberately *not* moved out of source: the elo constants in `scoring.py`.
+Changing those rewrites the meaning of every historical rating_event, which
+makes them a philosophy rather than a knob.
+"""
+
+from __future__ import annotations
+
+import os
+import tomllib
+from functools import lru_cache
+from pathlib import Path
+from typing import ClassVar
+
+from pydantic import Field, field_validator
+
+from .models.common import Base, Rating, Url
+from .models.domain import Link
+
+DEFAULT_CONFIG_NAME = "config.toml"
+
+
+def project_root() -> Path:
+    """The repo root -- the parent of this package."""
+    return Path(__file__).resolve().parent.parent
+
+
+# --- sections --------------------------------------------------------------
+
+
+class ServerSettings(Base):
+    host: str = "127.0.0.1"
+    port: int = Field(default=8502, ge=1, le=65535)
+    open_browser: bool = True
+    log_level: str = "INFO"
+    log_file: str | None = "dashboard.log"
+
+
+class PathSettings(Base):
+    db: str = "dashboard.db"
+    problems: str = "problems.json"
+    metrics: str = "metrics.jsonl"
+    static: str = "."
+
+
+class ModelPricing(Base):
+    input: float = Field(gt=0)
+    output: float = Field(gt=0)
+
+
+class LlmSettings(Base):
+    model: str
+    max_tokens: int = Field(default=16000, gt=0)
+    timeout_seconds: int = Field(default=300, gt=0)
+    max_pause_continuations: int = Field(default=6, ge=1)
+    web_search_max_uses: int = Field(default=4, ge=0)
+    web_search_cost_usd: float = Field(default=0.01, ge=0)
+    pricing: dict[str, ModelPricing] = Field(default_factory=dict)
+
+    # Fallback when a model is missing from [llm.pricing]: the standard
+    # non-intro rate. Over- rather than under-reporting cost is the safe
+    # direction for a log whose whole purpose is noticing spend.
+    FALLBACK_PRICING: ClassVar[ModelPricing] = ModelPricing(input=3e-6, output=15e-6)
+
+    def price(self, model: str) -> ModelPricing:
+        return self.pricing.get(model, self.FALLBACK_PRICING)
+
+
+class MathSettings(Base):
+    topic_of_week: str = Field(min_length=1)
+    anchors: dict[str, Rating]
+
+    @field_validator("anchors")
+    @classmethod
+    def _non_empty(cls, v: dict[str, int]) -> dict[str, int]:
+        if not v:
+            raise ValueError("[math.anchors] must define at least one tier")
+        return v
+
+    @property
+    def default_tier(self) -> str:
+        """Fallback when the LLM returns a tier that is not in the table.
+
+        The median anchor, not a hardcoded "aime-late": the tier names are
+        config now, so a name baked into code would be a dangling reference
+        the moment the table is edited.
+        """
+        return sorted(self.anchors, key=lambda t: self.anchors[t])[len(self.anchors) // 2]
+
+
+class MarketSettings(Base):
+    tickers: list[str] = Field(default_factory=list)
+    cache_seconds: int = Field(default=600, ge=0)
+
+
+class CalendarSettings(Base):
+    command: list[str] = Field(default_factory=lambda: ["gcalcli", "--nocolor"])
+    cache_seconds: int = Field(default=300, ge=0)
+    timeout_seconds: int = Field(default=60, gt=0)
+
+    @field_validator("command")
+    @classmethod
+    def _non_empty(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("[calendar].command must name an executable")
+        return v
+
+
+class Feed(Base):
+    cat: str
+    url: Url
+
+
+class Quota(Base):
+    cat: str
+    n: int = Field(ge=0)
+
+
+class NewsSettings(Base):
+    cache_seconds: int = Field(default=900, ge=0)
+    proxy_prefix: str = ""
+    paywalled: list[str] = Field(default_factory=list)
+    quotas: list[Quota] = Field(default_factory=list)
+    feeds: list[Feed] = Field(default_factory=list)
+
+
+class ArxivSettings(Base):
+    cache_seconds: int = Field(default=3600, ge=0)
+    max_results: int = Field(default=20, ge=1)
+    query: str
+
+
+class TopicEntry(Base):
+    """A hand-curated entry in [topic_library]. Same shape as `TopicInfo`
+    minus the topic name, which is the table key."""
+
+    textbook: Link
+    theorems: list[Link] = Field(min_length=1, max_length=8)
+
+
+# --- root ------------------------------------------------------------------
+
+
+class Settings(Base):
+    server: ServerSettings = Field(default_factory=ServerSettings)
+    paths: PathSettings = Field(default_factory=PathSettings)
+    llm: LlmSettings
+    math: MathSettings
+    markets: MarketSettings = Field(default_factory=MarketSettings)
+    calendar: CalendarSettings = Field(default_factory=CalendarSettings)
+    news: NewsSettings = Field(default_factory=NewsSettings)
+    arxiv: ArxivSettings
+    topic_library: dict[str, TopicEntry] = Field(default_factory=dict)
+
+    root: Path = Field(default_factory=project_root, exclude=True)
+    """Directory the relative paths above resolve against.
+
+    Always the project root, never the config file's directory. Pointing
+    `DASHBOARD_CONFIG` at a scratch copy is meant to change settings, not to
+    silently relocate `dashboard.db` next to that copy and open an empty one.
+    A config that genuinely wants its data elsewhere says so with an absolute
+    path in `[paths]`.
+    """
+
+    def path(self, name: str) -> Path:
+        """Resolve one of the [paths] entries against `root`."""
+        return (self.root / getattr(self.paths, name)).resolve()
+
+
+# --- loading ---------------------------------------------------------------
+
+
+def load_settings(path: str | Path | None = None) -> Settings:
+    """Read and validate config.toml. `DASHBOARD_CONFIG` overrides the path."""
+    if path is None:
+        path = os.environ.get("DASHBOARD_CONFIG") or project_root() / DEFAULT_CONFIG_NAME
+    p = Path(path).resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"config not found: {p}")
+    data = tomllib.loads(p.read_text(encoding="utf-8"))
+    return Settings(**data)
+
+
+@lru_cache(maxsize=1)
+def settings() -> Settings:
+    """Process-wide settings. Cached because config.toml is read once at
+    startup; `settings.cache_clear()` re-reads it (used by the tests)."""
+    return load_settings()
+
+
+# --- .env ------------------------------------------------------------------
+
+
+def load_env(path: str | Path | None = None) -> None:
+    """Minimal dotenv. Existing environment wins, so a real export overrides
+    the file rather than the other way round."""
+    p = Path(path or project_root() / ".env")
+    if not p.exists():
+        return
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip())

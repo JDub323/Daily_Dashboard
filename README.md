@@ -2,26 +2,78 @@
 
 One-command personal dashboard, opens http://localhost:8502.
 
-- **From WSL / Linux / macOS**: `./run.sh` (or `python3 dashboard.py`).
-- **From Windows** (double-click in Explorer, or `cmd`): `run.cmd` — hops into WSL for you.
+- **From WSL / Linux / macOS**: `./run.sh` — creates `.venv` on first run.
+- **From Windows** (double-click in Explorer, or `cmd`): `run.cmd` — hops into WSL and calls `run.sh`.
 
 Do **not** run `run.cmd` from inside WSL — it's a Windows batch file and `wsl` doesn't exist there; use `run.sh` instead.
 
-- **Config** (topic of the week, tickers, feeds, port, per-topic theorem library): the marked block at the top of `dashboard.py`.
+- **Config**: `config.toml` — topic of the week, tickers, feeds, port, pricing, tier anchors, per-topic theorem library. No constant lives in source any more; `DASHBOARD_CONFIG` overrides the path.
 - **Secrets**: `.env` with `ANTHROPIC_API_KEY=...` (gitignored).
-- **Data**: `state.json` (ratings, streaks, logs — gitignored) and `problems.json` (hand-editable math problem log; append your own).
-- **Calendar**: shells to gcalcli inside WSL (`wsl bash -lc "gcalcli ..."`), so gcalcli must be authed in WSL.
-- **Files**: `dashboard.py` (server), `index.html` (shell), `style.css`, `app.js` (all panels), `chess.js` (vendored chess.js 0.13.4, ES module).
+- **Data**: `dashboard.db` (SQLite, gitignored). `problems.json` is a hand-curated *pool* — the server reads it and never writes to it; drop a problem in and it gets served before any LLM call is paid for.
+- **Calendar**: runs gcalcli directly as an argv list (prefixed with `wsl -e` when the server is on Windows), so gcalcli must be authed in WSL.
+- **Log**: `dashboard.log`, rotating. Panels show one line; the traceback is here.
+
+`run.cmd` and `.claude/launch.json` both call `run.sh`, so there is one launch path. The port lives only in `config.toml` — `.claude/launch.json` has to repeat it so the preview tool knows where to connect, and a test fails if the two drift apart.
+
+## Tests
+
+```bash
+.venv/bin/python -m pytest && npm test && .venv/bin/ruff check . && .venv/bin/ruff format --check .
+```
+
+214 Python tests and 20 JavaScript ones; none touch the network, the API, `dashboard.db`, or `state.json`. The JS runner is node's built-in `node --test`, so there is nothing to `npm install`.
+
+The suite is weighted toward the code that was hardest to check by hand: the elo curve, the hint penalty, SM-2, streaks, the LaTeX-in-JSON repair, the cache's exception policy, the double-submit guards, and the `state.json` importer's PROVENANCE/PRESERVE rules.
 
 ## Layout
 
-Task chips (top) → gold when done; three columns: feeds (calendar/markets/news/reading) | hero (interactive chess board, math problem, piano of the day) | metrics (elo history, trophies & streaks, health).
+```
+dashboard/            the server
+  config.py     config.toml -> validated settings
+  logs.py       logging setup
+  scoring.py    elo, SM-2, streaks — pure, no DB/network/clock
+  llm.py        one streaming Anthropic client + cost accounting
+  feeds.py      RSS, Yahoo, arXiv, lichess, gcalcli + the stale-tolerant cache
+  content.py    prompts; the only module that both calls the LLM and persists
+  state.py      rows -> the boot payload (read-only)
+  server.py     FastAPI routes and nothing else
+  models/       domain (the tables) + api (what crosses HTTP)
+  db/           schema, migrations, repository, state.json importer
+
+web/                  the front end — native ES modules, no build step
+  index.html
+  style.css     the design tokens; every panel style is a class here
+  app/
+    dom.js      el()/svg()/link() — the only way anything reaches the DOM
+    api.js      fetch + ndjson, and the definition of "today"
+    store.js    a cache of the server's read model, never pushed back whole
+    panel.js    mount / render / retry harness
+    charts.js   sparkline + line chart
+    parsers.js  Wordle & Pokedoku share text — pure functions
+    chips.js    the daily checklist
+    panels/     one file per panel
+    modals/     word, games, theorems, daylog
+  data/         piano.json — scale/chord content, out of the logic file
+  vendor/katex  see PROVENANCE.txt
+
+tests/          pytest, plus tests/js for node --test
+```
+
+There is no bundler. The front end has no npm dependency at runtime — KaTeX is
+vendored and everything else is hand-written — so native `<script type="module">`
+does the whole job, and a build step would only add a thing that can break
+between you and the page.
+
+UI: task chips (top) → gold when done; three columns: feeds (calendar/markets/news/reading) | hero (chess puzzle, math problem, piano of the day) | metrics (elo history, trophies & streaks, health).
 
 ## Key mechanics
 
-- **Saves** go through `POST /api/state/merge` — panels write only the top-level keys they touched, so concurrent saves can't clobber each other. Never full-replace state from a panel.
-- **Elo**: dynamic K = max(24, 96/(1+n/8)) — fast movement with little history, stabilizing over time. Every history entry stores the post-game rating for the charts.
-- **Math problems**: LLM-generated with the web-search server tool (max 4 searches) so problems are verified against AoPS before being shown (~$0.02–0.04/day). Theorem/textbook links come from the hand-curated `TOPIC_LIBRARY`, not the LLM.
-- **Chess**: lichess puzzle rendered on an in-page board (click-to-move, hints, give-up shows the solution). Clean solve = 1.0, with mistakes/hints = 0.4, fail = 0.
-- **Feeds** (markets/calendar/news/paper) are cached server-side and serve stale data on refetch failure instead of crashing.
-- **Adding a panel**: append one `PANELS.push({id, title, col, async render(el)})` block in `app.js`; add a server endpoint in `dashboard.py` only if it needs the network or secrets.
+- **One endpoint per write.** `POST /api/state` and `/api/state/merge` are gone — a browser tab can no longer replace the world with what it happened to be holding. Every write is a per-column `UPDATE` behind `Repository`.
+- **The browser owns "today".** Every dated request carries the browser's local date. The server never calls `date.today()` to decide what day it is.
+- **Elo**: dynamic K = max(24, 96/(1+n/8)) — fast movement with little history, stabilizing over time. The current rating is *derived* from the append-only `rating_event` log; the rating and the update are computed inside one transaction, so two tabs can't both read the same rating and clobber each other.
+- **Math problems**: served from `problems.json` when an unseen one is there, otherwise LLM-generated with the web-search server tool (max 4 searches) and verified against AoPS before being shown (~$0.02–0.04/day). Theorem/textbook links come from `[topic_library]` in `config.toml`, not the LLM.
+- **Chess**: a lichess link plus three self-report buttons. Clean = 1.0, with mistakes = 0.4, fail = 0. The puzzle rating is still the elo opponent.
+- **Feeds** (markets/calendar/news/paper) are cached server-side and serve stale data when the *source* is unreachable. A bug in our own parsing propagates instead — a stale panel and a broken parser used to look identical.
+- **No `innerHTML`.** Every panel builds real nodes through `dom.js`, so text is a text node and escaping is structural rather than a hand-rolled `esc()` each render has to remember to call.
+- **Offline-clean.** The page makes no request to anything but `127.0.0.1`.
+- **Adding a panel**: a request/response model in `models/api.py`, a repository method, a route in `server.py`, and a module in `web/app/panels/` registered in `main.js`.

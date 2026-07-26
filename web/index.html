@@ -2,10 +2,12 @@
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>daily dashboard</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
-<script type="module">import { Chess } from "/chess.js"; window.Chess = Chess;</script>
+<!-- KaTeX is vendored: see web/vendor/katex/PROVENANCE.txt. It used to load
+     from a CDN with no SRI and no fallback, which made the whole app
+     offline-broken. There is now no external runtime dependency at all. -->
+<link rel="stylesheet" href="/vendor/katex/katex.min.css">
+<script defer src="/vendor/katex/katex.min.js"></script>
+<script defer src="/vendor/katex/auto-render.min.js"></script>
 <link rel="stylesheet" href="/style.css">
 </head><body>
 <header>
@@ -31,5 +33,5 @@
 </div>
 <div id="toast" hidden></div>
 
-<script src="/app.js"></script>
+<script type="module" src="/app/main.js"></script>
 </body></html>

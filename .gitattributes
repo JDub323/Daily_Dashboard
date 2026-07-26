@@ -1,0 +1,16 @@
+# The tree is edited from both Windows and WSL, so git warned about LF->CRLF
+# on essentially every file. Normalise to LF in the repository and check out
+# LF everywhere, with the one exception that genuinely needs CRLF.
+* text=auto eol=lf
+
+# cmd.exe is not reliable with LF-only batch files.
+*.cmd text eol=crlf
+
+# Never touched by the line-ending machinery.
+*.woff2 binary
+*.woff  binary
+*.ttf   binary
+*.db    binary
+*.png   binary
+*.jpg   binary
+*.pdf   binary

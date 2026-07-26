@@ -4,7 +4,7 @@
     {
       "name": "dashboard",
       "runtimeExecutable": "wsl",
-      "runtimeArgs": ["-e", "bash", "-lc", "python3 dashboard.py"],
+      "runtimeArgs": ["-e", "bash", "-lc", "./run.sh"],
       "port": 8502
     }
   ]

@@ -1,0 +1,37 @@
+{
+  "notes": ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"],
+  "scales": [
+    { "name": "Dorian", "intervals": [0, 2, 3, 5, 7, 9, 10], "note": "minor with a bright 6th — 'So What' (Miles Davis), 'Scarborough Fair'" },
+    { "name": "Phrygian", "intervals": [0, 1, 3, 5, 7, 8, 10], "note": "dark, Spanish — flamenco and metal riffs live here" },
+    { "name": "Lydian", "intervals": [0, 2, 4, 6, 7, 9, 11], "note": "major with a raised 4th, floaty — The Simpsons theme" },
+    { "name": "Mixolydian", "intervals": [0, 2, 4, 5, 7, 9, 10], "note": "major with a flat 7th — 'Sweet Home Alabama', 'Norwegian Wood'" },
+    { "name": "Natural minor", "intervals": [0, 2, 3, 5, 7, 8, 10], "note": "the relative minor — 'Losing My Religion' (R.E.M.)" },
+    { "name": "Harmonic minor", "intervals": [0, 2, 3, 5, 7, 8, 11], "note": "raised 7th gives an exotic pull — 'Hava Nagila'" },
+    { "name": "Melodic minor", "intervals": [0, 2, 3, 5, 7, 9, 11], "note": "jazz minor — the sound over m(maj7) chords" },
+    { "name": "Major pentatonic", "intervals": [0, 2, 4, 7, 9], "note": "five notes, no wrong ones — 'My Girl' riff (Temptations)" },
+    { "name": "Minor pentatonic", "intervals": [0, 3, 5, 7, 10], "note": "the rock-solo scale — nearly every blues lick starts here" },
+    { "name": "Blues", "intervals": [0, 3, 5, 6, 7, 10], "note": "minor pentatonic + flat 5 — 'Sunshine of Your Love' (Cream)" },
+    { "name": "Whole tone", "intervals": [0, 2, 4, 6, 8, 10], "note": "dream-sequence blur — 'You Are the Sunshine of My Life' intro" },
+    { "name": "Half-whole diminished", "intervals": [0, 1, 3, 4, 6, 7, 9, 10], "note": "jazz weapon over dom7♭9 chords" },
+    { "name": "Locrian", "intervals": [0, 1, 3, 5, 6, 8, 10], "note": "half-diminished tonic — theory candy, almost never home" }
+  ],
+  "chords": [
+    { "symbol": "maj7", "name": "major seventh", "intervals": [0, 4, 7, 11], "note": "'The Girl from Ipanema' — the opening Fmaj7" },
+    { "symbol": "m7", "name": "minor seventh", "intervals": [0, 3, 7, 10], "note": "every ii chord in a ii–V–I; 'So What' voicings" },
+    { "symbol": "7", "name": "dominant seventh", "intervals": [0, 4, 7, 10], "note": "'Johnny B. Goode' — the engine of the blues" },
+    { "symbol": "dim7", "name": "diminished seventh", "intervals": [0, 3, 6, 9], "note": "the villain sting; passing chord in 'Michelle' (Beatles)" },
+    { "symbol": "m7♭5", "name": "half-diminished", "intervals": [0, 3, 6, 10], "note": "'Autumn Leaves' — the minor ii chord" },
+    { "symbol": "aug", "name": "augmented", "intervals": [0, 4, 8], "note": "'Oh! Darling' (Beatles) — the opening chord" },
+    { "symbol": "sus4", "name": "suspended 4th", "intervals": [0, 5, 7], "note": "'Pinball Wizard' (The Who)" },
+    { "symbol": "sus2", "name": "suspended 2nd", "intervals": [0, 2, 7], "note": "open and ambiguous — pop intros before the resolve" },
+    { "symbol": "6", "name": "major sixth", "intervals": [0, 4, 7, 9], "note": "the final chord of 'She Loves You' (Beatles)" },
+    { "symbol": "m6", "name": "minor sixth", "intervals": [0, 3, 7, 9], "note": "gypsy-jazz tonic; film-noir soundtracks" },
+    { "symbol": "add9", "name": "added ninth", "intervals": [0, 4, 7, 14], "note": "'Every Breath You Take' (Police) — those arpeggios" },
+    { "symbol": "9", "name": "dominant ninth", "intervals": [0, 4, 7, 10, 14], "note": "James Brown funk vamps" },
+    { "symbol": "maj9", "name": "major ninth", "intervals": [0, 4, 7, 11, 14], "note": "the neo-soul staple — dreamy resolve" },
+    { "symbol": "m9", "name": "minor ninth", "intervals": [0, 3, 7, 10, 14], "note": "lo-fi and neo-soul ii chords" },
+    { "symbol": "13", "name": "dominant thirteenth", "intervals": [0, 4, 7, 10, 14, 21], "note": "the big-band final V chord" },
+    { "symbol": "7♯9", "name": "the Hendrix chord", "intervals": [0, 4, 7, 10, 15], "note": "'Purple Haze'" },
+    { "symbol": "mMaj7", "name": "minor-major seventh", "intervals": [0, 3, 7, 11], "note": "the James Bond theme's final chord" }
+  ]
+}

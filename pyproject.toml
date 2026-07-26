@@ -1,0 +1,74 @@
+[project]
+name = "daily-dashboard"
+# Read from dashboard/__init__.py so the version is written down once.
+dynamic = ["version"]
+description = "A single-user personal dashboard served at localhost:8502."
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "John Whalen" }]
+
+# The whole dependency set. The stdlib-purity constraint was dropped
+# deliberately; this is the "small, boring" replacement for it.
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.9",
+    "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.6"]
+
+[project.scripts]
+daily-dashboard = "dashboard.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "dashboard/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dashboard"]
+
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers --strict-config"
+filterwarnings = [
+    "error",
+    # Starlette's TestClient still imports httpx 0.x; not ours to fix.
+    "ignore::DeprecationWarning:starlette.testclient",
+    "ignore:Using `httpx` with `starlette.testclient`:UserWarning",
+    "ignore:Using `httpx` with `starlette.testclient`",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["web/vendor"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # import sorting
+    "UP",       # pyupgrade
+    "B",        # bugbear
+    "SIM",      # simplify
+    "RUF",      # ruff's own
+]
+ignore = [
+    # `raise ... from err` inside a handler that already logs the traceback
+    # adds noise without adding information.
+    "B904",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private helpers on purpose — _round_half_up, _clean_blocks
+# and the feed cache are exactly the things worth pinning down.
+"tests/*" = ["SLF001"]
+
+[tool.ruff.format]
+quote-style = "double"

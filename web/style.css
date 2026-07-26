@@ -1,3 +1,4 @@
+/* Design tokens. Dark + monospace, gold for completion, cyan for links. */
 :root {
   --bg: #0b0e14;
   --panel: #11151f;
@@ -12,8 +13,6 @@
   --accent: #5ccfe6;
   --ok: #8bd49c;
   --bad: #e0687a;
-  --sq-light: #3a4257;
-  --sq-dark: #262d3f;
 }
 * { box-sizing: border-box; }
 body {
@@ -43,29 +42,55 @@ a:hover { text-decoration: underline; }
               border-color: var(--border); }
 .panel.hero h2 { color: var(--gold); }
 .panel.done-gold { border-color: var(--gold-dim); box-shadow: 0 0 0 1px var(--gold-dim), 0 0 18px rgba(232,180,88,.07); }
+/* focusPanel(): the chips flash the panel they scroll to. */
+.panel.flash { transition: box-shadow .3s; box-shadow: 0 0 0 2px var(--gold-dim); }
 
+/* ---- typography + inline utilities ----
+   Every one of these replaces an inline style= the old renders wrote by hand:
+   style="margin:6px 0", style="font-size:11.5px", style="flex:1",
+   style="justify-content:space-between", style="border-top:1px solid …". */
 .err { color: var(--bad); opacity: .85; font-size: 12.5px; }
 .dim { color: var(--dim); } .faint { color: var(--faint); font-size: 12px; }
 .big { font-size: 16px; font-weight: 600; }
+.small { font-size: 11.5px; }
 .ok { color: var(--ok); } .bad { color: var(--bad); } .gold { color: var(--gold); }
-.row { display: flex; gap: 8px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
 .rating { font-size: 20px; font-weight: 700; color: var(--gold); }
 .tag { font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; color: var(--dim); }
 .delta-up { color: var(--ok); font-weight: 700; }
 .delta-down { color: var(--bad); font-weight: 700; }
+.gap { margin: 8px 0 4px; }
+.divider { border-top: 1px solid var(--border-soft); margin-top: 8px; padding-top: 8px; }
+
+.row { display: flex; gap: 8px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+.row.spread { justify-content: space-between; }
+.row.inline { display: inline-flex; gap: 4px; margin: 0; }
+.row > input:not([type="number"]) { flex: 1; min-width: 120px; }
 
 button { background: transparent; border: 1px solid var(--border); color: var(--fg);
          font: inherit; font-size: 12.5px; padding: 3px 10px; border-radius: 6px; cursor: pointer; }
-button:hover { border-color: var(--gold); color: var(--gold); }
+button:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
 button:disabled { opacity: .4; cursor: default; }
 button.primary { border-color: var(--gold-dim); color: var(--gold); }
+button.ok { color: var(--ok); } button.bad { color: var(--bad); }
 input, textarea { background: var(--bg); border: 1px solid var(--border); color: var(--fg);
                   font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px; width: 100%; }
 textarea { resize: vertical; }
 ul.clean { list-style: none; margin: 6px 0; padding: 0; }
 ul.clean li { margin: 5px 0; }
+
+/* ---- math panel ---- */
+.statement { margin: 8px 0; }
+.answer { margin-top: 8px; }
+.hints > div { margin: 3px 0; }
 .katex { font-size: 1.1em; }
 .katex-display { margin: .7em 0; }
+
+/* ---- reading panel ---- */
+.paper-title { margin: 6px 0; }
+
+/* ---- word modal ---- */
+.sentence { margin: 3px 0; }
+.verdict { margin-top: 6px; }
 
 /* ---- task chips ---- */
 #tasks { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -77,6 +102,7 @@ ul.clean li { margin: 5px 0; }
 .chip.done { border-color: var(--gold-dim); color: var(--gold);
              background: linear-gradient(180deg, rgba(232,180,88,.08), transparent); }
 .chip.done::before { content: "✦ "; }
+.completion-ring { color: var(--gold); font-weight: 700; }
 
 /* ---- modal ---- */
 #modal-overlay { position: fixed; inset: 0; background: rgba(4,6,10,.72);
@@ -98,29 +124,10 @@ ul.clean li { margin: 5px 0; }
          border-radius: 8px; padding: 8px 16px; z-index: 60; font-size: 12.5px; }
 #toast.info { border-color: var(--gold-dim); }
 
-/* ---- chess board ---- */
-#board-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-#board { display: grid; grid-template-columns: repeat(8, 1fr); width: 100%;
-         max-width: 420px; aspect-ratio: 1; border: 2px solid var(--border);
-         border-radius: 6px; overflow: hidden; user-select: none; }
-.sq { display: flex; align-items: center; justify-content: center;
-      font-size: clamp(22px, 4.4vw, 34px); cursor: pointer; position: relative;
-      line-height: 1; }
-.sq.light { background: var(--sq-light); } .sq.dark { background: var(--sq-dark); }
-.sq.sel { outline: 2px solid var(--gold); outline-offset: -2px; }
-.sq.last { box-shadow: inset 0 0 0 100px rgba(232,180,88,.14); }
-.sq.dot::after { content: ""; position: absolute; width: 22%; height: 22%;
-                 border-radius: 50%; background: rgba(92,207,230,.5); }
-.sq.cap::after { content: ""; position: absolute; inset: 6%; border-radius: 50%;
-                 border: 3px solid rgba(224,104,122,.6); }
-.sq.wrong { animation: shake .3s; box-shadow: inset 0 0 0 100px rgba(224,104,122,.3); }
-@keyframes shake { 25% { transform: translateX(-3px);} 75% { transform: translateX(3px);} }
-.piece-w { color: #f2f4f8; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
-.piece-b { color: #14171f; text-shadow: 0 1px 1px rgba(255,255,255,.18); }
-
 /* ---- charts ---- */
 .chart-block { margin: 8px 0 4px; }
 .chart-title { font-size: 12px; color: var(--dim); display: flex; justify-content: space-between; }
+.line-chart { width: 100%; max-height: 80px; }
 svg text { font: 10px "Cascadia Code", Consolas, monospace; fill: var(--faint); }
 
 /* ---- wordle / pokedoku trophy grids ---- */
@@ -131,12 +138,16 @@ svg text { font: 10px "Cascadia Code", Consolas, monospace; fill: var(--faint); 
 .cell.r { background: #a04652; } .cell.w { background: #4a5165; }
 
 /* ---- piano ---- */
+.piano-item + .piano-item { margin-top: 10px; border-top: 1px solid var(--border-soft); padding-top: 8px; }
+.piano-head { display: flex; justify-content: space-between; align-items: baseline; }
+.piano-name { color: var(--gold); font-weight: 600; }
+.piano-notes { color: var(--dim); font-size: 11.5px; }
 #panel-piano svg { width: 100%; max-width: 280px; height: auto; display: block; margin: 4px 0; }
 .pk-white { fill: #e8eaf0; stroke: #1a1f2c; stroke-width: 1; }
 .pk-black { fill: #1a1f2c; stroke: #000; stroke-width: 1; }
 .pk-hl    { fill: var(--accent); }
 .pk-root  { fill: var(--gold); }
-.completion-ring { color: var(--gold); font-weight: 700; }
+.pk-label { fill: #14171f; font-weight: 700; }
 
 /* inline spinner for the math-problem streaming status */
 .spinner {
