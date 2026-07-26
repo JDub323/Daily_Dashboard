@@ -25,8 +25,12 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import queue
+import socket
+import subprocess
 import threading
+import time
 import webbrowser
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
@@ -433,6 +437,29 @@ def _ndjson(events: Iterator[dict[str, Any]]) -> Iterator[bytes]:
 # --- entry point -----------------------------------------------------------
 
 
+class PortInUse(RuntimeError):
+    """The configured port already has something listening on it."""
+
+
+def port_is_free(host: str, port: int) -> bool:
+    """Can we bind host:port right now?
+
+    Checked up front rather than letting uvicorn discover it, because the
+    failure needs to be a sentence about the port -- not a stack trace buried
+    under whatever else is on the console.
+
+    Deliberately no SO_REUSEADDR: the question being asked is "is someone
+    already listening here", and SO_REUSEADDR would let the bind succeed
+    against a socket in TIME_WAIT and answer the wrong question.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
 def main() -> None:
     import uvicorn
 
@@ -440,23 +467,60 @@ def main() -> None:
     logs.setup(
         cfg.server.log_level, cfg.root / cfg.server.log_file if cfg.server.log_file else None
     )
-    url = f"http://{cfg.server.host}:{cfg.server.port}"
-    if cfg.server.open_browser:
-        threading.Timer(0.8, lambda: _open(url)).start()
-    uvicorn.run(
-        create_app(cfg),
-        host=cfg.server.host,
-        port=cfg.server.port,
-        log_config=None,  # logs.setup owns the handlers
+    host, port = cfg.server.host, cfg.server.port
+    url = f"http://{host}:{port}"
+
+    if not port_is_free(host, port):
+        # Historically this was a stale pre-rewrite `python3 dashboard.py`
+        # still holding the port from days earlier. The browser then opened
+        # onto *that* server, so the symptom looked like a broken page rather
+        # than a failed start.
+        log.error(
+            "%s is already in use — something else is serving this port.\n"
+            "  Find it with:  ss -ltnp | grep %s\n"
+            "  Stop it, or change [server].port in config.toml.",
+            url,
+            port,
+        )
+        raise SystemExit(1)
+
+    server = uvicorn.Server(
+        uvicorn.Config(
+            create_app(cfg),
+            host=host,
+            port=port,
+            log_config=None,  # logs.setup owns the handlers
+        )
     )
+    if cfg.server.open_browser:
+        threading.Thread(target=_open_when_ready, args=(server, url), daemon=True).start()
+    server.run()
+
+
+def _open_when_ready(server: Any, url: str, timeout: float = 90.0) -> None:
+    """Open the tab once the server is actually accepting connections.
+
+    This was a flat `threading.Timer(0.8, ...)`, which assumed the server
+    would be up within 0.8s of `main()` starting. Importing FastAPI from a
+    venv on /mnt/c takes well over ten times that, so the tab reliably opened
+    before there was anything to answer it -- and the browser cached a failure
+    page for a server that came up fine a moment later.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if getattr(server, "started", False):
+            _open(url)
+            return
+        if getattr(server, "should_exit", False):
+            return  # startup failed; do not open a tab onto nothing
+        time.sleep(0.1)
+    log.warning("server did not come up within %ss; not opening a tab. Visit %s", timeout, url)
 
 
 def _open(url: str) -> None:
     """Open a tab. Inside WSL the Windows browser is reached through cmd.exe."""
-    import os
-    import subprocess
-
     windows_cmd = "/mnt/c/Windows/System32/cmd.exe"
+    log.info("opening %s", url)
     try:
         if os.name != "nt" and os.path.exists(windows_cmd):
             subprocess.run([windows_cmd, "/c", "start", url], cwd="/mnt/c", capture_output=True)
