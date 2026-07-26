@@ -53,6 +53,38 @@ from .models.domain import PokedokuResult, WordleResult
 
 log = logs.get(__name__)
 
+VENDOR_PREFIX = "/vendor/"
+ONE_YEAR = 60 * 60 * 24 * 365
+
+
+class StaticAssets(StaticFiles):
+    """StaticFiles that says what the browser may cache.
+
+    Starlette sends `ETag` and `Last-Modified` but no `Cache-Control`, so
+    browsers fall back to *heuristic* freshness and will serve a stored copy
+    without revalidating at all. Editing `app/main.js` and reloading then
+    shows the old module -- which is indistinguishable from the edit not
+    having worked, and cost an hour of exactly that confusion.
+
+    `no-cache` does not mean "do not store"; it means "revalidate first". The
+    ETag turns that into a 304 against a server on loopback.
+    """
+
+    def file_response(
+        self,
+        full_path: os.PathLike[str],
+        stat_result: os.stat_result,
+        scope: Any,
+        status_code: int = 200,
+    ) -> Any:
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        if str(scope.get("path", "")).startswith(VENDOR_PREFIX):
+            # Version-pinned and never edited in place, fonts included.
+            response.headers["cache-control"] = f"public, max-age={ONE_YEAR}, immutable"
+        else:
+            response.headers["cache-control"] = "no-cache"
+        return response
+
 
 # --- app wiring ------------------------------------------------------------
 
@@ -165,16 +197,19 @@ def _register(app: FastAPI) -> None:
     # -- config / boot state -----------------------------------------------
 
     @app.get("/api/config")
-    def config(cfg: Cfg) -> api.ConfigResponse:
-        return api.ConfigResponse(topic=cfg.math.topic_of_week, tickers=cfg.markets.tickers)
+    def config(cfg: Cfg, date: Today) -> api.ConfigResponse:
+        # Dated because the topic rotates weekly and the browser owns the
+        # calendar: the topic must turn over at the user's midnight, not at
+        # whatever midnight the server's timezone believes in.
+        return api.ConfigResponse(topic=cfg.math.topic_for(date), tickers=cfg.markets.tickers)
 
     @app.get("/api/state")
     def dashboard_state(repo: Repo, date: Today) -> api.DashboardState:
         return state.dashboard_state(repo, date)
 
     @app.get("/api/topic")
-    def topic(cfg: Cfg, repo: Repo) -> api.TopicResponse:
-        return content.topic_info(cfg, repo)
+    def topic(cfg: Cfg, repo: Repo, date: Today) -> api.TopicResponse:
+        return content.topic_info(cfg, repo, date)
 
     # -- feeds -------------------------------------------------------------
 
@@ -380,7 +415,7 @@ def _register(app: FastAPI) -> None:
     # index.html for the bare "/".
     app.mount(
         "/",
-        StaticFiles(directory=app.state.settings.path("static"), html=True),
+        StaticAssets(directory=app.state.settings.path("static"), html=True),
         name="web",
     )
 

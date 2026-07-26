@@ -29,9 +29,24 @@ def frozen_today(monkeypatch):
 
 
 def test_config_reports_the_topic_and_tickers(client, settings):
-    body = client.get("/api/config").json()
-    assert body["topic"] == settings.math.topic_of_week
+    body = client.get("/api/config", params={"date": DATE}).json()
+    assert body["topic"] == settings.math.topic_for(TODAY)
     assert body["tickers"] == settings.markets.tickers
+
+
+def test_config_requires_a_date_because_the_topic_rotates(client):
+    response = client.get("/api/config")
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["query", "date"]
+
+
+def test_the_topic_follows_the_browsers_week(client, settings):
+    """Two requests a week apart get different topics from the same server."""
+    next_week = (TODAY + dt.timedelta(days=7)).isoformat()
+    this = client.get("/api/config", params={"date": DATE}).json()["topic"]
+    later = client.get("/api/config", params={"date": next_week}).json()["topic"]
+    assert this != later
+    assert this == settings.math.rotation[0]
 
 
 def test_state_requires_a_date(client):
@@ -85,6 +100,21 @@ def test_the_front_end_is_served(client):
     assert client.get("/").status_code == 200
     assert client.get("/app/main.js").status_code == 200
     assert client.get("/vendor/katex/katex.min.css").status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/", "/app/main.js", "/style.css", "/data/piano.json"])
+def test_app_files_must_be_revalidated(client, path):
+    """Starlette sends ETag and Last-Modified but no Cache-Control, so a
+    browser applies heuristic freshness and serves an edited module from
+    cache without asking. That looks exactly like the edit not working."""
+    assert client.get(path).headers["cache-control"] == "no-cache"
+
+
+def test_vendored_assets_are_cached_hard(client):
+    """Version-pinned and never edited in place — including 20 font files."""
+    cache_control = client.get("/vendor/katex/katex.min.css").headers["cache-control"]
+    assert "immutable" in cache_control
+    assert "max-age=31536000" in cache_control
 
 
 # --- math ------------------------------------------------------------------
@@ -443,6 +473,6 @@ def test_an_unexpected_error_does_not_leak_internals(client, monkeypatch):
         raise TypeError("something about a NoneType")
 
     monkeypatch.setattr(content, "topic_info", boom)
-    response = client.get("/api/topic")
+    response = client.get("/api/topic", params={"date": DATE})
     assert response.status_code == 500
     assert response.json() == {"error": "internal error — see the server log"}

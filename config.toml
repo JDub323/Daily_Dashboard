@@ -43,7 +43,54 @@ input = 1e-6
 output = 5e-6
 
 [math]
+# Fallback when `rotation` below is empty. Kept so a fixed topic is still a
+# one-line edit if you ever want to sit on one for a while.
 topic_of_week = "generating functions"
+
+# The Sunday on which rotation[0] begins. The index advances every Sunday
+# (see config.week_index), so `rotation_start` must itself be a Sunday --
+# validated at startup rather than left as a comment nobody checks.
+rotation_start = 2026-07-26
+
+# Weekly topic rotation, weighted by how much of the Putnam each area is:
+# analysis 7 slots (~28%), algebra 6 (~24%), combinatorics 5 (~20%), number
+# theory 4 (~16%), geometry 2 (~8%), probability 1 (~4%). Broad areas are
+# split into topics narrow enough to actually study in a week -- "finite
+# group theory", not "abstract algebra".
+#
+# Ordered to interleave the areas, so you never get seven consecutive weeks
+# of analysis. 25 entries = a ~6-month cycle.
+#
+# A topic with no [topic_library] entry costs one LLM call the first time it
+# comes up (textbook + six theorem links), then is cached in `topic_info`
+# forever. Only "generating functions" is hand-curated today.
+rotation = [
+    "generating functions",
+    "limits and recursive sequences",
+    "polynomial roots, Vieta, and symmetric functions",
+    "bijections, inclusion-exclusion, and double counting",
+    "modular arithmetic and congruences",
+    "analytic and vector geometry in the plane",
+    "infinite series - convergence, telescoping, rearrangement",
+    "determinants and matrix manipulation",
+    "linear recurrences and difference equations",
+    "divisibility, primes, and factorization",
+    "discrete probability and expected value",
+    "definite-integral technique",
+    "polynomial identities, divisibility, and irreducibility",
+    "pigeonhole and extremal arguments",
+    "digits, base representations, and floor functions",
+    "convexity, lattice points, and area arguments",
+    "inequalities - AM-GM, Cauchy-Schwarz, Jensen, rearrangement",
+    "eigenvalues, characteristic polynomials, and matrix powers",
+    "combinatorial games and invariants",
+    "multiplicative order, primitive roots, Fermat/Euler",
+    "continuity, IVT, and the mean value theorems",
+    "vector spaces, rank, and linear independence",
+    "derivatives, Taylor expansion, and extrema",
+    "finite group theory - orders, Lagrange, group actions",
+    "functional equations",
+]
 
 # Fixed elo anchors per problem tier. The LLM picks a tier, never a number,
 # so the math rating scale cannot drift.

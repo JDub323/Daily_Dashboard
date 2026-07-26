@@ -63,7 +63,7 @@ PROBLEM_SYSTEM = (
 
 def _problem_prompt(settings: Settings, rating: int, date: dt.date, seen: list[str]) -> str:
     return (
-        f"Topic of the week: {settings.math.topic_of_week}. Today is weekday "
+        f"Topic of the week: {settings.math.topic_for(date)}. Today is weekday "
         f"{date.weekday()} (0=Mon: ramp difficulty through the week, but vary sub-skills "
         f"to teach the topic broadly). My rating: {rating}. Tier anchors: "
         f"{json.dumps(settings.math.anchors)}. Pick a tier whose anchor gives me a "
@@ -205,7 +205,7 @@ def _generate_problem(
                 metrics=metrics,
                 ok=problem is not None,
                 error=error,
-                topic=settings.math.topic_of_week,
+                topic=settings.math.topic_for(date),
                 rating=rating,
                 source=problem.source if problem else None,
                 tier=problem.tier if problem else None,
@@ -253,7 +253,7 @@ def grade_sentences(settings: Settings, word: str, sentences: list[str]) -> d.Wo
 
 
 def theorem_card(settings: Settings, date: dt.date) -> d.TheoremCard:
-    topic = settings.math.topic_of_week
+    topic = settings.math.topic_for(date)
     raw = llm.json_call(
         settings.llm,
         'Respond ONLY JSON: {"name":"...","statement":"LaTeX ok","topic":"..."}',
@@ -280,14 +280,15 @@ def _link(raw: dict[str, Any]) -> d.Link:
     return d.Link(title=raw.get("title") or raw["name"], url=raw["url"])
 
 
-def topic_info(settings: Settings, repo: Repository) -> TopicResponse:
-    """Theorem list + textbook for the current topic.
+def topic_info(settings: Settings, repo: Repository, date: dt.date) -> TopicResponse:
+    """Theorem list + textbook for the week's topic.
 
     Hand-curated from `[topic_library]` when possible, generated once and
-    cached in SQLite otherwise. The hand-curated path is the common one and
-    costs nothing.
+    cached in SQLite otherwise. With a rotation in play the generated path is
+    the common one -- but it is paid for once per topic ever, not per week,
+    because `topic_info` is keyed by the topic name rather than the date.
     """
-    topic = settings.math.topic_of_week
+    topic = settings.math.topic_for(date)
 
     entry = settings.topic_library.get(topic)
     if entry:

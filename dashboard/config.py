@@ -12,18 +12,20 @@ makes them a philosophy rather than a knob.
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 import tomllib
 from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from .models.common import Base, Rating, Url
 from .models.domain import Link
 
 DEFAULT_CONFIG_NAME = "config.toml"
+SUNDAY = 6  # datetime.date.weekday(), where Monday is 0
 
 
 def project_root() -> Path:
@@ -72,8 +74,24 @@ class LlmSettings(Base):
         return self.pricing.get(model, self.FALLBACK_PRICING)
 
 
+def week_index(date: dt.date) -> int:
+    """Weeks since the proleptic epoch, incrementing on Sunday.
+
+    `date(1, 1, 1)` is a Monday, so Sundays are exactly the ordinals divisible
+    by seven and floor division steps on Sunday. Using the ordinal rather than
+    `isocalendar().week` is what keeps the count continuous: ISO week numbers
+    reset each January, so a rotation indexed by them would skip an entry at
+    every new year.
+    """
+    return date.toordinal() // 7
+
+
 class MathSettings(Base):
     topic_of_week: str = Field(min_length=1)
+    """Used only when `rotation` is empty."""
+
+    rotation: list[str] = Field(default_factory=list)
+    rotation_start: dt.date | None = None
     anchors: dict[str, Rating]
 
     @field_validator("anchors")
@@ -82,6 +100,31 @@ class MathSettings(Base):
         if not v:
             raise ValueError("[math.anchors] must define at least one tier")
         return v
+
+    @model_validator(mode="after")
+    def _rotation_is_anchored_to_a_sunday(self) -> MathSettings:
+        if not self.rotation:
+            return self
+        if self.rotation_start is None:
+            raise ValueError("[math].rotation needs a rotation_start date")
+        if self.rotation_start.weekday() != SUNDAY:
+            raise ValueError(
+                f"[math].rotation_start must be a Sunday; "
+                f"{self.rotation_start} is a {self.rotation_start:%A}"
+            )
+        return self
+
+    def topic_for(self, date: dt.date) -> str:
+        """The topic for the week containing `date`.
+
+        `date` comes from the browser, like every other date in the app, so
+        the topic turns over at the user's midnight rather than the server's.
+        """
+        if not self.rotation:
+            return self.topic_of_week
+        assert self.rotation_start is not None  # guaranteed by the validator
+        weeks = week_index(date) - week_index(self.rotation_start)
+        return self.rotation[weeks % len(self.rotation)]
 
     @property
     def default_tier(self) -> str:

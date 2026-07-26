@@ -39,7 +39,8 @@ async function boot() {
   onModalClose(renderChips);
 
   try {
-    store.config = await api.get("/api/config");
+    // Dated: the topic rotates weekly, and the browser decides which week it is.
+    store.config = await api.get("/api/config", { date: api.today() });
     $("#hdr-topic").textContent = `topic: ${store.config.topic}`;
   } catch {
     toast("could not load config — is the server running?");
@@ -61,7 +62,7 @@ async function boot() {
   // Topic links are only needed once the math panel has a problem open, so
   // they load in the background rather than blocking first paint.
   api
-    .get("/api/topic")
+    .get("/api/topic", { date: api.today() })
     .then((topic) => {
       store.topic = topic;
       rerender("math");
