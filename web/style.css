@@ -92,6 +92,17 @@ ul.clean li { margin: 5px 0; }
 .sentence { margin: 3px 0; }
 .verdict { margin-top: 6px; }
 
+/* ---- theorem archive ----
+   No height or overflow here: #modal already caps at 84vh and scrolls, with
+   a sticky head. A second scroll container inside it would nest scrollbars
+   and strand the sticky head above a viewport it no longer governs. */
+.archive { margin-top: 10px; }
+.archive-item { border-top: 1px solid var(--border-soft); padding: 7px 0; }
+.archive-item > summary { cursor: pointer; list-style-position: outside; }
+.archive-item > summary::marker { color: var(--faint); }
+.archive-item[open] > summary { color: var(--gold); }
+.archive-item > .statement { margin: 8px 0 4px 14px; }
+
 /* ---- task chips ---- */
 #tasks { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;

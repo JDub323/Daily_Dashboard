@@ -7,6 +7,19 @@
 //
 // The draw is a GET that writes, so it happens when this modal opens rather
 // than at boot: a day you never came looking is a day nothing appeared.
+//
+// Two modes, not two surfaces. Browsing the whole deck is a reference
+// activity, so it does not want a dashboard panel — the columns are for
+// things you glance at daily, and an archive consulted once a fortnight would
+// hold that space permanently. It does not want its own chip either; the chip
+// row is the day's checklist, and reading old theorems is not a task you
+// complete. What it wants is to be where theorems already are, which is here.
+// `#modal` is already `max-height: 84vh; overflow-y: auto` with a sticky
+// head, so a long list scrolls correctly with no new CSS for the container.
+//
+// The archive replaces the collapsed deck list that used to sit under the
+// add box. That list had every card in it already, but three lines tall and
+// competing with today's draw — this is that list given the room to be read.
 
 import * as api from "../api.js";
 import { el, mount } from "../dom.js";
@@ -26,6 +39,17 @@ export function openTheoremModal() {
   });
 }
 
+/**
+ * The archive. Re-entering `openModal` swaps the title and body in place, so
+ * the two modes are one overlay rather than a modal stacked on a modal.
+ *
+ * Needs no fetch: the deck ships whole in the boot payload, so this opens
+ * populated even on a day the draw has not happened.
+ */
+export function openTheoremArchive() {
+  openModal("theorem archive", (body) => drawArchive(body));
+}
+
 const ago = (days) => {
   if (days == null) return "never seen";
   // <= 0 rather than === 0: the browser is the authority on today's date, so
@@ -38,7 +62,19 @@ const ago = (days) => {
 
 function draw(body) {
   const theorems = store.state.theorems;
-  mount(body, card(body, theorems), addRow(body), deckList(body, theorems));
+  mount(body, card(body, theorems), addRow(body), archiveLink(theorems));
+}
+
+/** The way through to the archive, in place of the old inline deck list. */
+function archiveLink(theorems) {
+  if (!theorems.deck.length) return null;
+  return el("div.row.gap", null,
+    el("button", {
+      text: `browse all ${theorems.deck.length} →`,
+      onclick: openTheoremArchive,
+    }),
+    el("span.faint", { text: `${theorems.deck_size} in rotation` }),
+  );
 }
 
 /** Today's theorem: name, then reveal, then the one-bit self-check. */
@@ -150,35 +186,103 @@ function addRow(body) {
   );
 }
 
-/** The deck, with its odds visible and an archive toggle per row. */
-function deckList(body, theorems) {
-  if (!theorems.deck.length) return null;
+// --- the archive -----------------------------------------------------------
 
-  const toggle = async (entry) => {
-    put("theorems", await api.post("/api/theorem/archive", {
-      card_id: entry.card.id,
-      archived: !entry.card.archived,
-    }));
-    draw(body);
-  };
+const ORDERS = {
+  recent: {
+    label: "recently seen",
+    // Never-seen sink rather than lead: this order answers "what have I been
+    // doing", and a card with no history has no place in that story yet.
+    compare: (a, b) => (a.days_since ?? Infinity) - (b.days_since ?? Infinity),
+  },
+  stale: {
+    label: "longest unseen",
+    compare: (a, b) => (b.days_since ?? Infinity) - (a.days_since ?? Infinity),
+  },
+  added: {
+    label: "newest first",
+    compare: (a, b) => b.card.id - a.card.id,
+  },
+};
 
-  // Longest-unseen first: that is draw order in expectation, so the list
-  // reads as "what is coming up" rather than as insertion order.
-  const rows = [...theorems.deck].sort(
-    (a, b) => (b.days_since ?? Infinity) - (a.days_since ?? Infinity),
-  );
+let order = "recent";
 
-  return el("details", null,
-    el("summary.faint", { text: `deck · ${theorems.deck_size} active` }),
-    ...rows.map((entry) =>
-      el("div.row.gap", { class: entry.card.archived ? "faint" : null },
-        el("span", { text: entry.card.name }),
-        el("span.faint", { text: ago(entry.days_since) }),
-        el("button", {
-          text: entry.card.archived ? "restore" : "retire",
-          onclick: () => toggle(entry),
+function drawArchive(body) {
+  const theorems = store.state.theorems;
+  const retired = theorems.deck.length - theorems.deck_size;
+
+  if (!theorems.deck.length) {
+    mount(body,
+      el("div.faint", { text: "no theorems yet" }),
+      el("div.row.gap", null, el("button", { text: "← today", onclick: openTheoremModal })),
+    );
+    return;
+  }
+
+  const sorted = [...theorems.deck].sort(ORDERS[order].compare);
+
+  mount(body,
+    el("div.row.spread", null,
+      el("span.faint", {
+        text: `${theorems.deck.length} theorems · ${theorems.deck_size} in rotation`
+          + (retired ? ` · ${retired} retired` : ""),
+      }),
+      el("button", { text: "← today", onclick: openTheoremModal }),
+    ),
+    el("div.row.gap", null,
+      el("span.faint", { text: "sort:" }),
+      ...Object.entries(ORDERS).map(([key, { label }]) =>
+        el(`button${key === order ? ".primary" : ""}`, {
+          text: label,
+          onclick: () => {
+            order = key;
+            drawArchive(body);
+          },
         }),
       ),
     ),
+    el("div.archive", null, ...sorted.map((entry) => archiveEntry(body, entry))),
   );
+}
+
+/** One row: meta always visible, statement behind a disclosure. */
+function archiveEntry(body, entry) {
+  const card = entry.card;
+  const statement = el("div.statement", { text: card.statement });
+
+  // Lives in the details body, not the summary, so it needs no guard against
+  // toggling the disclosure -- only a summary click does that. Retiring
+  // therefore costs opening the card first, which suits an action you should
+  // take after rereading the statement rather than off a name alone.
+  const toggle = el("button", {
+    text: card.archived ? "restore" : "retire",
+    onclick: async () => {
+      put("theorems", await api.post("/api/theorem/archive", {
+        card_id: card.id,
+        archived: !card.archived,
+      }));
+      drawArchive(body);
+    },
+  });
+
+  const node = el("details.archive-item", null,
+    el("summary", null,
+      el("span", { class: card.archived ? "faint" : null, text: card.name }),
+      el("span.faint", {
+        text: ` · ${ago(entry.days_since)} · seen ${entry.seen}×`
+          + ` · recalled ${entry.recalled}×${card.archived ? " · retired" : ""}`,
+      }),
+    ),
+    statement,
+    el("div.row.spread", null,
+      el("span.faint", { text: `${card.topic} · added ${card.added}` }),
+      toggle,
+    ),
+  );
+
+  // Typeset the one you opened, not all of them. KaTeX over a hundred
+  // statements on mount is seconds of blocked main thread for content that is
+  // mostly still scrolled off screen.
+  node.addEventListener("toggle", () => typeset(statement), { once: true });
+  return node;
 }
