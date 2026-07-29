@@ -83,6 +83,48 @@ def test_the_theorem_card_is_logged_with_its_topic(settings, paid):
     assert entry["topic"] == settings.math.topic_for(TODAY)
 
 
+# --- undelimited LaTeX -----------------------------------------------------
+
+VANDERMONDE_AS_STORED = (
+    "\\sum_{k=0}^{r} \\binom{m}{k}\\binom{n}{r-k} = \\binom{m+n}{r}, "
+    "\\quad \\text{for non-negative integers } m, n, r."
+)
+"""The real thing, copied out of the deck. The model returned the formula
+with no `$` anywhere, so KaTeX left it as literal backslashes on the card."""
+
+
+def test_a_bare_formula_is_wrapped_so_it_can_render(settings, paid):
+    paid["reply"] = {
+        "name": "Vandermonde's Identity",
+        "statement": VANDERMONDE_AS_STORED,
+        "topic": "combinatorics",
+    }
+    card = content.theorem_from_prompt(settings, TODAY, "vandermonde's")
+    assert card.statement.startswith("$$") and card.statement.endswith("$$")
+    assert VANDERMONDE_AS_STORED.strip() in card.statement
+
+
+def test_a_statement_the_model_delimited_is_left_alone(settings, paid):
+    """One `$` means the model made a decision; do not second-guess where the
+    display breaks should go."""
+    delimited = "For $n \\ge 0$: $$\\binom{m+n}{r}=\\sum_k\\binom{m}{k}\\binom{n}{r-k}.$$"
+    paid["reply"] = {"name": "Vandermonde", "statement": delimited, "topic": "combinatorics"}
+    assert content.theorem_from_prompt(settings, TODAY, "x").statement == delimited
+
+
+def test_prose_without_maths_is_not_wrapped(settings, paid):
+    plain = "Every finite integral domain is a field."
+    paid["reply"] = {"name": "Wedderburn", "statement": plain, "topic": "algebra"}
+    assert content.theorem_from_prompt(settings, TODAY, "x").statement == plain
+
+
+def test_the_system_prompt_names_both_delimiters(settings):
+    """The prompt is the actual fix; the wrapper is only the net. If this ever
+    reverts to a bare "LaTeX ok", undelimited statements come back."""
+    assert "$$" in content._THEOREM_SYSTEM
+    assert "bare formula" in content._THEOREM_SYSTEM.lower()
+
+
 def test_topic_links_are_logged_once_and_then_served_from_cache(settings, repo, paid):
     """`topic_info` is keyed by topic, not date, so the second call is free —
     and a free call must not write a line claiming a cost."""

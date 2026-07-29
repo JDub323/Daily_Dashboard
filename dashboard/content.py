@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -395,7 +396,46 @@ def grade_sentences(
 # --- theorem cards ---------------------------------------------------------
 
 
-_THEOREM_SYSTEM = 'Respond ONLY JSON: {"name":"...","statement":"LaTeX ok","topic":"..."}'
+_THEOREM_SYSTEM = (
+    "Respond ONLY with JSON:\n"
+    '{"name":"the standard name of the theorem, plain text, no LaTeX",'
+    '"statement":"the statement, with EVERY mathematical expression wrapped in '
+    "LaTeX delimiters -- $..$ inline, $$..$$ display. Never emit a bare formula: "
+    'a statement that is only maths still needs its $$..$$ around it.",'
+    '"topic":"the mathematical field, one to three words"}'
+)
+"""Why the delimiters are spelled out rather than left as "LaTeX ok".
+
+The renderer converts what is *between* `$..$` or `$$..$$` and leaves
+everything else as text, so an undelimited formula reaches the card as
+literal backslashes -- which is exactly what happened to Vandermonde's
+Identity: `\\sum_{k=0}^{r} \\binom{m}{k}...` stored with no `$` anywhere.
+
+The math problem prompt has always named the delimiters explicitly and has
+never produced this, which is the evidence that the wording is the variable.
+`topic` is bounded for the same reason: unprompted, one card came back filed
+under "Combinatorics / Generating Functions (Complex Analysis applications in
+competition mathematics)", which is a sentence, not a topic.
+"""
+
+# Anything that looks like a LaTeX control sequence: a backslash followed by
+# letters, or a lone subscript/superscript brace group.
+_LATEX_HINT = re.compile(r"\\[a-zA-Z]+|[_^]\{")
+
+
+def _ensure_delimited(statement: str) -> str:
+    """Wrap a bare formula the model forgot to delimit.
+
+    The prompt above is the fix; this is the guarantee. A prompt shifts the
+    odds, and the failure mode it guards against is silent -- the card stores
+    fine, passes validation, and only looks wrong weeks later when it comes up
+    in a draw. One `$` anywhere means the model made a decision about
+    delimiting and it is not this function's business to second-guess it.
+    """
+    if "$" in statement or not _LATEX_HINT.search(statement):
+        return statement
+    log.warning("theorem statement arrived undelimited; wrapping: %.80s", statement)
+    return f"$${statement.strip()}$$"
 
 
 def _theorem(settings: Settings, date: dt.date, topic: str, user: str) -> d.TheoremCard:
@@ -405,7 +445,7 @@ def _theorem(settings: Settings, date: dt.date, topic: str, user: str) -> d.Theo
     try:
         return d.TheoremCard(
             name=raw["name"],
-            statement=raw["statement"],
+            statement=_ensure_delimited(raw["statement"]),
             topic=raw.get("topic") or topic,
             added=date,
         )
