@@ -98,6 +98,20 @@ class MathSettings(Base):
     rotation_start: dt.date | None = None
     anchors: dict[str, Rating]
 
+    areas: dict[str, str] = Field(default_factory=dict)
+    """topic -> the broad area it belongs to, the bucket a per-area rating uses.
+
+    Lives beside the rotation because it is metadata about that same list, and
+    is validated against it below: a rotation entry with no area would be a
+    topic whose results land nowhere, which is the kind of silent hole this
+    config's validators exist to catch at startup.
+
+    The buckets are deliberately coarse. Rating each of the 25 topics
+    separately sounds better and is worse -- a topic comes round for one week
+    per ~6-month cycle, so its `n` never grows and `k_factor` never leaves 96.
+    Six areas see roughly four times the traffic each.
+    """
+
     @field_validator("anchors")
     @classmethod
     def _non_empty(cls, v: dict[str, int]) -> dict[str, int]:
@@ -117,6 +131,31 @@ class MathSettings(Base):
                 f"{self.rotation_start} is a {self.rotation_start:%A}"
             )
         return self
+
+    @model_validator(mode="after")
+    def _every_rotation_topic_has_an_area(self) -> MathSettings:
+        if not self.areas:
+            return self  # per-area ratings are off; the pooled one still works
+        missing = [t for t in self.rotation if t not in self.areas]
+        if missing:
+            raise ValueError(f"[math.areas] is missing {len(missing)}: {missing[0]!r} and others")
+        return self
+
+    @property
+    def area_names(self) -> list[str]:
+        """The distinct areas, ordered by how many rotation slots each holds --
+        which is how much of the Putnam it represents, and so the order the
+        breakdown should read in."""
+        counts: dict[str, int] = {}
+        for topic in self.rotation:
+            area = self.areas.get(topic)
+            if area:
+                counts[area] = counts.get(area, 0) + 1
+        return sorted(counts, key=lambda a: (-counts[a], a))
+
+    def area_for(self, date: dt.date) -> str | None:
+        """The rating bucket for the week containing `date`."""
+        return self.areas.get(self.topic_for(date))
 
     def topic_for(self, date: dt.date) -> str:
         """The topic for the week containing `date`.

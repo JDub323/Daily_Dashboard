@@ -99,12 +99,18 @@ def load_pool(path: Path) -> list[dict[str, Any]]:
     return entries
 
 
-def to_problem(raw: dict[str, Any], settings: Settings, model: str) -> d.MathProblem:
+def to_problem(
+    raw: dict[str, Any], settings: Settings, model: str, date: dt.date | None = None
+) -> d.MathProblem:
     """Validate one generated or hand-written problem into the domain model.
 
     `MathProblem` forbids extra keys, so the mapping is explicit: this is the
     boundary where a malformed generation becomes a loud error instead of a
     half-populated dict that fails later in the browser.
+
+    `date` resolves the rotation topic and its rating area, both frozen onto
+    the row here. It is optional because the batch CLI validates problems
+    without serving them; those get their topic from the batch file instead.
     """
     missing = [k for k in ("source", "statement", "answer") if not raw.get(k)]
     if missing:
@@ -119,6 +125,7 @@ def to_problem(raw: dict[str, Any], settings: Settings, model: str) -> d.MathPro
     if len(hints) != 3:
         raise ContentError(f"expected 3 hints, got {len(hints)}")
 
+    topic = raw.get("topic") or (settings.math.topic_for(date) if date else None)
     return d.MathProblem(
         source=raw["source"],
         tier=tier,
@@ -129,6 +136,8 @@ def to_problem(raw: dict[str, Any], settings: Settings, model: str) -> d.MathPro
         verified_url=raw.get("verified_url") or None,
         model=model,
         generated_at=dt.datetime.now(),
+        topic=topic,
+        area=settings.math.areas.get(topic) if topic else None,
     )
 
 
@@ -153,8 +162,9 @@ def next_problem(
     did not run is a more expensive morning, not a broken one.
     """
     seen = set(repo.seen_sources())
+    rating = target_rating(settings, repo, date)
 
-    batched = _from_batch(settings, date, seen, repo.current_rating("math"))
+    batched = _from_batch(settings, date, seen, rating)
     if batched is not None:
         log.info("serving %s from the overnight batch (no LLM call)", batched.source)
         return _store(repo, batched, date)
@@ -162,10 +172,31 @@ def next_problem(
     for raw in load_pool(settings.path("problems")):
         if raw.get("source") and raw["source"] not in seen:
             log.info("serving %s from the hand-curated pool (no LLM call)", raw["source"])
-            problem = to_problem(raw, settings, HAND_CURATED)
+            problem = to_problem(raw, settings, HAND_CURATED, date)
             return _store(repo, problem, date)
 
-    return _store(repo, _generate_problem(settings, repo, date, sorted(seen), on_status), date)
+    return _store(repo, _generate_problem(settings, date, sorted(seen), rating, on_status), date)
+
+
+def target_rating(settings: Settings, repo: Repository, date: dt.date) -> int:
+    """The rating today's problem is pitched against.
+
+    The *area* rating for this week's topic, not the pooled one. This is the
+    whole point of rating by area: someone at 1700 overall who is 1450 at
+    geometry should get a geometry problem aimed at 1450, because a problem
+    pitched at 1700 teaches them nothing except that they are bad at geometry,
+    which they already knew.
+
+    Falls back to pooled when the rotation is off or the topic has no area --
+    and an area with no history *is* the pooled rating (see
+    `Repository.current_rating`), so week one of a new area pitches exactly
+    where the old behaviour did and only diverges once there is evidence.
+    """
+    area = settings.math.area_for(date)
+    rating = repo.current_rating("math", area)
+    if area is not None:
+        log.info("pitching today's problem at the %s rating (%d)", area, rating)
+    return rating
 
 
 BATCHED = "scheduled-task"
@@ -218,7 +249,7 @@ def _from_batch(
         return abs(anchor - rating) if anchor is not None else 10_000
 
     try:
-        return to_problem(min(usable, key=distance).model_dump(), settings, BATCHED)
+        return to_problem(min(usable, key=distance).model_dump(), settings, BATCHED, date)
     except ContentError:
         log.exception("batch at %s did not validate; falling through to the pool", path)
         return None
@@ -241,12 +272,13 @@ def _store(repo: Repository, problem: d.MathProblem, date: dt.date) -> d.MathPro
 
 def _generate_problem(
     settings: Settings,
-    repo: Repository,
     date: dt.date,
     seen: list[str],
+    rating: int,
     on_status: llm.StatusFn,
 ) -> d.MathProblem:
-    rating = repo.current_rating("math")
+    """`rating` is passed in rather than read here: `next_problem` resolves it
+    once so the batch, the pool and this all pitch at the same number."""
     started = time.time()
     # Owned here rather than taken from the return value: a generation that
     # dies on its third web search has still been paid for, and the old code
@@ -263,7 +295,7 @@ def _generate_problem(
             on_status=on_status,
             metrics=metrics,
         )
-        problem = to_problem(llm.extract_json(text), settings, settings.llm.model)
+        problem = to_problem(llm.extract_json(text), settings, settings.llm.model, date)
         return problem
     except json.JSONDecodeError as e:
         error = f"unparseable JSON: {e}"

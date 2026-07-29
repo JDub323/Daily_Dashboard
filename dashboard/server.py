@@ -205,7 +205,7 @@ def _register(app: FastAPI) -> None:
         return api.ConfigResponse(topic=cfg.math.topic_for(date), tickers=cfg.markets.tickers)
 
     @app.get("/api/state")
-    def dashboard_state(repo: Repo, date: Today) -> api.DashboardState:
+    def dashboard_state(cfg: Cfg, repo: Repo, date: Today) -> api.DashboardState:
         # A GET with a side effect, deliberately. Closing out yesterday's
         # unmarked problem needs to know what "yesterday" is, and [Invariant 1]
         # says only the browser knows that -- so the reconciliation happens on
@@ -222,7 +222,7 @@ def _register(app: FastAPI) -> None:
                 event.rating_before,
                 event.rating_after,
             )
-        return state.dashboard_state(repo, date)
+        return state.dashboard_state(cfg, repo, date)
 
     @app.get("/api/topic")
     def topic(cfg: Cfg, repo: Repo, date: Today) -> api.TopicResponse:
@@ -264,16 +264,16 @@ def _register(app: FastAPI) -> None:
         )
 
     @app.post("/api/math/hint")
-    def math_hint(repo: Repo, body: api.MathHintRequest) -> api.MathPanel:
+    def math_hint(cfg: Cfg, repo: Repo, body: api.MathHintRequest) -> api.MathPanel:
         repo.reveal_hint(body.date)
-        return state.math_panel(repo, body.date)
+        return state.math_panel(cfg, repo, body.date)
 
     @app.post("/api/math/finish")
-    def math_finish(repo: Repo, body: api.MathFinishRequest) -> api.MathPanel:
+    def math_finish(cfg: Cfg, repo: Repo, body: api.MathFinishRequest) -> api.MathPanel:
         # Scoring and the elo update happen in one transaction inside the
         # repository. The browser no longer does the arithmetic.
         repo.finish_math(body.date, body.outcome)
-        return state.math_panel(repo, body.date)
+        return state.math_panel(cfg, repo, body.date)
 
     # -- chess -------------------------------------------------------------
 

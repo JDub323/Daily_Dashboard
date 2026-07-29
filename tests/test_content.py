@@ -83,6 +83,100 @@ def test_the_theorem_card_is_logged_with_its_topic(settings, paid):
     assert entry["topic"] == settings.math.topic_for(TODAY)
 
 
+# --- which rating difficulty is pitched at ---------------------------------
+
+
+def _rate(repo, area, day_offset, score):
+    """One finished result in `area`, so it has a rating of its own.
+
+    `day_offset` is passed rather than derived: one attempt per date is a
+    primary key, so two results landing on the same day silently overwrite
+    each other and the test measures fewer events than it set up.
+    """
+    import datetime as dt
+
+    from dashboard.models import domain as d
+    from dashboard.models.common import MathOutcome
+
+    p = repo.add_problem(
+        d.MathProblem(
+            source=f"seeded problem {day_offset}",
+            tier="aime-late",
+            anchor=1500,
+            statement="s",
+            answer="a",
+            hints=["1", "2", "3"],
+            model="test",
+            generated_at=dt.datetime(2026, 7, 26, 9, 0),
+            topic="t",
+            area=area,
+        )
+    )
+    day = TODAY - dt.timedelta(days=day_offset + 1)
+    repo.open_math_attempt(day, p.id)
+    repo.finish_math(day, MathOutcome.solved if score else MathOutcome.failed)
+
+
+def test_the_target_rating_is_the_area_not_the_pool(settings, repo):
+    """The whole point: strong overall and weak at this week's area should
+    produce a problem aimed at the weak number."""
+    area = settings.math.area_for(TODAY)
+    assert area is not None
+    other = "geometry" if area != "geometry" else "algebra"
+
+    for i in range(3):  # three failures in this week's area
+        _rate(repo, area, i, score=0)
+    for i in range(3, 8):  # five solves elsewhere, lifting the pool back up
+        _rate(repo, other, i, score=1)
+
+    pooled = repo.current_rating("math")
+    target = content.target_rating(settings, repo, TODAY)
+    assert target == repo.current_rating("math", area)
+    assert target < pooled
+
+
+def test_an_untouched_area_pitches_exactly_where_the_pool_does(settings, repo):
+    """Week one of a new area must not suddenly serve 1500 problems to a
+    1700 player -- the fallback is the pooled rating, not the seed."""
+    assert content.target_rating(settings, repo, TODAY) == repo.current_rating("math")
+
+
+def test_the_target_falls_back_to_the_pool_with_no_area_map(settings, repo):
+    bare = settings.model_copy(update={"math": settings.math.model_copy(update={"areas": {}})})
+    assert content.target_rating(bare, repo, TODAY) == repo.current_rating("math")
+
+
+def test_a_generated_problem_records_its_topic_and_area(settings, repo, paid):
+    paid["reply"] = {
+        "source": "AIME 2011 Problem 7",
+        "tier": "aime-late",
+        "statement": "s",
+        "answer": "1",
+        "hint1": "a",
+        "hint2": "b",
+        "hint3": "c",
+    }
+    problem = content.to_problem(paid["reply"], settings, "test", TODAY)
+    assert problem.topic == settings.math.topic_for(TODAY)
+    assert problem.area == settings.math.area_for(TODAY)
+
+
+def test_a_problem_built_without_a_date_carries_no_area(settings):
+    """The batch CLI validates problems it is not serving; guessing a topic
+    for them would put results in a bucket they were never drawn for."""
+    raw = {
+        "source": "x 1",
+        "tier": "aime-late",
+        "statement": "s",
+        "answer": "1",
+        "hint1": "a",
+        "hint2": "b",
+        "hint3": "c",
+    }
+    problem = content.to_problem(raw, settings, "test")
+    assert problem.topic is None and problem.area is None
+
+
 # --- undelimited LaTeX -----------------------------------------------------
 
 VANDERMONDE_AS_STORED = (

@@ -316,6 +316,42 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE theorem_card_v2 RENAME TO theorem_card;
         """,
     ),
+    (
+        4,
+        """
+        -- Per-area math ratings, alongside the pooled one rather than
+        -- replacing it.
+        --
+        -- `area` NULL means "the pooled math rating" -- every row that exists
+        -- today, unchanged. That is the whole trick: `current_rating('math')`
+        -- gains `AND area IS NULL` and returns exactly what it returned
+        -- before, so the lineage this table exists to protect is not touched.
+        -- A result now writes two rows, one pooled and one for its area, and
+        -- the two ratings evolve independently.
+        --
+        -- ADD COLUMN rather than the 12-step rebuild: the new column is
+        -- nullable with no default, so there is nothing to backfill and no
+        -- CHECK to retrofit onto existing rows. rating_event is the one table
+        -- in this schema that cannot be regenerated, so it gets the smallest
+        -- change that works.
+        ALTER TABLE rating_event ADD COLUMN area TEXT;
+
+        CREATE INDEX rating_event_area ON rating_event (track, area, id);
+
+        -- What the problem was generated for. Nullable, and NULL on every
+        -- problem that predates this: the topic they were drawn under can be
+        -- guessed from the date and the rotation, but a guess written into a
+        -- column reads afterwards as a record. The rotation is config and can
+        -- be edited, which is exactly what makes the guess unreliable.
+        ALTER TABLE math_problem ADD COLUMN topic TEXT;
+
+        -- The resolved bucket, frozen here rather than looked up at scoring
+        -- time -- the same rule `opponent` already follows. [math.areas] is
+        -- config; if a topic is later reassigned to another area, the results
+        -- it has already produced must stay where they were earned.
+        ALTER TABLE math_problem ADD COLUMN area TEXT;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

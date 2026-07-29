@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as dt
 
 from . import scoring
+from .config import Settings
 from .db.repository import Repository
 from .models import api
 from .models.common import Game, HealthMetric, Track
@@ -44,21 +45,40 @@ def track_summary(repo: Repository, track: Track) -> api.TrackSummary:
 # --- panels ----------------------------------------------------------------
 
 
-def math_panel(repo: Repository, today: dt.date) -> api.MathPanel:
+def area_ratings(cfg: Settings, repo: Repository) -> list[api.AreaRating]:
+    """The breakdown, strongest first.
+
+    Sorted by rating rather than by the config's slot order: the question this
+    answers is "where am I weak", and the answer should be the last line, not
+    something to be found by scanning.
+    """
+    rows = repo.area_ratings(cfg.math.area_names)
+    return sorted(
+        (api.AreaRating(area=a, rating=r, events=n) for a, r, n in rows),
+        key=lambda x: -x.rating,
+    )
+
+
+def math_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.MathPanel:
     summary = track_summary(repo, Track.math)
+    base = {
+        "summary": summary,
+        "areas": area_ratings(cfg, repo),
+        "target_area": cfg.math.area_for(today),
+    }
     attempt = repo.math_attempt(today)
     if attempt is None:
-        return api.MathPanel(summary=summary)
+        return api.MathPanel(**base)
 
     problem = repo.problem(attempt.problem_id)
     if problem is None:
         # The attempt's FK guarantees this cannot happen; treating it as "no
         # problem today" rather than asserting keeps a corrupted row from
         # taking the whole dashboard down.
-        return api.MathPanel(summary=summary)
+        return api.MathPanel(**base)
 
     return api.MathPanel(
-        summary=summary,
+        **base,
         problem=problem,
         hints_revealed=attempt.hints_revealed,
         status=attempt.status.value,
@@ -151,10 +171,10 @@ def health_series(repo: Repository) -> list[api.HealthSeries]:
 # --- the boot payload ------------------------------------------------------
 
 
-def dashboard_state(repo: Repository, today: dt.date) -> api.DashboardState:
+def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.DashboardState:
     return api.DashboardState(
         date=today,
-        math=math_panel(repo, today),
+        math=math_panel(cfg, repo, today),
         chess=chess_panel(repo, today),
         word=repo.word(today),
         games=games_panel(repo, today),

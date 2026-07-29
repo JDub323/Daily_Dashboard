@@ -22,6 +22,34 @@ export function lastDelta(summary) {
   return el(`span.${last.delta >= 0 ? "delta-up" : "delta-down"}`, { text: `${sign}${last.delta}` });
 }
 
+/**
+ * The per-area breakdown, strongest first.
+ *
+ * The headline above stays the pooled rating. These are what difficulty is
+ * actually pitched against: the week's area drives the tier the generator is
+ * asked for, so a 1450 at geometry gets geometry problems aimed at 1450 even
+ * while the headline reads 1700.
+ *
+ * An area with no results yet shows the pooled rating standing in, dimmed —
+ * it is a placeholder, not something earned, and rendering it identically to
+ * a real one would be the cold-start problem wearing a disguise.
+ */
+function areaRow(math) {
+  if (!math.areas.length) return null;
+  return el("div.areas", null,
+    ...math.areas.map((a) =>
+      el(`span.area${a.area === math.target_area ? ".area-live" : ""}`, {
+        title: a.events
+          ? `${a.area}: ${a.events} result${a.events === 1 ? "" : "s"}`
+          : `${a.area}: no results yet — showing your overall rating`,
+      },
+        el("span.faint", { text: `${a.area} ` }),
+        el(`span${a.events ? "" : ".faint"}`, { text: a.rating }),
+      ),
+    ),
+  );
+}
+
 function topicLinks() {
   const info = store.topic;
   if (!info) return el("span.faint", { text: "topic links loading…" });
@@ -70,9 +98,10 @@ export default {
   async render(node) {
     const math = store.state.math;
     const head = summaryRow(math.summary);
+    const areas = areaRow(math);
 
     if (!math.problem) {
-      mount(node, head,
+      mount(node, head, areas,
         el("button.primary", {
           text: "get today's problem",
           onclick: (e) => {
@@ -94,7 +123,7 @@ export default {
 
     if (math.status !== "open") {
       const answer = answerLine(problem);
-      mount(node, head,
+      mount(node, head, areas,
         el("div.ok", null, `done for today ✓ (${problem.source}) `, lastDelta(math.summary)),
         answer,
       );
@@ -118,6 +147,10 @@ export default {
       // problem you just worked on — so the header is swapped in place rather
       // than re-rendering the panel into its "done for today" form.
       head.replaceWith(summaryRow(panel.summary));
+      // The area that just took the result moved too, and it is the number
+      // that decides tomorrow's difficulty — so it has to be visibly current,
+      // not correct only after a reload.
+      areas?.replaceWith(areaRow(panel));
       mount(answerSlot,
         answerLine(panel.problem, lastDelta(panel.summary),
           el("span.faint", { text: ` → ${panel.summary.rating}` })),
@@ -150,7 +183,7 @@ export default {
     solved.addEventListener("click", () => finish("solved", buttons));
     failed.addEventListener("click", () => finish("failed", buttons));
 
-    mount(node, head,
+    mount(node, head, areas,
       el("div.faint", null,
         `${problem.source} · tier ${problem.tier} (${problem.anchor})`,
         problem.verified_url ? " · " : null,

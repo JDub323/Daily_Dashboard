@@ -63,23 +63,36 @@ class Repository:
 
     # -- ratings ------------------------------------------------------------
 
-    def current_rating(self, track: Track) -> int:
+    def current_rating(self, track: Track, area: str | None = None) -> int:
         """The last *measured* rating_after, else the seed.
 
         Reconstructed rows carry NULL ratings, so they cannot contribute a
         rating here -- but a measured row that chained off one keeps whatever
         it recorded at the time. That is the PRESERVE rule: the imported
         trajectory is flagged, not rewritten.
+
+        `area=None` is the pooled rating and matches only `area IS NULL`, so
+        adding per-area rows cannot move the number the panel shows. An area
+        with no history yet seeds from the *pooled* rating rather than from
+        1500: a new bucket means "no evidence about this area", and the best
+        available estimate of someone with no evidence is what they score
+        everywhere else. Seeding at 1500 would instead assert they are average
+        at it, which is a claim, and a wrong one for anyone not rated 1500.
         """
         row = self.conn.execute(
-            "SELECT rating_after FROM rating_event "
-            "WHERE track = ? AND rating_after IS NOT NULL "
-            "ORDER BY id DESC LIMIT 1",
-            (Track(track).value,),
+            f"SELECT rating_after FROM rating_event "
+            f"WHERE track = ? AND rating_after IS NOT NULL "
+            f"AND area {'IS NULL' if area is None else '= ?'} "
+            f"ORDER BY id DESC LIMIT 1",
+            (Track(track).value,) if area is None else (Track(track).value, area),
         ).fetchone()
-        return row[0] if row else SEEDS[Track(track)]
+        if row:
+            return row[0]
+        if area is None:
+            return SEEDS[Track(track)]
+        return self.current_rating(track)
 
-    def event_count(self, track: Track) -> int:
+    def event_count(self, track: Track, area: str | None = None) -> int:
         """Attempts on this track -- the `n` that drives the K-factor.
 
         `reconstructed` rows count: provenance says the recorded numbers are
@@ -90,14 +103,41 @@ class Repository:
         Nobody attempted anything on a day that was never marked, so counting
         it would let a run of ghosted days shrink K -- growing confidence in a
         rating out of an absence of evidence.
+
+        Counted per area when one is given, so an area's K reflects evidence
+        about *that* area. It stays high for a long time, which is correct: an
+        area comes round for one week per rotation, so there genuinely is very
+        little evidence, and a rating that pretended otherwise would be a
+        confident wrong answer rather than an uncertain right one.
         """
         return self.conn.execute(
-            "SELECT COUNT(*) FROM rating_event WHERE track = ? AND provenance <> ?",
-            (Track(track).value, Provenance.lapsed.value),
+            f"SELECT COUNT(*) FROM rating_event "
+            f"WHERE track = ? AND provenance <> ? "
+            f"AND area {'IS NULL' if area is None else '= ?'}",
+            (Track(track).value, Provenance.lapsed.value)
+            if area is None
+            else (Track(track).value, Provenance.lapsed.value, area),
         ).fetchone()[0]
 
+    def area_ratings(self, areas: list[str]) -> list[tuple[str, int, int]]:
+        """`(area, rating, measured events)` for each, in the order given.
+
+        Areas with no history report the pooled rating and a count of zero,
+        which is what lets the panel show the whole breakdown from day one
+        instead of hiding five of six buckets for six months.
+        """
+        return [
+            (area, self.current_rating(Track.math, area), self.event_count(Track.math, area))
+            for area in areas
+        ]
+
     def rating_history(self, track: Track, limit: int | None = None) -> list[d.RatingEvent]:
-        sql = "SELECT * FROM rating_event WHERE track = ? ORDER BY id"
+        """The pooled trajectory -- what the elo chart plots.
+
+        `area IS NULL` because the chart is one line. Interleaving six area
+        series into it would draw a sawtooth that is not any rating's history.
+        """
+        sql = "SELECT * FROM rating_event WHERE track = ? AND area IS NULL ORDER BY id"
         rows = self.conn.execute(sql, (Track(track).value,)).fetchall()
         if limit is not None:
             rows = rows[-limit:]
@@ -134,7 +174,7 @@ class Repository:
         """
         rows = self.conn.execute(
             "SELECT score FROM rating_event WHERE track = ? AND provenance <> ? "
-            "ORDER BY id DESC LIMIT ?",
+            "AND area IS NULL ORDER BY id DESC LIMIT ?",
             (Track(track).value, Provenance.lapsed.value, window),
         ).fetchall()
         if not rows:
@@ -150,8 +190,9 @@ class Repository:
     def add_problem(self, problem: d.MathProblem) -> d.MathProblem:
         row = self.conn.execute(
             "INSERT INTO math_problem "
-            "(source, tier, anchor, statement, answer, hints, verified_url, model, generated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+            "(source, tier, anchor, statement, answer, hints, verified_url, model, "
+            "generated_at, topic, area) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
             (
                 problem.source,
                 problem.tier,
@@ -162,6 +203,8 @@ class Repository:
                 str(problem.verified_url) if problem.verified_url else None,
                 problem.model,
                 problem.generated_at.isoformat(),
+                problem.topic,
+                problem.area,
             ),
         ).fetchone()
         return d.MathProblem(**_unpack(row, "hints"))
@@ -234,26 +277,49 @@ class Repository:
             if row is None:
                 raise ValueError(f"math attempt on {date} was closed concurrently")
 
-            n = self.event_count(Track.math)
-            before = self.current_rating(Track.math)
-            k = scoring.k_factor(n)
-            after = scoring.elo_update(before, problem.anchor, score, n)
-            ev = self.conn.execute(
-                "INSERT INTO rating_event "
-                "(track, date, ref, opponent, score, k, rating_before, rating_after, provenance) "
-                "VALUES ('math', ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
-                (
-                    _iso(date),
-                    problem.source,
-                    problem.anchor,
-                    score,
-                    k,
-                    before,
-                    after,
-                    Provenance(provenance).value,
-                ),
-            ).fetchone()
-            return d.MathAttempt(**dict(row)), d.RatingEvent(**dict(ev))
+            ev = self._rate_math(date, problem, score, provenance, area=None)
+            # The same result, rated again inside its area. Second and inside
+            # the same transaction: the pooled row is the one the panel and
+            # the chart read, so it must not be able to exist without its
+            # partner or vice versa. A problem carrying no area -- every one
+            # generated before the column -- rates pooled only.
+            if problem.area is not None:
+                self._rate_math(date, problem, score, provenance, area=problem.area)
+            return d.MathAttempt(**dict(row)), ev
+
+    def _rate_math(
+        self,
+        date: dt.date,
+        problem: d.MathProblem,
+        score: float,
+        provenance: Provenance,
+        *,
+        area: str | None,
+    ) -> d.RatingEvent:
+        """One elo row against the problem's tier anchor. Caller holds the
+        transaction; `area=None` is the pooled rating."""
+        n = self.event_count(Track.math, area)
+        before = self.current_rating(Track.math, area)
+        k = scoring.k_factor(n)
+        after = scoring.elo_update(before, problem.anchor, score, n)
+        row = self.conn.execute(
+            "INSERT INTO rating_event "
+            "(track, date, ref, opponent, score, k, rating_before, rating_after, "
+            "provenance, area) "
+            "VALUES ('math', ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+            (
+                _iso(date),
+                problem.source,
+                problem.anchor,
+                score,
+                k,
+                before,
+                after,
+                Provenance(provenance).value,
+                area,
+            ),
+        ).fetchone()
+        return d.RatingEvent(**dict(row))
 
     def finish_math(
         self, date: dt.date, outcome: MathOutcome

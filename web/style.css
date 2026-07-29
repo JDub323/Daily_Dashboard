@@ -79,6 +79,15 @@ ul.clean { list-style: none; margin: 6px 0; padding: 0; }
 ul.clean li { margin: 5px 0; }
 
 /* ---- math panel ---- */
+/* The per-area rating strip under the headline elo. Wraps rather than
+   scrolls: six buckets fit on one line on desktop and two on mobile, and a
+   sideways-scrolling strip of six numbers is worse than a second line. */
+.areas { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0 6px; font-size: 11.5px; }
+.area { white-space: nowrap; }
+/* The area this week's topic rates into — the one setting today's difficulty. */
+.area-live { color: var(--gold); }
+.area-live > .faint { color: var(--gold-dim); }
+
 .statement { margin: 8px 0; }
 .answer { margin-top: 8px; }
 .hints > div { margin: 3px 0; }

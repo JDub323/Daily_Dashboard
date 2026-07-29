@@ -62,6 +62,12 @@ class RatingEvent(Base):
 
     provenance: Provenance = Provenance.measured
 
+    area: str | None = None
+    """NULL is the pooled rating -- the one the panel shows and the only kind
+    of row that existed before per-area ratings. A non-NULL area is the same
+    result rated again inside its bucket, so one solved problem writes two
+    rows that move two independent ratings."""
+
     @computed_field
     @property
     def delta(self) -> int | None:
@@ -100,6 +106,20 @@ class MathProblem(Base):
     verified_url: Url | None = None
     model: str
     generated_at: dt.datetime
+
+    topic: str | None = None
+    """The rotation topic this was generated for, recorded at generation time.
+
+    NULL on problems that predate the column. Not inferred from the date:
+    `topic_for` reads the rotation out of config, and config is editable, so a
+    reconstruction would silently change what a past problem "was about" the
+    next time the rotation is reordered."""
+
+    area: str | None = None
+    """The rating bucket, resolved from `topic` at generation time and frozen
+    here for the same reason `opponent` is frozen on a rating event: config
+    can be edited, and a result has to stay in the bucket it was earned in.
+    NULL rates pooled-only."""
 
 
 class MathAttempt(Base):

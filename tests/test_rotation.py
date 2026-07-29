@@ -138,34 +138,6 @@ def test_the_shipped_rotation_is_a_half_year_cycle(shipped):
     assert len(shipped.rotation) == 25
 
 
-AREAS = {
-    "generating functions": "combinatorics",
-    "limits and recursive sequences": "analysis",
-    "polynomial roots, Vieta, and symmetric functions": "algebra",
-    "bijections, inclusion-exclusion, and double counting": "combinatorics",
-    "modular arithmetic and congruences": "number theory",
-    "analytic and vector geometry in the plane": "geometry",
-    "infinite series - convergence, telescoping, rearrangement": "analysis",
-    "determinants and matrix manipulation": "algebra",
-    "linear recurrences and difference equations": "combinatorics",
-    "divisibility, primes, and factorization": "number theory",
-    "discrete probability and expected value": "probability",
-    "definite-integral technique": "analysis",
-    "polynomial identities, divisibility, and irreducibility": "algebra",
-    "pigeonhole and extremal arguments": "combinatorics",
-    "digits, base representations, and floor functions": "number theory",
-    "convexity, lattice points, and area arguments": "geometry",
-    "inequalities - AM-GM, Cauchy-Schwarz, Jensen, rearrangement": "analysis",
-    "eigenvalues, characteristic polynomials, and matrix powers": "algebra",
-    "combinatorial games and invariants": "combinatorics",
-    "multiplicative order, primitive roots, Fermat/Euler": "number theory",
-    "continuity, IVT, and the mean value theorems": "analysis",
-    "vector spaces, rank, and linear independence": "algebra",
-    "derivatives, Taylor expansion, and extrema": "analysis",
-    "finite group theory - orders, Lagrange, group actions": "algebra",
-    "functional equations": "analysis",
-}
-
 # Slots per area, proportional to that area's share of Putnam problems.
 EXPECTED_SLOTS = {
     "analysis": 7,  # ~28%
@@ -178,13 +150,16 @@ EXPECTED_SLOTS = {
 
 
 def test_the_area_map_covers_the_shipped_rotation(shipped):
-    assert set(shipped.rotation) == set(AREAS), "rotation and area map are out of sync"
+    """Now enforced by a config validator too -- a rotation topic with no area
+    would rate into nothing -- but kept here because this is the file that
+    explains why the map has to be total."""
+    assert set(shipped.rotation) == set(shipped.areas), "rotation and area map are out of sync"
 
 
 def test_no_area_repeats_in_consecutive_weeks(shipped):
     """The list is interleaved so you never get seven straight weeks of
     analysis. This pins the property rather than the exact ordering."""
-    sequence = [AREAS[t] for t in shipped.rotation]
+    sequence = [shipped.areas[t] for t in shipped.rotation]
     repeats = [
         (shipped.rotation[i], shipped.rotation[i + 1])
         for i in range(len(sequence) - 1)
@@ -196,8 +171,15 @@ def test_no_area_repeats_in_consecutive_weeks(shipped):
 def test_the_weighting_matches_the_putnam_shares(shipped):
     counts: dict[str, int] = {}
     for topic in shipped.rotation:
-        counts[AREAS[topic]] = counts.get(AREAS[topic], 0) + 1
+        counts[shipped.areas[topic]] = counts.get(shipped.areas[topic], 0) + 1
     assert counts == EXPECTED_SLOTS
+
+
+def test_area_names_are_ordered_by_coverage(shipped):
+    """`area_names` drives the order the ratings are computed in, and the
+    breakdown reads better when the biggest slice of the Putnam leads."""
+    assert shipped.area_names[0] == "analysis"
+    assert shipped.area_names[-1] == "probability"
 
 
 def test_analysis_gets_seven_times_the_slots_of_probability():

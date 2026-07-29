@@ -191,8 +191,26 @@ class TrackSummary(Base):
     history: list[RatingEvent] = Field(default_factory=list)
 
 
+class AreaRating(Base):
+    """One bucket of the math rating breakdown."""
+
+    area: str
+    rating: Rating
+    events: int
+    """Measured results in this area. Zero means `rating` is the pooled
+    rating standing in, not something earned -- the panel dims those."""
+
+
 class MathPanel(Base):
     summary: TrackSummary
+    areas: list[AreaRating] = Field(default_factory=list)
+    """Per-area ratings, strongest first. The headline in `summary` stays the
+    pooled rating; this is the breakdown under it, and the number today's
+    problem was pitched against."""
+
+    target_area: str | None = None
+    """The area this week's topic rates into -- the one driving difficulty."""
+
     problem: MathProblem | None = None
     hints_revealed: int = 0
     status: str = "open"

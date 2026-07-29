@@ -94,6 +94,35 @@ rotation = [
 
 # Fixed elo anchors per problem tier. The LLM picks a tier, never a number,
 # so the math rating scale cannot drift.
+# topic -> broad area, the bucket its results rate into. Validated against
+# `rotation` at startup: a topic with no area would rate into nothing.
+[math.areas]
+"generating functions"                                        = "combinatorics"
+"limits and recursive sequences"                              = "analysis"
+"polynomial roots, Vieta, and symmetric functions"            = "algebra"
+"bijections, inclusion-exclusion, and double counting"        = "combinatorics"
+"modular arithmetic and congruences"                          = "number theory"
+"analytic and vector geometry in the plane"                   = "geometry"
+"infinite series - convergence, telescoping, rearrangement"   = "analysis"
+"determinants and matrix manipulation"                        = "algebra"
+"linear recurrences and difference equations"                 = "combinatorics"
+"divisibility, primes, and factorization"                     = "number theory"
+"discrete probability and expected value"                     = "probability"
+"definite-integral technique"                                 = "analysis"
+"polynomial identities, divisibility, and irreducibility"     = "algebra"
+"pigeonhole and extremal arguments"                           = "combinatorics"
+"digits, base representations, and floor functions"           = "number theory"
+"convexity, lattice points, and area arguments"               = "geometry"
+"inequalities - AM-GM, Cauchy-Schwarz, Jensen, rearrangement" = "analysis"
+"eigenvalues, characteristic polynomials, and matrix powers"  = "algebra"
+"combinatorial games and invariants"                          = "combinatorics"
+"multiplicative order, primitive roots, Fermat/Euler"         = "number theory"
+"continuity, IVT, and the mean value theorems"                = "analysis"
+"vector spaces, rank, and linear independence"                = "algebra"
+"derivatives, Taylor expansion, and extrema"                  = "analysis"
+"finite group theory - orders, Lagrange, group actions"       = "algebra"
+"functional equations"                                        = "analysis"
+
 [math.anchors]
 amc = 1100
 "aime-early" = 1300

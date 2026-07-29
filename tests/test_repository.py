@@ -198,6 +198,128 @@ def test_a_duplicate_source_is_rejected(repo, problem):
         repo.add_problem(problem.model_copy(update={"id": None}))
 
 
+# --- per-area ratings ------------------------------------------------------
+
+
+def _area_problem(repo, source: str, area: str | None, anchor: int = 1500) -> d.MathProblem:
+    return repo.add_problem(
+        d.MathProblem(
+            source=source,
+            tier="aime-late",
+            anchor=anchor,
+            statement="s",
+            answer="a",
+            hints=["1", "2", "3"],
+            model="test",
+            generated_at=dt.datetime(2026, 7, 26, 9, 0),
+            topic="t" if area else None,
+            area=area,
+        )
+    )
+
+
+def test_an_area_with_no_history_reports_the_pooled_rating(repo, problem):
+    """Not the 1500 seed: a new bucket means no evidence, and the best guess
+    about someone with no evidence is what they score everywhere else."""
+    repo.open_math_attempt(TODAY, problem.id)
+    repo.finish_math(TODAY, MathOutcome.solved)
+    pooled = repo.current_rating(Track.math)
+    assert pooled != scoring.MATH_SEED
+    assert repo.current_rating(Track.math, "geometry") == pooled
+    assert repo.event_count(Track.math, "geometry") == 0
+
+
+def test_one_result_writes_a_pooled_row_and_an_area_row(repo):
+    p = _area_problem(repo, "AIME 1999 P1", "algebra")
+    repo.open_math_attempt(TODAY, p.id)
+    repo.finish_math(TODAY, MathOutcome.solved)
+
+    assert repo.event_count(Track.math) == 1
+    assert repo.event_count(Track.math, "algebra") == 1
+    rows = repo.conn.execute("SELECT area FROM rating_event WHERE track='math'").fetchall()
+    assert sorted(r[0] or "" for r in rows) == ["", "algebra"]
+
+
+def test_an_area_result_does_not_disturb_a_different_area(repo):
+    p = _area_problem(repo, "AIME 1999 P2", "algebra")
+    repo.open_math_attempt(TODAY, p.id)
+    repo.finish_math(TODAY, MathOutcome.solved)
+    pooled = repo.current_rating(Track.math)
+
+    assert repo.current_rating(Track.math, "algebra") > scoring.MATH_SEED
+    # geometry has no rows of its own, so it tracks the pooled rating -- which
+    # did move, because the pooled rating rates every result.
+    assert repo.current_rating(Track.math, "geometry") == pooled
+    assert repo.event_count(Track.math, "geometry") == 0
+
+
+def test_the_pooled_rating_is_unchanged_by_the_area_row(repo):
+    """The guarantee the whole design rests on: `area IS NULL` means the
+    pooled lineage evolves exactly as it did before areas existed."""
+    with_area = _area_problem(repo, "AIME 1999 P3", "algebra")
+    repo.open_math_attempt(TODAY, with_area.id)
+    _, event = repo.finish_math(TODAY, MathOutcome.solved)
+
+    assert event.area is None
+    assert event.rating_before == scoring.MATH_SEED
+    assert event.rating_after == scoring.elo_update(scoring.MATH_SEED, 1500, 1.0, 0)
+
+
+def test_a_problem_with_no_area_rates_pooled_only(repo, problem):
+    """Every problem generated before the column. It must still rate."""
+    assert problem.area is None
+    repo.open_math_attempt(TODAY, problem.id)
+    repo.finish_math(TODAY, MathOutcome.solved)
+    assert repo.event_count(Track.math) == 1
+    rows = repo.conn.execute("SELECT COUNT(*) FROM rating_event WHERE area IS NOT NULL").fetchone()
+    assert rows[0] == 0
+
+
+def test_area_k_falls_independently_of_the_pooled_k(repo):
+    """An area's K reflects evidence about that area, so it stays high while
+    the pooled K comes down -- which is the honest reading, not a bug."""
+    for i in range(4):
+        p = _area_problem(repo, f"AIME 2001 P{i}", "algebra" if i == 0 else "geometry")
+        day = TODAY + dt.timedelta(days=i)
+        repo.open_math_attempt(day, p.id)
+        repo.finish_math(day, MathOutcome.solved)
+
+    assert repo.event_count(Track.math) == 4
+    assert repo.event_count(Track.math, "algebra") == 1
+    assert scoring.k_factor(repo.event_count(Track.math, "algebra")) > scoring.k_factor(
+        repo.event_count(Track.math)
+    )
+
+
+def test_a_lapse_rates_the_area_too(repo):
+    """A ghosted day costs the area as well as the pool; otherwise skipping a
+    week of your weakest area would protect that area's rating."""
+    p = _area_problem(repo, "AIME 2002 P1", "geometry")
+    repo.open_math_attempt(TODAY, p.id)
+    repo.lapse_math(TODAY)
+    assert repo.current_rating(Track.math, "geometry") < scoring.MATH_SEED
+
+
+def test_the_chart_and_success_rate_read_the_pooled_series_only(repo):
+    p = _area_problem(repo, "AIME 2003 P1", "algebra")
+    repo.open_math_attempt(TODAY, p.id)
+    repo.finish_math(TODAY, MathOutcome.solved)
+
+    assert [e.area for e in repo.rating_history(Track.math)] == [None]
+    assert repo.success_rate(Track.math) == 100
+
+
+def test_area_ratings_reports_every_bucket_asked_for(repo):
+    p = _area_problem(repo, "AIME 2004 P1", "algebra")
+    repo.open_math_attempt(TODAY, p.id)
+    repo.finish_math(TODAY, MathOutcome.solved)
+
+    rows = dict((a, (r, n)) for a, r, n in repo.area_ratings(["algebra", "geometry"]))
+    assert rows["algebra"][1] == 1
+    assert rows["geometry"][1] == 0
+    assert rows["geometry"][0] == repo.current_rating(Track.math)
+
+
 # --- chess -----------------------------------------------------------------
 
 
