@@ -19,7 +19,6 @@ from .common import (
     PaperStatus,
     Provenance,
     Rating,
-    ReviewQuality,
     Score,
     Track,
     Url,
@@ -186,28 +185,38 @@ class PokedokuResult(Base):
 
 
 class TheoremCard(Base):
+    """One theorem in the deck. Carries no schedule.
+
+    A card knows what it is and when you added it; *when it next appears* is
+    not a property of the card at all, it is a draw over the whole deck. That
+    is the entire difference from the SM-2 shape this replaced, where every
+    card walked its own `due` forward and the deck was whatever happened to
+    land on today.
+    """
+
     id: int | None = None
     name: str
     statement: str
     topic: str
-    due: dt.date
-    interval: int = Field(ge=1, default=1)
-    ease: float = Field(ge=1.3, le=3.0, default=2.5)
+    added: dt.date
+    archived: bool = False
 
 
-class TheoremReview(Base):
-    """Append-only review log. No equivalent in state.json.
+class TheoremDraw(Base):
+    """The day's theorem, and whether you say you remembered it.
 
-    Costs one table and makes the SM-2 scheduler testable against a real
-    history rather than only against its next output.
+    Append-only and keyed by date, so it is both the record and the schedule:
+    `days since last appeared` is a query over this table, not a stored
+    countdown that can drift out of step with what you were actually shown.
     """
 
-    id: int | None = None
-    card_id: int
     date: dt.date
-    quality: ReviewQuality
-    interval_after: int = Field(ge=1)
-    ease_after: float = Field(ge=1.3, le=3.0)
+    card_id: int
+
+    recalled: bool | None = None
+    """NULL until the self-check. Deliberately not defaulted to False -- "you
+    have not answered yet" and "you missed it" are different days, and only
+    the second one is a data point."""
 
 
 # --- papers ----------------------------------------------------------------

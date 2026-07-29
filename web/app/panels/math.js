@@ -32,6 +32,23 @@ function topicLinks() {
   );
 }
 
+/**
+ * `answer: 42 · full solution ↗` — the one place the answer line is built.
+ *
+ * The link is `verified_url`, the page the generator checked the problem
+ * against before serving it. It was already on screen as a bare "verified ✓"
+ * in the header, where it reads as a provenance claim rather than as what it
+ * also is: an AoPS page with worked solutions on it. Nothing new is fetched.
+ */
+function answerLine(problem, ...extra) {
+  return el("div.answer", null,
+    `answer: ${problem.answer} `,
+    ...extra,
+    problem.verified_url ? " · " : null,
+    problem.verified_url ? link(problem.verified_url, "full solution ↗") : null,
+  );
+}
+
 async function generate(node, panel) {
   const status = el("span.dim", { text: "starting…" });
   mount(node, el("div.row", null, el("span.spinner"), status));
@@ -76,7 +93,7 @@ export default {
     const problem = math.problem;
 
     if (math.status !== "open") {
-      const answer = el("div.answer", { text: `answer: ${problem.answer}` });
+      const answer = answerLine(problem);
       mount(node, head,
         el("div.ok", null, `done for today ✓ (${problem.source}) `, lastDelta(math.summary)),
         answer,
@@ -102,16 +119,28 @@ export default {
       // than re-rendering the panel into its "done for today" form.
       head.replaceWith(summaryRow(panel.summary));
       mount(answerSlot,
-        el("div.answer", null, `answer: ${panel.problem.answer} `, lastDelta(panel.summary),
+        answerLine(panel.problem, lastDelta(panel.summary),
           el("span.faint", { text: ` → ${panel.summary.rating}` })),
       );
       typeset(answerSlot);
     };
 
     const hintButton = el("button", { text: `hint ${math.hints_revealed}/3` });
+    // Free, and deliberately not a fourth hint. The score is self-reported
+    // either way, and the answer was already in the panel payload — declining
+    // to render it was never a control, only an inconvenience. What this buys
+    // is checking your work *before* committing to "solved", which the old
+    // order made impossible: you had to declare, then find out.
+    const revealAnswer = el("button", { text: "reveal answer" });
     const solved = el("button.ok", { text: "solved" });
     const failed = el("button.bad", { text: "couldn't solve" });
-    const buttons = [hintButton, solved, failed];
+    const buttons = [hintButton, revealAnswer, solved, failed];
+
+    revealAnswer.addEventListener("click", () => {
+      revealAnswer.disabled = true;
+      mount(answerSlot, answerLine(problem));
+      typeset(answerSlot);
+    });
 
     hintButton.addEventListener("click", async () => {
       if (math.hints_revealed >= 3) return;
@@ -129,7 +158,7 @@ export default {
       ),
       statement,
       revealed,
-      el("div.row", null, hintButton, solved, failed),
+      el("div.row", null, hintButton, revealAnswer, solved, failed),
       answerSlot,
     );
     typeset(node);

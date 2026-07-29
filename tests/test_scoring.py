@@ -1,4 +1,4 @@
-"""Elo, hint penalties, SM-2 and streaks.
+"""Elo, hint penalties, the theorem draw and streaks.
 
 These are the functions the plan singled out: the most defect-prone code in
 the app, and until now the only way to verify the elo maths was to actually
@@ -8,11 +8,13 @@ solve a chess puzzle.
 from __future__ import annotations
 
 import datetime as dt
+import random
+from collections import Counter
 
 import pytest
 
 from dashboard import scoring
-from dashboard.models.common import ChessOutcome, MathOutcome, ReviewQuality
+from dashboard.models.common import ChessOutcome, MathOutcome
 
 # --- K factor --------------------------------------------------------------
 
@@ -141,56 +143,70 @@ def test_chess_score_accepts_the_raw_string_from_the_wire():
     assert scoring.chess_score("messy") == 0.4
 
 
-# --- SM-2 ------------------------------------------------------------------
+# --- the theorem draw ------------------------------------------------------
 
 
-def test_blank_resets_the_interval_but_keeps_the_card():
-    interval, ease = scoring.sm2_review(ReviewQuality.blank, 30, 2.5)
-    assert interval == 1
-    assert ease == pytest.approx(2.2)
+def test_a_theorem_seen_yesterday_cannot_come_up_today():
+    """The rule the whole draw is built around."""
+    assert scoring.draw_weight(1) == 0.0
 
 
-def test_hard_grows_the_interval_slowly_and_lowers_ease():
-    interval, ease = scoring.sm2_review(ReviewQuality.hard, 10, 2.5)
-    assert ease == pytest.approx(2.35)
-    assert interval == 12  # 10 * 1.2, not 10 * ease
+def test_the_cooldown_covers_today_as_well_as_yesterday():
+    assert scoring.draw_weight(0) == 0.0
 
 
-def test_good_leaves_ease_alone_and_multiplies_by_it():
-    interval, ease = scoring.sm2_review(ReviewQuality.good, 10, 2.5)
-    assert ease == pytest.approx(2.5)
-    assert interval == 25
+def test_weight_is_measured_from_the_first_eligible_day():
+    """(days - cooldown) ** exponent, so the first eligible day weighs 1 —
+    not 2 ** exponent, which would make the cooldown edge a cliff."""
+    assert scoring.draw_weight(2) == 1.0
+    assert scoring.draw_weight(3) == 4.0
+    assert scoring.draw_weight(11) == 100.0
 
 
-def test_easy_raises_ease_and_the_new_ease_drives_the_interval():
-    """The ease is updated first — 10 * 2.65, not 10 * 2.5."""
-    interval, ease = scoring.sm2_review(ReviewQuality.easy, 10, 2.5)
-    assert ease == pytest.approx(2.65)
-    assert interval == 27
+def test_the_long_tail_dominates_at_the_default_exponent():
+    """A month unseen against two days unseen, which is the ratio that keeps
+    a large deck from collapsing onto its most recent few cards."""
+    assert scoring.draw_weight(30) / scoring.draw_weight(2) == pytest.approx(841.0)
 
 
-def test_ease_is_clamped_at_both_ends():
-    """The old client clamped only the floor, so a card answered `easy`
-    repeatedly drifted past 3.0 — which the theorem_card CHECK now rejects."""
-    ease = 2.5
-    for _ in range(20):
-        _, ease = scoring.sm2_review(ReviewQuality.easy, 1, ease)
-    assert ease == scoring.EASE_CEILING
-
-    ease = 2.5
-    for _ in range(20):
-        _, ease = scoring.sm2_review(ReviewQuality.blank, 1, ease)
-    assert ease == scoring.EASE_FLOOR
+def test_a_zero_exponent_is_a_uniform_draw_over_everything_off_cooldown():
+    assert scoring.draw_weight(2, exponent=0.0) == 1.0
+    assert scoring.draw_weight(300, exponent=0.0) == 1.0
 
 
-def test_the_interval_never_falls_below_one_day():
-    interval, _ = scoring.sm2_review(ReviewQuality.good, 1, 1.3)
-    assert interval >= 1
+def test_a_longer_cooldown_silences_more_recent_cards():
+    assert scoring.draw_weight(5, cooldown=7) == 0.0
+    assert scoring.draw_weight(9, cooldown=7) == 4.0
 
 
-def test_a_zero_interval_is_treated_as_one():
-    interval, _ = scoring.sm2_review(ReviewQuality.good, 0, 2.5)
-    assert interval == 3  # max(1, 0) * 2.5
+def test_a_zero_cooldown_still_refuses_a_card_drawn_today():
+    """`days_since <= cooldown` rather than `< cooldown`: with the cooldown
+    turned off, yesterday is fair game but the same day is not."""
+    assert scoring.draw_weight(0, cooldown=0) == 0.0
+    assert scoring.draw_weight(1, cooldown=0) == 1.0
+
+
+def test_the_draw_is_proportional_to_the_weights():
+    rng = random.Random(0)
+    counts = Counter(scoring.weighted_draw([1.0, 9.0], rng) for _ in range(4000))
+    assert counts[1] / 4000 == pytest.approx(0.9, abs=0.02)
+
+
+def test_a_zero_weight_card_is_never_drawn_when_another_is_eligible():
+    rng = random.Random(0)
+    assert {scoring.weighted_draw([0.0, 1.0, 0.0], rng) for _ in range(200)} == {1}
+
+
+def test_an_all_zero_deck_falls_back_to_uniform_rather_than_refusing():
+    """Reachable with a one-card deck drawn yesterday. Showing the card again
+    is the only honest answer; showing nothing reads as a broken feature."""
+    rng = random.Random(0)
+    assert scoring.weighted_draw([0.0], rng) == 0
+    assert {scoring.weighted_draw([0.0, 0.0], rng) for _ in range(200)} == {0, 1}
+
+
+def test_an_empty_deck_draws_nothing():
+    assert scoring.weighted_draw([]) == -1
 
 
 # --- streaks ---------------------------------------------------------------

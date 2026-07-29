@@ -5,6 +5,10 @@ This is where the prompts live. It is deliberately the only module that both
 talks to `llm` and writes through `Repository`, so that "what a generation
 costs" and "what it is allowed to persist" are answerable by reading one file.
 
+Every paid call goes through `_generate_problem` or `_json_generation`, and
+both append a line to metrics.jsonl. That is the invariant that makes the log
+worth reading: if a call is not in the file, it did not happen.
+
 `problems.json` is resolved here. It was tracked in git *and* appended to on
 every generation, so it churned on every commit while claiming to be
 hand-editable. It now has exactly one role: a hand-curated pool of problems to
@@ -94,7 +98,7 @@ def load_pool(path: Path) -> list[dict[str, Any]]:
     return entries
 
 
-def _to_problem(raw: dict[str, Any], settings: Settings, model: str) -> d.MathProblem:
+def to_problem(raw: dict[str, Any], settings: Settings, model: str) -> d.MathProblem:
     """Validate one generated or hand-written problem into the domain model.
 
     `MathProblem` forbids extra keys, so the mapping is explicit: this is the
@@ -133,19 +137,90 @@ def next_problem(
     date: dt.date,
     on_status: llm.StatusFn = None,
 ) -> d.MathProblem:
-    """Today's problem: from the pool if one is unseen, else generated.
+    """Today's problem, from the cheapest source that has one.
 
-    Serving the pool first is the cost-conscious path -- a hand-written
-    problem is free, a verified generation is roughly $0.02-0.04.
+    Three sources, tried in order, and the ordering is the cost control:
+
+    1. The overnight batch, dropped by the scheduled task. Free -- it was
+       generated against a subscription rather than the API.
+    2. The hand-curated pool in problems.json. Free.
+    3. A paid generation, $0.15-0.80. (The old figure here was $0.02-0.04,
+       taken from a metrics log that was undercounting web-search input
+       tokens by ~5x.)
+
+    Every step degrades to the next rather than failing, so a night the task
+    did not run is a more expensive morning, not a broken one.
     """
     seen = set(repo.seen_sources())
+
+    batched = _from_batch(settings, date, seen, repo.current_rating("math"))
+    if batched is not None:
+        log.info("serving %s from the overnight batch (no LLM call)", batched.source)
+        return _store(repo, batched, date)
+
     for raw in load_pool(settings.path("problems")):
         if raw.get("source") and raw["source"] not in seen:
             log.info("serving %s from the hand-curated pool (no LLM call)", raw["source"])
-            problem = _to_problem(raw, settings, HAND_CURATED)
+            problem = to_problem(raw, settings, HAND_CURATED)
             return _store(repo, problem, date)
 
     return _store(repo, _generate_problem(settings, repo, date, sorted(seen), on_status), date)
+
+
+BATCHED = "scheduled-task"
+"""The `model` recorded for a problem that came from the overnight batch.
+Distinguishes it in the log from a paid generation and from the pool."""
+
+
+def _from_batch(
+    settings: Settings, date: dt.date, seen: set[str], rating: int
+) -> d.MathProblem | None:
+    """The rung of today's ladder closest to the rating, or None.
+
+    Returns None rather than raising for every failure mode -- no file, bad
+    JSON, every rung already seen. A batch is an optimisation, and an
+    optimisation that can take the math panel down is not one. Anything
+    surprising goes to the log with a traceback; the caller just falls
+    through to the pool.
+
+    The ladder is ordered by the generator from easiest to hardest and each
+    rung carries its own tier, so "closest to the rating" is a lookup against
+    the configured anchors rather than anything the generator decided.
+    """
+    path = settings.path("batches") / f"{date.isoformat()}.json"
+    if not path.exists():
+        return None
+
+    # Imported here rather than at module scope: `batch` imports this module
+    # for `to_problem`, and the models package is the shared bottom layer.
+    from .models.batch import DailyBatch
+
+    try:
+        batch = DailyBatch(**json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError, ValueError):
+        log.exception("unusable batch at %s; falling through to the pool", path)
+        return None
+
+    usable = [p for p in batch.problems if p.source not in seen]
+    if not usable:
+        log.warning(
+            "every problem in %s has been served already (%d rung(s)); falling through",
+            path.name,
+            len(batch.problems),
+        )
+        return None
+
+    def distance(p: Any) -> int:
+        anchor = settings.math.anchors.get(p.tier)
+        # An unknown tier sorts last rather than crashing; `to_problem` will
+        # substitute the default tier and log the substitution.
+        return abs(anchor - rating) if anchor is not None else 10_000
+
+    try:
+        return to_problem(min(usable, key=distance).model_dump(), settings, BATCHED)
+    except ContentError:
+        log.exception("batch at %s did not validate; falling through to the pool", path)
+        return None
 
 
 def _store(repo: Repository, problem: d.MathProblem, date: dt.date) -> d.MathProblem:
@@ -172,18 +247,22 @@ def _generate_problem(
 ) -> d.MathProblem:
     rating = repo.current_rating("math")
     started = time.time()
-    metrics: llm.Metrics | None = None
+    # Owned here rather than taken from the return value: a generation that
+    # dies on its third web search has still been paid for, and the old code
+    # left `metrics` as None on that path and logged the spend as nothing.
+    metrics = llm.Metrics()
     problem: d.MathProblem | None = None
     error: str | None = None
     try:
-        text, metrics = llm.call(
+        text, _ = llm.call(
             settings.llm,
             PROBLEM_SYSTEM,
             _problem_prompt(settings, rating, date, seen),
             tools=llm.web_search_tool(settings.llm.web_search_max_uses),
             on_status=on_status,
+            metrics=metrics,
         )
-        problem = _to_problem(llm.extract_json(text), settings, settings.llm.model)
+        problem = to_problem(llm.extract_json(text), settings, settings.llm.model)
         return problem
     except json.JSONDecodeError as e:
         error = f"unparseable JSON: {e}"
@@ -215,14 +294,69 @@ def _generate_problem(
             on_status("done ✓")
 
 
+# --- the smaller generations -----------------------------------------------
+
+
+def _json_generation(
+    settings: Settings,
+    *,
+    kind: str,
+    date: dt.date,
+    system: str,
+    user: str,
+    **extra: Any,
+) -> Any:
+    """One JSON generation, with its cost appended to metrics.jsonl.
+
+    The math problem was logged from the day it was written. The word, the
+    grader, the theorem card and the topic links called `llm.json_call`
+    directly and were never recorded at all. They bill to the same API key and
+    land on the same Anthropic invoice, so the log answered "what did today
+    cost?" with one line item and silently dropped the rest -- worse than not
+    answering, because it looks like an answer.
+
+    Every paid call from this module now goes through here or through
+    `_generate_problem`. There is deliberately no third path to `llm`.
+    """
+    started = time.time()
+    metrics = llm.Metrics()  # owned here, so a failure is still logged with its cost
+    error: str | None = None
+    ok = False
+    try:
+        raw = llm.json_call(settings.llm, system, user, metrics=metrics)
+        ok = True
+        return raw
+    except Exception as e:
+        error = str(e) or type(e).__name__
+        log.exception("%s generation failed", kind)
+        raise
+    finally:
+        llm.log_generation(
+            settings.path("metrics"),
+            llm.record(
+                kind=kind,
+                date=date,
+                model=settings.llm.model,
+                started=started,
+                settings=settings.llm,
+                metrics=metrics,
+                ok=ok,
+                error=error,
+                **extra,
+            ),
+        )
+
+
 # --- word of the day -------------------------------------------------------
 
 
 def word_of_day(settings: Settings, date: dt.date) -> d.WordOfDay:
-    raw = llm.json_call(
-        settings.llm,
-        'Respond ONLY JSON: {"word":"...","pos":"...","definition":"..."}',
-        f"Pick an uncommon-but-usable English word of the day for {date.isoformat()}. "
+    raw = _json_generation(
+        settings,
+        kind="word",
+        date=date,
+        system='Respond ONLY JSON: {"word":"...","pos":"...","definition":"..."}',
+        user=f"Pick an uncommon-but-usable English word of the day for {date.isoformat()}. "
         f"Deterministic-ish: base the choice on that date.",
     )
     try:
@@ -233,13 +367,22 @@ def word_of_day(settings: Settings, date: dt.date) -> d.WordOfDay:
         raise ContentError(f"the word generation was missing {e}") from e
 
 
-def grade_sentences(settings: Settings, word: str, sentences: list[str]) -> d.WordGrade:
-    raw = llm.json_call(
-        settings.llm,
-        "You grade vocabulary practice. Respond ONLY JSON: "
+def grade_sentences(
+    settings: Settings, date: dt.date, word: str, sentences: list[str]
+) -> d.WordGrade:
+    """Grade the five practice sentences.
+
+    Takes `date` only so the grading can be attributed to a day in the cost
+    log -- it plays no part in the grading itself.
+    """
+    raw = _json_generation(
+        settings,
+        kind="word-grade",
+        date=date,
+        system="You grade vocabulary practice. Respond ONLY JSON: "
         '{"distinct":bool,"per_sentence":[{"ok":bool,"note":"short"} x5],'
         '"verdict":"one line"}',
-        f'Word: "{word}". Are these five sentences each correct usages AND semantically '
+        user=f'Word: "{word}". Are these five sentences each correct usages AND semantically '
         f"distinct from each other (different senses/contexts, not rewordings)?\n"
         + "\n".join(f"{i + 1}. {s}" for i, s in enumerate(sentences)),
     )
@@ -252,23 +395,58 @@ def grade_sentences(settings: Settings, word: str, sentences: list[str]) -> d.Wo
 # --- theorem cards ---------------------------------------------------------
 
 
-def theorem_card(settings: Settings, date: dt.date) -> d.TheoremCard:
-    topic = settings.math.topic_for(date)
-    raw = llm.json_call(
-        settings.llm,
-        'Respond ONLY JSON: {"name":"...","statement":"LaTeX ok","topic":"..."}',
-        f"Give one important theorem or definition from the topic '{topic}' "
-        f"suitable for a spaced-repetition recall card.",
+_THEOREM_SYSTEM = 'Respond ONLY JSON: {"name":"...","statement":"LaTeX ok","topic":"..."}'
+
+
+def _theorem(settings: Settings, date: dt.date, topic: str, user: str) -> d.TheoremCard:
+    raw = _json_generation(
+        settings, kind="theorem", date=date, topic=topic, system=_THEOREM_SYSTEM, user=user
     )
     try:
         return d.TheoremCard(
             name=raw["name"],
             statement=raw["statement"],
             topic=raw.get("topic") or topic,
-            due=date,
+            added=date,
         )
     except (KeyError, TypeError) as e:
         raise ContentError(f"the theorem generation was missing {e}") from e
+
+
+def theorem_card(settings: Settings, date: dt.date) -> d.TheoremCard:
+    """A theorem the model picks, from the week's rotating topic."""
+    topic = settings.math.topic_for(date)
+    return _theorem(
+        settings,
+        date,
+        topic,
+        f"Give one important theorem or definition from the topic '{topic}' "
+        f"suitable for a recall card.",
+    )
+
+
+def theorem_from_prompt(settings: Settings, date: dt.date, prompt: str) -> d.TheoremCard:
+    """A theorem *you* pick, named in as few words as you like.
+
+    The whole flow this exists for is: finish a problem, read the cleaner
+    proof, notice the trick that made it clean, and type its name. So the
+    prompt is a fragment -- "Vandermonde's", "triple roots of unity filter" --
+    and the model's job is to resolve the fragment and write the statement.
+
+    `topic` is asked for rather than taken from the weekly rotation: a
+    theorem you met today is filed under what it *is*, not under whatever the
+    calendar happened to be showing when you added it.
+    """
+    return _theorem(
+        settings,
+        date,
+        settings.math.topic_for(date),
+        f"The user wants a recall card for: {prompt!r}. Identify the theorem, "
+        f"technique or definition they mean, give its standard name, state it "
+        f"precisely, and name the mathematical topic it belongs to. If the "
+        f"phrase is ambiguous, take the reading most common in competition "
+        f"mathematics.",
+    )
 
 
 # --- topic reference links -------------------------------------------------
@@ -298,12 +476,15 @@ def topic_info(settings: Settings, repo: Repository, date: dt.date) -> TopicResp
     if cached:
         return TopicResponse(**cached.model_dump())
 
-    raw = llm.json_call(
-        settings.llm,
-        'Respond ONLY JSON: {"textbook":{"title":"...","url":"link to a FREE online '
+    raw = _json_generation(
+        settings,
+        kind="topic",
+        date=date,
+        topic=topic,
+        system='Respond ONLY JSON: {"textbook":{"title":"...","url":"link to a FREE online '
         'textbook on the topic"},"theorems":[{"title":"...","url":"..."} x6, the most '
         "important theorems/techniques for the topic]}",
-        f"Topic: {topic}. Give the canonical free textbook and six key theorems with "
+        user=f"Topic: {topic}. Give the canonical free textbook and six key theorems with "
         f"reference links.",
     )
     try:

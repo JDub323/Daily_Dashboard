@@ -50,6 +50,10 @@ class PathSettings(Base):
     metrics: str = "metrics.jsonl"
     static: str = "."
 
+    batches: str = "batches"
+    """Where the overnight scheduled task drops `<date>.json`. Serving one is
+    free; generating one costs an API call. See `dashboard/batch.py`."""
+
 
 class ModelPricing(Base):
     input: float = Field(gt=0)
@@ -137,6 +141,19 @@ class MathSettings(Base):
         return sorted(self.anchors, key=lambda t: self.anchors[t])[len(self.anchors) // 2]
 
 
+class TheoremSettings(Base):
+    """How the day's theorem is drawn. See `scoring.draw_weight`."""
+
+    cooldown_days: int = Field(default=1, ge=0, le=30)
+    """Days after an appearance during which a card cannot be drawn at all.
+    1 means "not the same theorem two days running", which is the rule that
+    makes the draw feel like recall rather than a slideshow."""
+
+    recency_exponent: float = Field(default=2.0, ge=0.0, le=6.0)
+    """How sharply the odds favour a long-unseen theorem. 0 is a uniform
+    draw over everything off cooldown; 2 is the default steep curve."""
+
+
 class MarketSettings(Base):
     tickers: list[str] = Field(default_factory=list)
     cache_seconds: int = Field(default=600, ge=0)
@@ -195,6 +212,7 @@ class Settings(Base):
     paths: PathSettings = Field(default_factory=PathSettings)
     llm: LlmSettings
     math: MathSettings
+    theorems: TheoremSettings = Field(default_factory=TheoremSettings)
     markets: MarketSettings = Field(default_factory=MarketSettings)
     calendar: CalendarSettings = Field(default_factory=CalendarSettings)
     news: NewsSettings = Field(default_factory=NewsSettings)

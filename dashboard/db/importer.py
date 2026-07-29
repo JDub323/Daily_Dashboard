@@ -229,15 +229,17 @@ def import_state(repo: Repository, state: dict, problems: list[dict]) -> ImportR
         rep.count("pokedoku_result")
 
     # -- theorems -----------------------------------------------------------
+    # The legacy cards carry SM-2 state (`due`, `interval`, `ease`) that the
+    # deck no longer has anywhere to put. `due` is kept as `added` -- for a
+    # card that was never reviewed the two are the same date, and one that was
+    # loses only a schedule that has been replaced wholesale.
     for c in state["theorems"].get("cards", []):
         repo.add_card(
             d.TheoremCard(
                 name=c["name"],
                 statement=c["statement"],
                 topic=c["topic"],
-                due=_date(c["due"]),
-                interval=c.get("interval", 1),
-                ease=c.get("ease", 2.5),
+                added=_date(c["due"]),
             )
         )
         rep.count("theorem_card")

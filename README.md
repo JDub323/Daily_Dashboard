@@ -28,7 +28,7 @@ PY=~/.local/share/daily-dashboard/venv/bin; $PY/python -m pytest && npm test && 
 
 248 Python tests and 20 JavaScript ones; none touch the network, the API, `dashboard.db`, or `state.json`. The JS runner is node's built-in `node --test`, so there is nothing to `npm install`.
 
-The suite is weighted toward the code that was hardest to check by hand: the elo curve, the hint penalty, SM-2, streaks, the LaTeX-in-JSON repair, the cache's exception policy, the double-submit guards, and the `state.json` importer's PROVENANCE/PRESERVE rules.
+The suite is weighted toward the code that was hardest to check by hand: the elo curve, the hint penalty, the theorem draw, streaks, the LaTeX-in-JSON repair, the cache's exception policy, the double-submit guards, and the `state.json` importer's PROVENANCE/PRESERVE rules.
 
 ## Layout
 
@@ -36,7 +36,7 @@ The suite is weighted toward the code that was hardest to check by hand: the elo
 dashboard/            the server
   config.py     config.toml -> validated settings
   logs.py       logging setup
-  scoring.py    elo, SM-2, streaks — pure, no DB/network/clock
+  scoring.py    elo, the theorem draw, streaks — pure, no DB/network/clock
   llm.py        one streaming Anthropic client + cost accounting
   feeds.py      RSS, Yahoo, arXiv, lichess, gcalcli + the stale-tolerant cache
   content.py    prompts; the only module that both calls the LLM and persists
@@ -76,7 +76,7 @@ UI: task chips (top) → gold when done; three columns: feeds (calendar/markets/
 - **One endpoint per write.** `POST /api/state` and `/api/state/merge` are gone — a browser tab can no longer replace the world with what it happened to be holding. Every write is a per-column `UPDATE` behind `Repository`.
 - **The browser owns "today".** Every dated request carries the browser's local date. The server never calls `date.today()` to decide what day it is.
 - **Elo**: dynamic K = max(24, 96/(1+n/8)) — fast movement with little history, stabilizing over time. The current rating is *derived* from the append-only `rating_event` log; the rating and the update are computed inside one transaction, so two tabs can't both read the same rating and clobber each other.
-- **Math problems**: served from `problems.json` when an unseen one is there, otherwise LLM-generated with the web-search server tool (max 4 searches) and verified against AoPS before being shown (~$0.02–0.04/day). Theorem/textbook links come from `[topic_library]` in `config.toml`, not the LLM.
+- **Math problems**: served from `problems.json` when an unseen one is there, otherwise LLM-generated with the web-search server tool (max 4 searches) and verified against AoPS before being shown (~$0.15–0.80 per generation — the search results dominate the bill, so the pool is the real cost control). Theorem/textbook links come from `[topic_library]` in `config.toml`, not the LLM.
 - **Chess**: a lichess link plus three self-report buttons. Clean = 1.0, with mistakes = 0.4, fail = 0. The puzzle rating is still the elo opponent.
 - **Feeds** (markets/calendar/news/paper) are cached server-side and serve stale data when the *source* is unreachable. A bug in our own parsing propagates instead — a stale panel and a broken parser used to look identical.
 - **No `innerHTML`.** Every panel builds real nodes through `dom.js`, so text is a text node and escaping is structural rather than a hand-rolled `esc()` each render has to remember to call.

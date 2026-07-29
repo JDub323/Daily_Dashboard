@@ -15,7 +15,6 @@ import { store } from "./store.js";
 
 function tasks() {
   const s = store.state;
-  const due = s.theorems.due.length;
   return [
     { id: "math", label: "math problem", done: s.math.status !== "open", open: () => focusPanel("math") },
     { id: "chess", label: "chess puzzle", done: s.chess.status !== "open", open: () => focusPanel("chess") },
@@ -23,9 +22,11 @@ function tasks() {
     { id: "wordle", label: "wordle", done: Boolean(s.games.wordle_today), open: () => openGamesModal("wordle") },
     { id: "pokedoku", label: "pokedoku", done: Boolean(s.games.pokedoku_today), open: () => openGamesModal("pokedoku") },
     {
+      // Done means answered, not merely drawn. The boot payload never draws,
+      // so an unopened day shows `today: null` — which is correctly not done.
       id: "theorem",
-      label: due ? `theorems (${due} due)` : "theorems",
-      done: s.theorems.deck_size > 0 && due === 0,
+      label: "theorem recall",
+      done: s.theorems.recalled !== null,
       open: openTheoremModal,
     },
     {

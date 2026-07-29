@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-from collections.abc import Iterable
+import random
+from collections.abc import Iterable, Sequence
 
-from .models.common import ChessOutcome, MathOutcome, ReviewQuality
+from .models.common import ChessOutcome, MathOutcome
 
 # --- elo -------------------------------------------------------------------
 
@@ -91,6 +92,22 @@ def math_score(outcome: MathOutcome, hints_revealed: int) -> float:
     return round(1.0 - HINT_PENALTY * hints_revealed, 4)
 
 
+LAPSE_SCORE = 0.0
+"""What a drawn-but-never-marked day scores.
+
+Zero, against the anchor of the problem that was actually drawn -- so ghosting
+a day costs exactly what admitting you failed it costs, never less. Any gentler
+figure would make silence cheaper than an honest "couldn't solve", which is the
+one incentive this must not create.
+
+The lapse only fires for a day that was *opened*: no problem drawn, no
+penalty. A week away during finals therefore costs nothing, while abandoning a
+problem you asked for costs a full result. That asymmetry is the point, and it
+is why this is a constant here rather than a decay curve -- there is nothing to
+tune once "you started it" is the trigger.
+"""
+
+
 _CHESS_SCORES = {
     ChessOutcome.clean: 1.0,
     ChessOutcome.messy: 0.4,
@@ -103,31 +120,70 @@ def chess_score(outcome: ChessOutcome) -> float:
     return _CHESS_SCORES[ChessOutcome(outcome)]
 
 
-# --- spaced repetition -----------------------------------------------------
+# --- the theorem draw ------------------------------------------------------
+"""Which theorem comes up today.
 
-EASE_FLOOR = 1.3
-EASE_CEILING = 3.0
-EASE_STEP = 0.15
-HARD_MULTIPLIER = 1.2
+This replaced SM-2. SM-2 asked "when is this card next due?" and answered per
+card, which meant the day's workload was whatever happened to land on it: zero
+cards on a Tuesday, six on a Wednesday. The deck here is hand-curated -- you
+add a theorem the moment you meet it in a problem -- and the question is the
+other one: given that exactly one theorem comes up today, which?
+
+The answer is a weighted sample over the deck where the only input is how long
+it has been since the theorem last appeared. Nothing about how well you did
+enters the weight. That is a decision, not an omission: the self-check is
+there so you know whether you knew it, and the moment a miss shortens the
+interval you have an incentive to grade generously to keep your deck quiet.
+Recency alone cannot be gamed, because you do not choose it.
+
+Unlike the elo constants above these two are overridable from `[theorems]` in
+config.toml. The rule this module's header states -- constants live here
+because changing them rewrites history -- does not bind: a draw is sampled
+fresh every day and reinterprets nothing that already happened. The values
+below are the defaults, not the only permitted answer.
+"""
+
+COOLDOWN_DAYS = 1
+RECENCY_EXPONENT = 2.0
 
 
-def sm2_review(quality: ReviewQuality, interval: int, ease: float) -> tuple[int, float]:
-    """The SM-2-lite scheduler, ported from app.js:834-841.
+def draw_weight(
+    days_since: int, *, cooldown: int = COOLDOWN_DAYS, exponent: float = RECENCY_EXPONENT
+) -> float:
+    """Relative likelihood of a card that last appeared `days_since` days ago.
 
-    Returns the next `(interval_days, ease)`. The ease is updated first and
-    the new value drives the interval, matching the original.
+    Zero through the cooldown -- a theorem you saw yesterday is one you still
+    remember, and drawing it tests nothing. Past that the weight grows as
+    `(days_since - cooldown) ** exponent`, so the gap is measured from the
+    first day the card is eligible at all rather than from the day it
+    appeared. Without that subtraction the first eligible day already carries
+    a weight of `2 ** exponent` and the cliff at the cooldown edge is a jump
+    rather than a start.
 
-    The ceiling is new. The old client only clamped the floor, so a card
-    answered `easy` eight times drifted past 3.0 -- which the `theorem_card`
-    CHECK constraint now rejects outright. Clamping is the conservative
-    reading: the intent was a bounded ease, and only one bound was written.
+    At the default exponent of 2 a theorem unseen for a month is roughly 840x
+    likelier than one unseen for two days. That is intentionally steep: with a
+    deck of any size a linear weight leaves the long tail effectively never
+    drawn.
     """
-    q = int(ReviewQuality(quality))
-    ease = min(EASE_CEILING, max(EASE_FLOOR, ease + (q - 3) * EASE_STEP))
-    if q == ReviewQuality.blank:
-        return 1, ease
-    multiplier = HARD_MULTIPLIER if q == ReviewQuality.hard else ease
-    return max(1, _round_half_up(max(1, interval) * multiplier)), ease
+    if days_since <= cooldown:
+        return 0.0
+    return float(days_since - cooldown) ** exponent
+
+
+def weighted_draw(weights: Sequence[float], rng: random.Random | None = None) -> int:
+    """Index sampled proportional to `weights`, or -1 for an empty sequence.
+
+    Falls back to a uniform draw when every weight is zero. That is reachable
+    with a one-card deck drawn yesterday, and the honest behaviour is to show
+    the card again rather than to show nothing -- a deck of one has no other
+    answer, and refusing to draw would read as the feature being broken.
+    """
+    if not weights:
+        return -1
+    rng = rng or random.Random()
+    if sum(weights) <= 0.0:
+        return rng.randrange(len(weights))
+    return rng.choices(range(len(weights)), weights=weights, k=1)[0]
 
 
 # --- streaks ---------------------------------------------------------------

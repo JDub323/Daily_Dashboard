@@ -103,7 +103,31 @@ def games_panel(repo: Repository, today: dt.date) -> api.GamesPanel:
 
 
 def theorems_panel(repo: Repository, today: dt.date) -> api.TheoremsPanel:
-    return api.TheoremsPanel(due=repo.due_cards(today), deck_size=repo.deck_size())
+    """The deck and today's draw, if one has happened.
+
+    Read-only, like everything here: this reports the draw, it does not make
+    it. A boot that drew would mean the theorem of the day changed depending
+    on whether you happened to open the tab -- and the module that draws has
+    to be one that writes.
+    """
+    drawn = repo.draw(today)
+    last = repo.last_drawn()
+    counts = repo.recall_counts()
+    deck = [
+        api.TheoremDeckEntry(
+            card=card,
+            days_since=(today - last[card.id]).days if card.id in last else None,
+            seen=counts.get(card.id, (0, 0))[0],
+            recalled=counts.get(card.id, (0, 0))[1],
+        )
+        for card in repo.deck(include_archived=True)
+    ]
+    return api.TheoremsPanel(
+        today=repo.card(drawn.card_id) if drawn else None,
+        recalled=drawn.recalled if drawn else None,
+        deck=deck,
+        deck_size=repo.deck_size(),
+    )
 
 
 def papers_panel(repo: Repository, today: dt.date) -> api.PapersPanel:

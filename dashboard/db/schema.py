@@ -193,6 +193,129 @@ MIGRATIONS: list[tuple[int, str]] = [
         ) STRICT;
         """,
     ),
+    (
+        2,
+        """
+        -- Adds the `lapsed` state: a problem drawn and never marked,
+        -- auto-scored as a failure once the day is over.
+        --
+        -- Both changes are CHECK constraints, which SQLite cannot ALTER, so
+        -- this is the 12-step rebuild. Neither table is referenced by a
+        -- foreign key, so the drop-and-rename is safe with foreign_keys ON;
+        -- the copies are `SELECT` by explicit column list rather than `*` so
+        -- a future column added to one and not the other fails loudly here
+        -- instead of shifting values silently.
+
+        CREATE TABLE rating_event_v2 (
+            id             INTEGER PRIMARY KEY,
+            track          TEXT    NOT NULL CHECK (track IN ('math', 'chess')),
+            date           TEXT    NOT NULL CHECK (date IS strftime('%Y-%m-%d', date)),
+            ref            TEXT    NOT NULL,
+            opponent       INTEGER NOT NULL CHECK (opponent BETWEEN 100 AND 4000),
+            score          REAL    NOT NULL CHECK (score BETWEEN 0.0 AND 1.0),
+            k              INTEGER NOT NULL CHECK (k >= 1),
+            rating_before  INTEGER,
+            rating_after   INTEGER,
+            provenance     TEXT    NOT NULL DEFAULT 'measured'
+                                   CHECK (provenance IN ('measured', 'reconstructed',
+                                                         'lapsed')),
+            -- Unchanged, and still true of a lapse: only `reconstructed`
+            -- fabricated its trajectory, so only `reconstructed` stores NULL.
+            CHECK ((rating_before IS NULL) = (rating_after IS NULL)),
+            CHECK ((rating_after IS NULL) = (provenance = 'reconstructed'))
+        ) STRICT;
+
+        INSERT INTO rating_event_v2
+            (id, track, date, ref, opponent, score, k,
+             rating_before, rating_after, provenance)
+        SELECT id, track, date, ref, opponent, score, k,
+               rating_before, rating_after, provenance
+        FROM rating_event;
+
+        DROP TABLE rating_event;
+        ALTER TABLE rating_event_v2 RENAME TO rating_event;
+        CREATE INDEX rating_event_track_id ON rating_event (track, id);
+
+        CREATE TABLE math_attempt_v2 (
+            date            TEXT    PRIMARY KEY
+                                    CHECK (date IS strftime('%Y-%m-%d', date)),
+            problem_id      INTEGER NOT NULL REFERENCES math_problem (id),
+            hints_revealed  INTEGER NOT NULL DEFAULT 0
+                                    CHECK (hints_revealed BETWEEN 0 AND 3),
+            status          TEXT    NOT NULL DEFAULT 'open'
+                                    CHECK (status IN ('open', 'solved', 'failed',
+                                                      'lapsed')),
+            score           REAL    CHECK (score IS NULL OR score BETWEEN 0.0 AND 1.0),
+            -- A lapse is closed and carries score 0.0, so "open iff unscored"
+            -- survives the new state unchanged.
+            CHECK ((status = 'open') = (score IS NULL))
+        ) STRICT;
+
+        INSERT INTO math_attempt_v2 (date, problem_id, hints_revealed, status, score)
+        SELECT date, problem_id, hints_revealed, status, score FROM math_attempt;
+
+        DROP TABLE math_attempt;
+        ALTER TABLE math_attempt_v2 RENAME TO math_attempt;
+        """,
+    ),
+    (
+        3,
+        """
+        -- Theorems stop being a spaced-repetition queue and become a deck you
+        -- curate by hand, drawn from once a day.
+        --
+        -- `due`/`interval`/`ease` go: SM-2 decided *when* a card came back,
+        -- and the replacement decides *how likely* it is to, from one number
+        -- (days since it last appeared) computed from the draw log. Keeping
+        -- the columns would leave two schedulers in the schema and one of
+        -- them a lie.
+        --
+        -- `added` inherits the old `due`, which for a never-reviewed card was
+        -- exactly its creation date -- the only cards that exist here.
+
+        CREATE TABLE theorem_card_v2 (
+            id         INTEGER PRIMARY KEY,
+            name       TEXT    NOT NULL,
+            statement  TEXT    NOT NULL,
+            topic      TEXT    NOT NULL,
+            added      TEXT    NOT NULL
+                               CHECK (added IS strftime('%Y-%m-%d', added)),
+            -- Retired, not deleted: an archived card stops being drawn but
+            -- keeps its history, so the deck can be pruned without lying
+            -- about what you have seen.
+            archived   INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1))
+        ) STRICT;
+
+        INSERT INTO theorem_card_v2 (id, name, statement, topic, added)
+        SELECT id, name, statement, topic, due FROM theorem_card;
+
+        -- One draw per day, and the date is the key: that is what makes a
+        -- reload idempotent. Without it every GET rerolls the day's theorem,
+        -- which is both a different card each refresh and a corrupt recency
+        -- history.
+        CREATE TABLE theorem_draw (
+            date      TEXT    PRIMARY KEY
+                              CHECK (date IS strftime('%Y-%m-%d', date)),
+            card_id   INTEGER NOT NULL REFERENCES theorem_card_v2 (id)
+                              ON DELETE CASCADE,
+            -- NULL until you say. A drawn-but-unanswered card still counts as
+            -- having appeared -- you saw the name.
+            recalled  INTEGER CHECK (recalled IS NULL OR recalled IN (0, 1))
+        ) STRICT;
+
+        CREATE INDEX theorem_draw_card ON theorem_draw (card_id, date);
+
+        -- The review log folds into the draw log: a graded review was an
+        -- appearance, and `good`/`easy` (3-4) was a recall. GROUP BY date
+        -- keeps the one-draw-per-day key from a history that allowed several.
+        INSERT INTO theorem_draw (date, card_id, recalled)
+        SELECT date, card_id, quality >= 3 FROM theorem_review GROUP BY date;
+
+        DROP TABLE theorem_review;
+        DROP TABLE theorem_card;
+        ALTER TABLE theorem_card_v2 RENAME TO theorem_card;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

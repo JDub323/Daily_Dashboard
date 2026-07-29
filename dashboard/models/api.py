@@ -28,7 +28,6 @@ from .common import (
     HealthMetric,
     MathOutcome,
     Rating,
-    ReviewQuality,
     Score,
     Url,
 )
@@ -116,9 +115,24 @@ class TheoremNewRequest(DateBody):
     pass
 
 
-class TheoremReviewRequest(DateBody):
+class TheoremAddRequest(DateBody):
+    """ "add Vandermonde's" -- a name, not a statement.
+
+    The point of the deck is that adding to it costs one phrase typed while
+    the problem you just met it in is still on screen. Writing the statement
+    out is what stopped the old deck from growing, so the LLM does it.
+    """
+
+    prompt: str = Field(min_length=2, max_length=200)
+
+
+class TheoremRecallRequest(DateBody):
+    recalled: bool
+
+
+class TheoremArchiveRequest(DateBody):
     card_id: int
-    quality: ReviewQuality
+    archived: bool = True
 
 
 class WordleLogRequest(DateBody):
@@ -213,9 +227,28 @@ class PapersPanel(Base):
     cleared_count: int = 0
 
 
+class TheoremDeckEntry(Base):
+    """A card plus the two numbers that explain its odds."""
+
+    card: TheoremCard
+    days_since: int | None = None
+    """None for a card that has never been drawn."""
+
+    seen: int = 0
+    recalled: int = 0
+
+
 class TheoremsPanel(Base):
-    due: list[TheoremCard] = Field(default_factory=list)
+    today: TheoremCard | None = None
+    """Null until the day's draw happens, which is a GET of its own rather
+    than part of the boot payload -- see `theorem_today` in the server."""
+
+    recalled: bool | None = None
+    """Today's self-check: null unanswered, else what you said."""
+
+    deck: list[TheoremDeckEntry] = Field(default_factory=list)
     deck_size: int = 0
+    """Active cards only. `len(deck)` includes the archived ones."""
 
 
 class HealthSeries(Base):

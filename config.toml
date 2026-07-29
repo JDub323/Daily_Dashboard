@@ -103,6 +103,13 @@ amc = 1100
 "olympiad-hard" = 1900
 "putnam-late" = 2050
 
+# One theorem a day, sampled from the deck you curate. The weight of a card is
+# (days since it last appeared - cooldown_days) ** recency_exponent, and zero
+# through the cooldown -- so yesterday's theorem cannot be today's.
+[theorems]
+cooldown_days = 1
+recency_exponent = 2.0
+
 [markets]
 tickers = ["^SPX", "AAPL", "MSFT", "NVDA"]
 cache_seconds = 600

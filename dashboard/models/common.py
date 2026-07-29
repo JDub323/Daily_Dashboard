@@ -8,7 +8,7 @@ that only fails three layers later in the browser.
 
 from __future__ import annotations
 
-from enum import IntEnum, StrEnum
+from enum import StrEnum
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
@@ -49,11 +49,24 @@ class Provenance(StrEnum):
     _backfill_ratings rather than measured. The date/score/ref on these rows
     are genuine; rating_before/rating_after are not, and are stored NULL."""
 
+    lapsed = "lapsed"
+    """Auto-scored: the problem was drawn and the day ended with no mark.
+
+    The rating change is real and the numbers are trustworthy, so unlike
+    `reconstructed` these rows carry ratings. What they are not is *evidence
+    about skill* -- nobody attempted anything -- so they are excluded from the
+    K-factor's `n` and from `success_rate`. A day you ghosted should cost you
+    rating without also making the estimate more confident."""
+
 
 class MathStatus(StrEnum):
     open = "open"
     solved = "solved"
     failed = "failed"
+
+    lapsed = "lapsed"
+    """Drawn but never marked, and the day is over. Scored as a failure --
+    only reachable through `Repository.lapse_math`, never from the client."""
 
 
 class ChessStatus(StrEnum):
@@ -98,10 +111,7 @@ class Game(StrEnum):
     pokedoku = "pokedoku"
 
 
-class ReviewQuality(IntEnum):
-    """SM-2 recall grades, matching the four buttons."""
-
-    blank = 1
-    hard = 2
-    good = 3
-    easy = 4
+# Deliberately absent: `ReviewQuality`, the four SM-2 grades. The theorem
+# self-check is one bit -- you remembered it or you did not -- because nothing
+# reads the grade any more. A four-way scale whose only consumer is a
+# histogram is a scale you will stop answering honestly.

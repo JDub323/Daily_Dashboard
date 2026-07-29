@@ -7,7 +7,10 @@ with no way to exercise it short of paying for one.
 
 from __future__ import annotations
 
+import datetime as dt
+import io
 import json
+import time
 
 import pytest
 
@@ -131,12 +134,32 @@ def test_an_unpriced_model_falls_back_to_the_standard_rate():
     assert llm.est_cost(cfg, "some-future-model", metrics) == pytest.approx(3.0)
 
 
-def test_a_verified_generation_lands_in_the_expected_daily_range():
-    """The plan approved web-search verification at ~$0.02-0.04/day; this is
-    the tripwire for that budget quietly changing."""
+def test_a_verified_generation_lands_in_the_expected_range():
+    """The budget tripwire, rebuilt against a real invoice.
+
+    It used to assert $0.02-0.04 for a 6k-input, 2-search generation — and it
+    passed, because both the number and the shape came from a log that was
+    undercounting search input tokens by ~5x. The estimate and the meter
+    agreed with each other and not with the Anthropic console.
+
+    These figures are reverse-engineered from an observed $0.80 charge: four
+    searches drag in a few hundred thousand input tokens, and *that* is the
+    bill. Output and the per-search fee together are under a quarter of it.
+    """
     cfg = settings(web_search_cost_usd=0.01)
-    typical = llm.Metrics(input_tokens=6_000, output_tokens=1_500, web_searches=2)
-    assert 0.02 <= llm.est_cost(cfg, "claude-sonnet-5", typical) <= 0.05
+    typical = llm.Metrics(input_tokens=320_000, output_tokens=11_700, web_searches=4)
+    cost = llm.est_cost(cfg, "claude-sonnet-5", typical)
+    assert cost == pytest.approx(0.80, abs=0.01)
+    assert 0.15 <= cost <= 1.00
+
+
+def test_search_input_tokens_dominate_the_bill():
+    """Why `max_uses` is a cost control and not just a latency guard: the
+    per-search fee is noise next to what the results cost to read."""
+    cfg = settings(web_search_cost_usd=0.01)
+    m = llm.Metrics(input_tokens=320_000, output_tokens=11_700, web_searches=4)
+    search_fees = m.web_searches * cfg.web_search_cost_usd
+    assert search_fees / llm.est_cost(cfg, "claude-sonnet-5", m) < 0.1
 
 
 # --- pause_turn continuation ----------------------------------------------
@@ -165,3 +188,145 @@ def test_a_missing_api_key_is_a_clear_error_not_a_traceback(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     with pytest.raises(llm.LlmError, match="ANTHROPIC_API_KEY"):
         llm.call(settings(), "sys", "user")
+
+
+# --- usage accounting ------------------------------------------------------
+
+
+def sse(*events: dict) -> io.BytesIO:
+    """A fake SSE body. `BytesIO` iterates by line and is a context manager,
+    which is the whole interface `_stream_once` asks of a response."""
+    body = "".join(f"data: {json.dumps(e)}\n\n" for e in events)
+    return io.BytesIO(body.encode())
+
+
+def stream(monkeypatch, *events: dict, into: llm.Metrics | None = None):
+    """Run `_stream_once` against a canned event sequence."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    monkeypatch.setattr(llm.urllib.request, "urlopen", lambda *a, **kw: sse(*events))
+    m = into if into is not None else llm.Metrics()
+    blocks, stop_reason = llm._stream_once(settings(), "k", {}, m, lambda _s: None)
+    return m, blocks, stop_reason
+
+
+def test_absorb_takes_the_larger_of_the_two_usage_reports():
+    """`message_start` reports the input side as known at the start of the
+    turn; `message_delta` reports it cumulatively for the whole request."""
+    m = llm.Metrics()
+    m.absorb({"input_tokens": 2679, "output_tokens": 3})
+    m.absorb({"input_tokens": 10682, "output_tokens": 510})
+    assert (m.input_tokens, m.output_tokens) == (10682, 510)
+
+
+def test_absorb_does_not_let_an_omitted_field_zero_a_reported_one():
+    """A `message_delta` carrying only `output_tokens` must not erase the
+    input count `message_start` already gave us."""
+    m = llm.Metrics()
+    m.absorb({"input_tokens": 2679})
+    m.absorb({"output_tokens": 15})
+    assert m.input_tokens == 2679
+
+
+def test_web_search_result_tokens_are_counted(monkeypatch):
+    """The bug that made an $0.80 problem log as $0.17.
+
+    Every token a server-side search pulls into the context is billed as
+    input, and it only shows up in the final `message_delta`. Reading input
+    off `message_start` alone counts the prompt and none of the search.
+
+    The numbers are the ones in Anthropic's own streaming example for a
+    single-search request: 2679 at the start, 10682 at the end.
+    """
+    m, _, _ = stream(
+        monkeypatch,
+        {"type": "message_start", "message": {"usage": {"input_tokens": 2679, "output_tokens": 3}}},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+            "usage": {
+                "input_tokens": 10682,
+                "output_tokens": 510,
+                "server_tool_use": {"web_search_requests": 1},
+            },
+        },
+    )
+    assert m.input_tokens == 10682
+    assert m.output_tokens == 510
+    assert m.web_searches == 1
+
+
+def test_usage_sums_across_pause_turn_continuations(monkeypatch):
+    """Maxed *within* a request, summed *across* them. Two continuations of
+    10k input each are 20k spent, not 10k."""
+    m = llm.Metrics()
+    for _ in range(2):
+        stream(
+            monkeypatch,
+            {"type": "message_start", "message": {"usage": {"input_tokens": 2000}}},
+            {"type": "message_delta", "delta": {}, "usage": {"input_tokens": 10_000}},
+            into=m,
+        )
+    assert m.input_tokens == 20_000
+
+
+def test_the_server_search_count_beats_counting_blocks(monkeypatch):
+    """Blocks are counted as they stream so the status line can say "search
+    2" while it happens; the server's own tally is authoritative at the end."""
+    m, _, _ = stream(
+        monkeypatch,
+        {"type": "message_start", "message": {"usage": {}}},
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "server_tool_use", "name": "web_search"},
+        },
+        {
+            "type": "message_delta",
+            "delta": {},
+            "usage": {"server_tool_use": {"web_search_requests": 4}},
+        },
+    )
+    assert m.web_searches == 4
+
+
+def test_a_stream_that_dies_still_reports_what_it_spent(monkeypatch):
+    """A generation that fails on its last search has still been paid for.
+    Logging that as $0.00 is how spend goes missing."""
+    m = llm.Metrics()
+    with pytest.raises(llm.LlmError, match="stream error"):
+        stream(
+            monkeypatch,
+            {"type": "message_start", "message": {"usage": {"input_tokens": 9_000}}},
+            {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}},
+            into=m,
+        )
+    assert m.input_tokens == 9_000
+
+
+def test_cost_of_a_failed_call_is_recorded_not_left_unknown():
+    """`record` distinguishes "measured, and it was zero" from "not
+    measured" — the second is what a missing metrics object means."""
+    cfg = settings()
+    spent = llm.record(
+        kind="math",
+        date=dt.date(2026, 7, 26),
+        model="claude-sonnet-5",
+        started=time.time(),
+        settings=cfg,
+        metrics=llm.Metrics(input_tokens=6_000, output_tokens=1_000),
+        ok=False,
+        error="boom",
+    )
+    assert spent.ok is False
+    assert spent.est_cost_usd == pytest.approx(0.022)
+
+    unmeasured = llm.record(
+        kind="math",
+        date=dt.date(2026, 7, 26),
+        model="claude-sonnet-5",
+        started=time.time(),
+        settings=cfg,
+        ok=False,
+        error="never reached the API",
+    )
+    assert unmeasured.est_cost_usd is None

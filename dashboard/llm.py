@@ -52,6 +52,44 @@ class Metrics(Base):
     web_searches: int = 0
     pause_continuations: int = 0
 
+    def absorb(self, usage: dict[str, Any]) -> None:
+        """Merge one request's `usage` object, keeping the larger of each field.
+
+        Usage arrives twice per request and the second report supersedes the
+        first. `message_start` carries the input side as known at the *start*
+        of the turn; `message_delta` carries the cumulative usage for the whole
+        request -- including every token a server-side tool pulled into the
+        context mid-turn.
+
+        Those search results are the bulk of a verified generation's bill.
+        Reading only `output_tokens` off `message_delta` -- which is what this
+        did -- undercounted a four-search problem by roughly 5x, which is how
+        an $0.80 generation came to be logged at $0.17.
+
+        `max` rather than assignment, because a `message_delta` that omits a
+        field must not zero what `message_start` already reported.
+        """
+        self.input_tokens = max(self.input_tokens, usage.get("input_tokens", 0))
+        self.output_tokens = max(self.output_tokens, usage.get("output_tokens", 0))
+        self.cache_read = max(self.cache_read, usage.get("cache_read_input_tokens", 0))
+        self.cache_creation = max(self.cache_creation, usage.get("cache_creation_input_tokens", 0))
+        # The server's own tally, which beats counting blocks as they stream by.
+        served = usage.get("server_tool_use") or {}
+        self.web_searches = max(self.web_searches, served.get("web_search_requests", 0))
+
+    def add(self, other: Metrics) -> None:
+        """Accumulate one request into a whole generation's running total.
+
+        Separate from `absorb` because the two compose differently: fields are
+        *maxed* within a request (two reports of the same number) and *summed*
+        across the pause_turn continuations that make up one generation.
+        """
+        self.input_tokens += other.input_tokens
+        self.output_tokens += other.output_tokens
+        self.cache_read += other.cache_read
+        self.cache_creation += other.cache_creation
+        self.web_searches += other.web_searches
+
 
 StatusFn = Callable[[str], None] | None
 
@@ -90,11 +128,16 @@ def call(
     tools: list[dict[str, Any]] | None = None,
     max_tokens: int | None = None,
     on_status: StatusFn = None,
+    metrics: Metrics | None = None,
 ) -> tuple[str, Metrics]:
     """Run one Messages request to completion and return (text, metrics).
 
     Follows `pause_turn` continuations, which is how server-side web search
     reports back mid-turn, up to `max_pause_continuations`.
+
+    Pass `metrics` to keep the accounting when this raises. A generation that
+    fails on its third continuation has still been paid for, and a caller that
+    only reads the return value logs that spend as zero.
     """
     key = _api_key()
 
@@ -103,7 +146,7 @@ def call(
             on_status(s)
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
-    m = Metrics()
+    m = metrics if metrics is not None else Metrics()
 
     for _ in range(settings.max_pause_continuations):
         payload: dict[str, Any] = {
@@ -142,8 +185,13 @@ def _stream_once(
     m: Metrics,
     status: Callable[[str], None],
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """One SSE request. Accumulates content blocks and usage into `m`."""
-    req = urllib.request.Request(
+    """One SSE request. Accumulates content blocks and usage into `m`.
+
+    Usage for *this* request is gathered separately and folded into `m` at the
+    end, because the two reports of it have to be reconciled (`Metrics.absorb`)
+    before they can be added to the running total for the generation.
+    """
+    request = urllib.request.Request(
         API_URL,
         data=json.dumps(payload).encode(),
         headers={
@@ -155,9 +203,10 @@ def _stream_once(
     blocks: list[dict[str, Any]] = []
     cur: dict[str, Any] | None = None
     stop_reason: str | None = None
+    used = Metrics()
 
     try:
-        resp = urllib.request.urlopen(req, timeout=settings.timeout_seconds)
+        resp = urllib.request.urlopen(request, timeout=settings.timeout_seconds)
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:500]
         log.error("Anthropic API %s: %s", e.code, detail)
@@ -165,78 +214,90 @@ def _stream_once(
     except OSError as e:
         raise LlmError(f"could not reach the Anthropic API: {e}") from e
 
-    with resp:
-        for raw in resp:
-            line = raw.decode("utf-8", "replace").strip()
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                break
-            ev = json.loads(data)
-            t = ev.get("type")
-
-            if t == "message_start":
-                u = ev["message"].get("usage", {})
-                m.input_tokens += u.get("input_tokens", 0)
-                m.cache_read += u.get("cache_read_input_tokens", 0)
-                m.cache_creation += u.get("cache_creation_input_tokens", 0)
-                status("thinking about a problem…")
-
-            elif t == "content_block_start":
-                cb = ev["content_block"]
-                cur = {"type": cb["type"]}
-                if cb["type"] == "text":
-                    cur["text"] = ""
-                    status("writing it up…")
-                elif cb["type"] == "thinking":
-                    cur["thinking"] = ""
-                elif cb["type"] == "server_tool_use":
-                    cur.update(
-                        {
-                            "id": cb.get("id"),
-                            "name": cb.get("name"),
-                            "input": cb.get("input", {}),
-                            "_partial": "",
-                        }
-                    )
-                    if cb.get("name") == "web_search":
-                        m.web_searches += 1
-                        status(f"verifying against AoPS… (search {m.web_searches})")
-                elif cb["type"] == "web_search_tool_result":
-                    cur.update({"tool_use_id": cb.get("tool_use_id"), "content": cb.get("content")})
-                    status("checking the source…")
-                else:
-                    cur.update(dict(cb))
-
-            elif t == "content_block_delta":
-                if cur is None:
+    try:
+        with resp:
+            for raw in resp:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
                     continue
-                d = ev.get("delta", {})
-                if d.get("type") == "text_delta":
-                    cur["text"] = cur.get("text", "") + d.get("text", "")
-                elif d.get("type") == "thinking_delta":
-                    cur["thinking"] = cur.get("thinking", "") + d.get("thinking", "")
-                elif d.get("type") == "input_json_delta":
-                    cur["_partial"] = cur.get("_partial", "") + d.get("partial_json", "")
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                ev = json.loads(data)
+                t = ev.get("type")
 
-            elif t == "content_block_stop":
-                if cur is not None:
-                    if cur.get("type") == "server_tool_use" and cur.get("_partial"):
-                        try:
-                            cur["input"] = json.loads(cur["_partial"])
-                        except json.JSONDecodeError:
-                            log.warning("could not parse server_tool_use input json")
-                    blocks.append(cur)
-                    cur = None
+                if t == "message_start":
+                    used.absorb(ev["message"].get("usage", {}))
+                    status("thinking about a problem…")
 
-            elif t == "message_delta":
-                stop_reason = ev.get("delta", {}).get("stop_reason", stop_reason)
-                m.output_tokens += ev.get("usage", {}).get("output_tokens", 0)
+                elif t == "content_block_start":
+                    cb = ev["content_block"]
+                    cur = {"type": cb["type"]}
+                    if cb["type"] == "text":
+                        cur["text"] = ""
+                        status("writing it up…")
+                    elif cb["type"] == "thinking":
+                        cur["thinking"] = ""
+                    elif cb["type"] == "server_tool_use":
+                        cur.update(
+                            {
+                                "id": cb.get("id"),
+                                "name": cb.get("name"),
+                                "input": cb.get("input", {}),
+                                "_partial": "",
+                            }
+                        )
+                        if cb.get("name") == "web_search":
+                            # Provisional: counted as the blocks stream by so the
+                            # status line can say "search 2" while it is happening.
+                            # `message_delta` reports the server's own tally at the
+                            # end, and `absorb` prefers whichever is larger.
+                            used.web_searches += 1
+                            status(
+                                "verifying against AoPS… "
+                                f"(search {m.web_searches + used.web_searches})"
+                            )
+                    elif cb["type"] == "web_search_tool_result":
+                        cur.update(
+                            {"tool_use_id": cb.get("tool_use_id"), "content": cb.get("content")}
+                        )
+                        status("checking the source…")
+                    else:
+                        cur.update(dict(cb))
 
-            elif t == "error":
-                err = ev.get("error", {})
-                raise LlmError(f"stream error: {err.get('type')}: {err.get('message')}")
+                elif t == "content_block_delta":
+                    if cur is None:
+                        continue
+                    d = ev.get("delta", {})
+                    if d.get("type") == "text_delta":
+                        cur["text"] = cur.get("text", "") + d.get("text", "")
+                    elif d.get("type") == "thinking_delta":
+                        cur["thinking"] = cur.get("thinking", "") + d.get("thinking", "")
+                    elif d.get("type") == "input_json_delta":
+                        cur["_partial"] = cur.get("_partial", "") + d.get("partial_json", "")
+
+                elif t == "content_block_stop":
+                    if cur is not None:
+                        if cur.get("type") == "server_tool_use" and cur.get("_partial"):
+                            try:
+                                cur["input"] = json.loads(cur["_partial"])
+                            except json.JSONDecodeError:
+                                log.warning("could not parse server_tool_use input json")
+                        blocks.append(cur)
+                        cur = None
+
+                elif t == "message_delta":
+                    stop_reason = ev.get("delta", {}).get("stop_reason", stop_reason)
+                    used.absorb(ev.get("usage", {}))
+
+                elif t == "error":
+                    err = ev.get("error", {})
+                    raise LlmError(f"stream error: {err.get('type')}: {err.get('message')}")
+    finally:
+        # A stream that dies halfway has still spent every token it read. Fold
+        # the partial tally in on the way out so the failure is logged with its
+        # real cost rather than as free.
+        m.add(used)
 
     return blocks, stop_reason
 
@@ -384,6 +445,9 @@ def record(
         wall_seconds=round(time.time() - started, 1),
         error=error,
         metrics=m,
-        est_cost_usd=est_cost(settings, model, m) if metrics else None,
+        # `is not None`, not a truthiness test: a Metrics of all zeros is a
+        # real measurement (the call never reached the API) and costs $0.00,
+        # which is a different claim from "not measured".
+        est_cost_usd=est_cost(settings, model, m) if metrics is not None else None,
         **extra,
     )

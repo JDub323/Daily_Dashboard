@@ -27,6 +27,7 @@ import datetime as dt
 import json
 import os
 import queue
+import random
 import socket
 import subprocess
 import threading
@@ -205,6 +206,22 @@ def _register(app: FastAPI) -> None:
 
     @app.get("/api/state")
     def dashboard_state(repo: Repo, date: Today) -> api.DashboardState:
+        # A GET with a side effect, deliberately. Closing out yesterday's
+        # unmarked problem needs to know what "yesterday" is, and [Invariant 1]
+        # says only the browser knows that -- so the reconciliation happens on
+        # the first dated request after the day turns over, not on a server
+        # clock. It is idempotent and a no-op on all but the first load of the
+        # day, and doing it here means the rating in the payload already
+        # accounts for it rather than being a figure the next reload contradicts.
+        lapses = repo.reconcile_math_lapses(date)
+        for event in lapses:
+            log.info(
+                "lapsed %s (%s): unmarked, %s -> %s",
+                event.date,
+                event.ref,
+                event.rating_before,
+                event.rating_after,
+            )
         return state.dashboard_state(repo, date)
 
     @app.get("/api/topic")
@@ -291,7 +308,7 @@ def _register(app: FastAPI) -> None:
 
     @app.post("/api/word/check")
     def word_check(cfg: Cfg, repo: Repo, body: api.WordCheckRequest) -> api.WordCheckResponse:
-        grade = content.grade_sentences(cfg, body.word, body.sentences)
+        grade = content.grade_sentences(cfg, body.date, body.word, body.sentences)
         repo.set_sentences(body.date, body.sentences)
         repo.set_grade(body.date, grade)
         return api.WordCheckResponse(grade=grade)
@@ -310,25 +327,40 @@ def _register(app: FastAPI) -> None:
 
     # -- theorems ----------------------------------------------------------
 
+    @app.get("/api/theorem/today")
+    def theorem_today(cfg: Cfg, repo: Repo, date: Today) -> api.TheoremsPanel:
+        """Today's theorem, drawn on first ask and fixed from then on.
+
+        A GET that writes, like `/api/papers/today` and for the same reason:
+        the draw is the act of surfacing, and surfacing has to be idempotent
+        per day or a reload rerolls it.
+
+        It is also why the draw does not happen at boot. A day you never
+        opened the dashboard is a day no theorem appeared -- so it does not
+        age the deck, and the card that would have come up is still waiting.
+        The lapse rule in `scoring` makes the same call about math problems.
+        """
+        _draw_theorem(cfg, repo, date)
+        return state.theorems_panel(repo, date)
+
+    @app.post("/api/theorem/add")
+    def theorem_add(cfg: Cfg, repo: Repo, body: api.TheoremAddRequest) -> api.TheoremsPanel:
+        repo.add_card(content.theorem_from_prompt(cfg, body.date, body.prompt))
+        return state.theorems_panel(repo, body.date)
+
     @app.post("/api/theorem/new")
     def theorem_new(cfg: Cfg, repo: Repo, body: api.TheoremNewRequest) -> api.TheoremsPanel:
         repo.add_card(content.theorem_card(cfg, body.date))
         return state.theorems_panel(repo, body.date)
 
-    @app.post("/api/theorem/review")
-    def theorem_review(repo: Repo, body: api.TheoremReviewRequest) -> api.TheoremsPanel:
-        card = repo.card(body.card_id)
-        if card is None:
-            raise LookupError(f"no theorem card {body.card_id}")
-        interval, ease = scoring.sm2_review(body.quality, card.interval, card.ease)
-        repo.review_card(
-            body.card_id,
-            body.date,
-            int(body.quality),
-            interval,
-            ease,
-            body.date + dt.timedelta(days=interval),
-        )
+    @app.post("/api/theorem/recall")
+    def theorem_recall(repo: Repo, body: api.TheoremRecallRequest) -> api.TheoremsPanel:
+        repo.record_recall(body.date, body.recalled)
+        return state.theorems_panel(repo, body.date)
+
+    @app.post("/api/theorem/archive")
+    def theorem_archive(repo: Repo, body: api.TheoremArchiveRequest) -> api.TheoremsPanel:
+        repo.set_archived(body.card_id, body.archived)
         return state.theorems_panel(repo, body.date)
 
     # -- papers ------------------------------------------------------------
@@ -429,6 +461,46 @@ def _domain_wordle(body: api.WordleLogRequest) -> WordleResult:
 
 def _domain_pokedoku(body: api.PokedokuLogRequest) -> PokedokuResult:
     return PokedokuResult(**body.model_dump())
+
+
+def _draw_theorem(
+    cfg: Settings, repo: Repository, date: dt.date, rng: random.Random | None = None
+) -> None:
+    """Pick the day's theorem, unless the day already has one.
+
+    Two rules sit in front of the weighted sample:
+
+    * A day that already drew keeps its card. This is the first check because
+      it is the one that makes reloading safe.
+    * A card that has never appeared goes first, oldest addition first. You
+      added it because you just met it and want it in rotation, so making it
+      wait on a coin flip is the wrong answer -- and "days since last
+      appeared" has no value for a card that never has, so the alternative is
+      inventing one. New cards drain in the order you added them, one a day.
+
+    Everything after that is `scoring.draw_weight` over the active deck.
+    """
+    if repo.draw(date) is not None:
+        return
+    deck = repo.deck()
+    if not deck:
+        return
+    last = repo.last_drawn()
+
+    unseen = [c for c in deck if c.id not in last]
+    if unseen:
+        repo.record_draw(date, unseen[0].id)
+        return
+
+    weights = [
+        scoring.draw_weight(
+            (date - last[c.id]).days,
+            cooldown=cfg.theorems.cooldown_days,
+            exponent=cfg.theorems.recency_exponent,
+        )
+        for c in deck
+    ]
+    repo.record_draw(date, deck[scoring.weighted_draw(weights, rng)].id)
 
 
 def _generate(cfg: Settings, db: Database, date: dt.date) -> Iterator[dict[str, Any]]:

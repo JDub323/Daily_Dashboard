@@ -20,3 +20,6 @@ dashboard.log*
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+
+# overnight batches from the scheduled task — regenerated nightly, never a diff
+batches/

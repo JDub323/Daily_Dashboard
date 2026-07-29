@@ -38,6 +38,7 @@ def settings(tmp_path) -> Settings:
                     "db": str(tmp_path / "test.db"),
                     "metrics": str(tmp_path / "metrics.jsonl"),
                     "problems": str(tmp_path / "problems.json"),
+                    "batches": str(tmp_path / "batches"),
                 }
             ),
             "server": cfg.server.model_copy(update={"log_file": None, "open_browser": False}),

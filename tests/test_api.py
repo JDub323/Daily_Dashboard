@@ -366,34 +366,117 @@ def test_an_unknown_queue_action_is_rejected(client):
 # --- theorems --------------------------------------------------------------
 
 
-def test_reviewing_reschedules_the_card_server_side(client, repo):
-    card = repo.add_card(
-        d.TheoremCard(name="OGF", statement="$\\sum a_n x^n$", topic="gf", due=TODAY)
+def _card(repo, name: str, added: dt.date = TODAY) -> d.TheoremCard:
+    return repo.add_card(
+        d.TheoremCard(name=name, statement=f"the statement of {name}", topic="gf", added=added)
     )
-    panel = client.post(
-        "/api/theorem/review", json={"date": DATE, "card_id": card.id, "quality": 3}
-    ).json()
-    assert panel["due"] == []  # pushed out past today
+
+
+def test_an_empty_deck_draws_nothing_rather_than_failing(client):
+    panel = client.get("/api/theorem/today", params={"date": DATE}).json()
+    assert panel["today"] is None
+    assert panel["deck_size"] == 0
+
+
+def test_the_day_draws_one_theorem_and_keeps_it_across_reloads(client, repo):
+    for n in "abcdef":
+        _card(repo, n)
+    first = client.get("/api/theorem/today", params={"date": DATE}).json()
+    assert first["today"] is not None
+    for _ in range(5):
+        again = client.get("/api/theorem/today", params={"date": DATE}).json()
+        assert again["today"]["id"] == first["today"]["id"]
+
+
+def test_a_never_seen_card_goes_before_any_card_with_history(client, repo):
+    """You added it because you just met it; it should not wait on a die."""
+    old = _card(repo, "seen once")
+    repo.record_draw(TODAY - dt.timedelta(days=40), old.id)
+    fresh = _card(repo, "vandermonde")
+
+    panel = client.get("/api/theorem/today", params={"date": DATE}).json()
+    assert panel["today"]["id"] == fresh.id
+
+
+def test_yesterdays_theorem_cannot_be_todays(client, repo):
+    a, b = _card(repo, "a"), _card(repo, "b")
+    repo.record_draw(TODAY - dt.timedelta(days=1), a.id)
+    repo.record_draw(TODAY - dt.timedelta(days=30), b.id)
+
+    panel = client.get("/api/theorem/today", params={"date": DATE}).json()
+    assert panel["today"]["id"] == b.id
+
+
+def test_a_lone_card_on_cooldown_is_drawn_anyway(client, repo):
+    """The all-zero fallback, end to end: a deck of one has no other answer."""
+    only = _card(repo, "only")
+    repo.record_draw(TODAY - dt.timedelta(days=1), only.id)
+
+    panel = client.get("/api/theorem/today", params={"date": DATE}).json()
+    assert panel["today"]["id"] == only.id
+
+
+def test_an_archived_card_is_never_drawn(client, repo):
+    retired = _card(repo, "retired")
+    keep = _card(repo, "keep")
+    client.post("/api/theorem/archive", json={"date": DATE, "card_id": retired.id})
+
+    panel = client.get("/api/theorem/today", params={"date": DATE}).json()
+    assert panel["today"]["id"] == keep.id
     assert panel["deck_size"] == 1
-    assert repo.card(card.id).due > TODAY
+    assert len(panel["deck"]) == 2  # archived cards stay visible in the deck list
 
 
-def test_reviewing_a_missing_card_is_a_404(client):
+def test_the_self_check_records_and_is_reported_back(client, repo):
+    _card(repo, "a")
+    client.get("/api/theorem/today", params={"date": DATE})
+
+    assert client.get("/api/state", params={"date": DATE}).json()["theorems"]["recalled"] is None
+    panel = client.post("/api/theorem/recall", json={"date": DATE, "recalled": False}).json()
+    assert panel["recalled"] is False
+    assert panel["deck"][0]["seen"] == 1
+    assert panel["deck"][0]["recalled"] == 0
+
+
+def test_checking_recall_before_anything_is_drawn_is_a_404(client):
     assert (
-        client.post(
-            "/api/theorem/review", json={"date": DATE, "card_id": 999, "quality": 3}
-        ).status_code
-        == 404
+        client.post("/api/theorem/recall", json={"date": DATE, "recalled": True}).status_code == 404
     )
 
 
-def test_an_out_of_range_quality_is_rejected(client):
+def test_archiving_a_missing_card_is_a_404(client):
     assert (
-        client.post(
-            "/api/theorem/review", json={"date": DATE, "card_id": 1, "quality": 9}
-        ).status_code
-        == 422
+        client.post("/api/theorem/archive", json={"date": DATE, "card_id": 999}).status_code == 404
     )
+
+
+def test_the_boot_payload_never_draws(client, repo):
+    """A day you did not open is a day no theorem appeared — so reading the
+    state must not age the deck."""
+    _card(repo, "a")
+    assert client.get("/api/state", params={"date": DATE}).json()["theorems"]["today"] is None
+    assert repo.draw(TODAY) is None
+
+
+def test_adding_by_name_stores_what_the_model_resolved(client, repo, monkeypatch):
+    monkeypatch.setattr(
+        content,
+        "theorem_from_prompt",
+        lambda cfg, date, prompt: d.TheoremCard(
+            name="Vandermonde's Identity",
+            statement=r"$\binom{m+n}{k}=\sum_j\binom{m}{j}\binom{n}{k-j}$",
+            topic="combinatorics",
+            added=date,
+        ),
+    )
+    panel = client.post("/api/theorem/add", json={"date": DATE, "prompt": "vandermonde's"}).json()
+    assert panel["deck_size"] == 1
+    assert panel["deck"][0]["card"]["name"] == "Vandermonde's Identity"
+    assert panel["deck"][0]["days_since"] is None
+
+
+def test_an_empty_add_prompt_is_rejected(client):
+    assert client.post("/api/theorem/add", json={"date": DATE, "prompt": " "}).status_code == 422
 
 
 # --- health / log / completion ---------------------------------------------

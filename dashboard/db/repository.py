@@ -15,6 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sqlite3
+from collections.abc import Callable
 from typing import Any
 
 from .. import scoring
@@ -79,11 +80,20 @@ class Repository:
         return row[0] if row else SEEDS[Track(track)]
 
     def event_count(self, track: Track) -> int:
-        """Attempts on this track, all provenances -- this is the `n` that
-        drives the K-factor. Provenance says the recorded numbers are
-        untrustworthy, not that the attempt never happened."""
+        """Attempts on this track -- the `n` that drives the K-factor.
+
+        `reconstructed` rows count: provenance says the recorded numbers are
+        untrustworthy, not that the attempt never happened, and K measures how
+        much evidence exists.
+
+        `lapsed` rows do not, for exactly the same reason read the other way.
+        Nobody attempted anything on a day that was never marked, so counting
+        it would let a run of ghosted days shrink K -- growing confidence in a
+        rating out of an absence of evidence.
+        """
         return self.conn.execute(
-            "SELECT COUNT(*) FROM rating_event WHERE track = ?", (Track(track).value,)
+            "SELECT COUNT(*) FROM rating_event WHERE track = ? AND provenance <> ?",
+            (Track(track).value, Provenance.lapsed.value),
         ).fetchone()[0]
 
     def rating_history(self, track: Track, limit: int | None = None) -> list[d.RatingEvent]:
@@ -116,9 +126,16 @@ class Repository:
             return d.RatingEvent(**dict(cur))
 
     def success_rate(self, track: Track, window: int = 10) -> int | None:
+        """Share of the last `window` *attempts* that scored above a half.
+
+        Lapses are excluded on the same ground as in `event_count`: this is a
+        measure of how you do on problems, and a lapse is a problem you did
+        not do. Their cost shows up in the rating, which is where it belongs.
+        """
         rows = self.conn.execute(
-            "SELECT score FROM rating_event WHERE track = ? ORDER BY id DESC LIMIT ?",
-            (Track(track).value, window),
+            "SELECT score FROM rating_event WHERE track = ? AND provenance <> ? "
+            "ORDER BY id DESC LIMIT ?",
+            (Track(track).value, Provenance.lapsed.value, window),
         ).fetchall()
         if not rows:
             return None
@@ -182,14 +199,23 @@ class Repository:
                 raise LookupError(f"no open math attempt on {date}")
             return d.MathAttempt(**dict(row))
 
-    def finish_math(
-        self, date: dt.date, outcome: MathOutcome
+    def _close_math(
+        self,
+        date: dt.date,
+        *,
+        status: MathStatus,
+        provenance: Provenance,
+        score_for: Callable[[d.MathAttempt], float],
     ) -> tuple[d.MathAttempt, d.RatingEvent]:
-        """Score, close the attempt, and apply the elo update together.
+        """Close one open attempt and apply its elo update, atomically.
+
+        `score_for` is a callback rather than a number because the score of a
+        real finish depends on `hints_revealed`, which is only trustworthy
+        once read inside this transaction.
 
         The guard is the WHERE status = 'open': a double-submit from a second
-        tab updates zero rows and raises, instead of rating the same problem
-        twice.
+        tab -- or a lapse racing the finish button at midnight -- updates zero
+        rows and raises, instead of rating the same problem twice.
         """
         with transaction(self.conn):
             attempt = self.math_attempt(date)
@@ -199,12 +225,7 @@ class Repository:
                 raise ValueError(f"math attempt on {date} already {attempt.status.value}")
             problem = self.problem(attempt.problem_id)
             assert problem is not None
-            score = scoring.math_score(outcome, attempt.hints_revealed)
-            status = (
-                MathStatus.solved
-                if MathOutcome(outcome) is MathOutcome.solved
-                else MathStatus.failed
-            )
+            score = score_for(attempt)
             row = self.conn.execute(
                 "UPDATE math_attempt SET status = ?, score = ? "
                 "WHERE date = ? AND status = 'open' RETURNING *",
@@ -220,10 +241,64 @@ class Repository:
             ev = self.conn.execute(
                 "INSERT INTO rating_event "
                 "(track, date, ref, opponent, score, k, rating_before, rating_after, provenance) "
-                "VALUES ('math', ?, ?, ?, ?, ?, ?, ?, 'measured') RETURNING *",
-                (_iso(date), problem.source, problem.anchor, score, k, before, after),
+                "VALUES ('math', ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+                (
+                    _iso(date),
+                    problem.source,
+                    problem.anchor,
+                    score,
+                    k,
+                    before,
+                    after,
+                    Provenance(provenance).value,
+                ),
             ).fetchone()
             return d.MathAttempt(**dict(row)), d.RatingEvent(**dict(ev))
+
+    def finish_math(
+        self, date: dt.date, outcome: MathOutcome
+    ) -> tuple[d.MathAttempt, d.RatingEvent]:
+        """Score, close the attempt, and apply the elo update together."""
+        outcome = MathOutcome(outcome)
+        return self._close_math(
+            date,
+            status=(MathStatus.solved if outcome is MathOutcome.solved else MathStatus.failed),
+            provenance=Provenance.measured,
+            score_for=lambda attempt: scoring.math_score(outcome, attempt.hints_revealed),
+        )
+
+    def unmarked_math_dates(self, before: dt.date) -> list[dt.date]:
+        """Days whose problem was drawn, never marked, and are now over.
+
+        `before` is the browser's today and the comparison is strict: the
+        current day is still in progress, and docking someone at breakfast for
+        a problem they mean to do after dinner is the one behaviour this
+        feature must never have.
+        """
+        rows = self.conn.execute(
+            "SELECT date FROM math_attempt WHERE status = 'open' AND date < ? ORDER BY date",
+            (_iso(before),),
+        ).fetchall()
+        return [dt.date.fromisoformat(r[0]) for r in rows]
+
+    def lapse_math(self, date: dt.date) -> tuple[d.MathAttempt, d.RatingEvent]:
+        """Auto-score one unmarked day as a loss on the problem it drew."""
+        return self._close_math(
+            date,
+            status=MathStatus.lapsed,
+            provenance=Provenance.lapsed,
+            score_for=lambda _: scoring.LAPSE_SCORE,
+        )
+
+    def reconcile_math_lapses(self, today: dt.date) -> list[d.RatingEvent]:
+        """Close out every unmarked past day. Returns the events applied.
+
+        Idempotent by construction: a lapsed attempt is no longer `open`, so
+        the second call finds nothing. Each day is its own transaction and
+        chains off the rating the previous one produced, so a three-day gap
+        costs three successive results rather than one compounded guess.
+        """
+        return [self.lapse_math(date)[1] for date in self.unmarked_math_dates(today)]
 
     # -- chess --------------------------------------------------------------
 
@@ -385,9 +460,9 @@ class Repository:
 
     def add_card(self, card: d.TheoremCard) -> d.TheoremCard:
         row = self.conn.execute(
-            "INSERT INTO theorem_card (name, statement, topic, due, interval, ease) "
-            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
-            (card.name, card.statement, card.topic, _iso(card.due), card.interval, card.ease),
+            "INSERT INTO theorem_card (name, statement, topic, added, archived) "
+            "VALUES (?, ?, ?, ?, ?) RETURNING *",
+            (card.name, card.statement, card.topic, _iso(card.added), int(card.archived)),
         ).fetchone()
         return d.TheoremCard(**dict(row))
 
@@ -395,31 +470,82 @@ class Repository:
         row = self.conn.execute("SELECT * FROM theorem_card WHERE id = ?", (card_id,)).fetchone()
         return d.TheoremCard(**dict(row)) if row else None
 
-    def due_cards(self, on: dt.date) -> list[d.TheoremCard]:
-        rows = self.conn.execute(
-            "SELECT * FROM theorem_card WHERE due <= ? ORDER BY due, id", (_iso(on),)
-        ).fetchall()
+    def deck(self, *, include_archived: bool = False) -> list[d.TheoremCard]:
+        """The deck, oldest first. Archived cards are excluded by default --
+        every caller that draws wants the active deck, and the one caller that
+        renders the management list asks for the rest explicitly."""
+        where = "" if include_archived else "WHERE archived = 0"
+        rows = self.conn.execute(f"SELECT * FROM theorem_card {where} ORDER BY id").fetchall()
         return [d.TheoremCard(**dict(r)) for r in rows]
 
     def deck_size(self) -> int:
-        return self.conn.execute("SELECT COUNT(*) FROM theorem_card").fetchone()[0]
+        return self.conn.execute("SELECT COUNT(*) FROM theorem_card WHERE archived = 0").fetchone()[
+            0
+        ]
 
-    def review_card(
-        self, card_id: int, date: dt.date, quality: int, interval: int, ease: float, due: dt.date
-    ) -> d.TheoremCard:
-        with transaction(self.conn):
-            self.conn.execute(
-                "INSERT INTO theorem_review (card_id, date, quality, interval_after, ease_after) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (card_id, _iso(date), int(quality), interval, ease),
-            )
-            row = self.conn.execute(
-                "UPDATE theorem_card SET interval = ?, ease = ?, due = ? WHERE id = ? RETURNING *",
-                (interval, ease, _iso(due), card_id),
-            ).fetchone()
-            if row is None:
-                raise LookupError(f"no theorem card {card_id}")
-            return d.TheoremCard(**dict(row))
+    def set_archived(self, card_id: int, archived: bool) -> d.TheoremCard:
+        row = self.conn.execute(
+            "UPDATE theorem_card SET archived = ? WHERE id = ? RETURNING *",
+            (int(archived), card_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"no theorem card {card_id}")
+        return d.TheoremCard(**dict(row))
+
+    # -- the draw log -------------------------------------------------------
+
+    def last_drawn(self) -> dict[int, dt.date]:
+        """`card_id -> the last date it appeared`, for cards that have.
+
+        One aggregate for the whole deck rather than a query per card: the
+        weights are computed together, and a per-card MAX() would make the
+        draw's cost scale with the deck.
+        """
+        rows = self.conn.execute(
+            "SELECT card_id, MAX(date) FROM theorem_draw GROUP BY card_id"
+        ).fetchall()
+        return {r[0]: dt.date.fromisoformat(r[1]) for r in rows}
+
+    def draw(self, on: dt.date) -> d.TheoremDraw | None:
+        row = self.conn.execute("SELECT * FROM theorem_draw WHERE date = ?", (_iso(on),)).fetchone()
+        return d.TheoremDraw(**dict(row)) if row else None
+
+    def record_draw(self, on: dt.date, card_id: int) -> d.TheoremDraw:
+        """Claim the day for a card, or return the card that already has it.
+
+        `ON CONFLICT DO NOTHING` plus a re-read rather than a check-then-write:
+        two tabs opening the dashboard at once would both see no draw and both
+        insert, and the loser of that race should get today's actual theorem
+        back, not an IntegrityError.
+        """
+        self.conn.execute(
+            "INSERT INTO theorem_draw (date, card_id) VALUES (?, ?) ON CONFLICT (date) DO NOTHING",
+            (_iso(on), card_id),
+        )
+        drawn = self.draw(on)
+        assert drawn is not None  # just inserted, or already there
+        return drawn
+
+    def record_recall(self, on: dt.date, recalled: bool) -> d.TheoremDraw:
+        row = self.conn.execute(
+            "UPDATE theorem_draw SET recalled = ? WHERE date = ? RETURNING *",
+            (int(recalled), _iso(on)),
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"no theorem drawn on {_iso(on)}")
+        return d.TheoremDraw(**dict(row))
+
+    def recall_counts(self) -> dict[int, tuple[int, int]]:
+        """`card_id -> (times seen, times recalled)` across all history.
+
+        An unanswered draw counts as seen and not as recalled, which is what
+        `SUM(recalled)` over NULLs gives for free.
+        """
+        rows = self.conn.execute(
+            "SELECT card_id, COUNT(*), COALESCE(SUM(recalled), 0) "
+            "FROM theorem_draw GROUP BY card_id"
+        ).fetchall()
+        return {r[0]: (r[1], r[2]) for r in rows}
 
     # -- papers -------------------------------------------------------------
 
