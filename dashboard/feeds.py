@@ -50,6 +50,68 @@ TRANSPORT_ERRORS = (
 )
 
 
+# Query parameters that identify a *referral*, never an article. Feeds vary
+# these between fetches, so a byte-comparison of two URLs for the same story
+# can differ on nothing but the campaign tag.
+TRACKING_PARAMS = ("fbclid", "gclid", "igshid", "mc_cid", "mc_eid", "at_medium", "at_campaign")
+TRACKING_PREFIXES = ("utm_",)
+
+
+def normalize_link(url: str) -> str:
+    """The identity of a story: same article, same site, same author.
+
+    Deliberately conservative. The whole query string is *not* dropped --
+    plenty of sites carry the article id there (`?id=`, `?storyId=`), and
+    dropping it would collapse a whole publication into one key. Only known
+    referral parameters go, plus the fragment, plus case in the scheme and
+    host (which are case-insensitive per RFC 3986; the path is not).
+
+    Trailing slashes are left alone. They are a real difference in the URL,
+    and the case they would fix -- two *different* feeds carrying the same
+    story -- is not one this can solve anyway: different publications mean
+    different domains, so no normalisation makes those equal. That is fine.
+    The same story from two outlets is two stories here, by request.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url.strip())
+    except ValueError:
+        return url.strip()
+    if not parts.scheme or not parts.netloc:
+        return url.strip()
+
+    kept = [
+        (k, v)
+        for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+        if k.lower() not in TRACKING_PARAMS
+        and not any(k.lower().startswith(p) for p in TRACKING_PREFIXES)
+    ]
+    return urllib.parse.urlunsplit(
+        (
+            parts.scheme.lower(),
+            parts.netloc.lower(),
+            parts.path,
+            urllib.parse.urlencode(kept),
+            "",  # the fragment is a position in the page, not a document
+        )
+    )
+
+
+def apply_quotas(items: list[NewsItem], quotas: list[Any]) -> list[NewsItem]:
+    """Take the first `n` of each category, in the order the quotas are written.
+
+    Split out of `_fetch_news` so it runs *after* the seen-link filter. Pure,
+    and module-level rather than a method, because the filtering between the
+    fetch and this needs a database and `Feeds` has no connection.
+    """
+    by_cat: dict[str, list[NewsItem]] = {}
+    for item in items:
+        by_cat.setdefault(item.cat, []).append(item)
+    picks: list[NewsItem] = []
+    for quota in quotas:
+        picks += by_cat.get(quota.cat, [])[: quota.n]
+    return picks
+
+
 class FeedError(RuntimeError):
     """A feed could not be fetched or produced nothing usable.
 
@@ -117,35 +179,46 @@ class Feeds:
         return link
 
     def news(self) -> list[NewsItem]:
+        """Every item every feed offered, in feed order. *Not* quota-sliced.
+
+        The quotas moved to `apply_quotas`, downstream of the seen-link
+        filter, and that ordering is the whole point: slicing to two politics
+        headlines and *then* dropping the ones already read leaves you with
+        one. Filtering first and slicing second keeps the category full.
+        """
         return self.cached("news", self.settings.news.cache_seconds, self._fetch_news)
 
     def _fetch_news(self) -> list[NewsItem]:
         cfg = self.settings.news
-        by_cat: dict[str, list[NewsItem]] = {}
+        items: list[NewsItem] = []
+        seen_in_fetch: set[str] = set()
         failures: list[str] = []
         for feed in cfg.feeds:
             url = str(feed.url)
             try:
                 root = ET.fromstring(http_get(url).encode())
             except TRANSPORT_ERRORS as e:
-                # One dead feed is normal; the quota loop below covers for it.
+                # One dead feed is normal; the quota loop downstream covers.
                 failures.append(f"{url}: {e}")
                 continue
             for item in root.iter("item"):
                 title = (item.findtext("title") or "").strip()
                 link = (item.findtext("link") or "").strip()
-                if title and link:
-                    by_cat.setdefault(feed.cat, []).append(
-                        NewsItem(title=title, link=self.proxify(link), cat=feed.cat)
-                    )
+                if not (title and link):
+                    continue
+                key = normalize_link(link)
+                # Within one fetch as well as across days: a feed that lists
+                # an item twice, or two feeds on the same site, would
+                # otherwise put the identical URL on screen twice at once.
+                if key in seen_in_fetch:
+                    continue
+                seen_in_fetch.add(key)
+                items.append(NewsItem(title=title, link=self.proxify(link), cat=feed.cat, key=key))
         if failures:
             log.info("%d/%d news feeds failed: %s", len(failures), len(cfg.feeds), failures)
-        picks: list[NewsItem] = []
-        for quota in cfg.quotas:
-            picks += by_cat.get(quota.cat, [])[: quota.n]
-        if not picks:
+        if not items:
             raise FeedError("all news feeds failed")
-        return picks
+        return items
 
     # -- markets ------------------------------------------------------------
 
@@ -253,12 +326,20 @@ class Feeds:
 
     # -- arXiv --------------------------------------------------------------
 
-    def paper(self, today: dt.date) -> ArxivEntry:
+    def papers(self, today: dt.date) -> list[ArxivEntry]:
+        """The whole candidate list, freshest first.
+
+        Was `paper()`, returning only the top one. `max_results` already
+        fetches twenty and threw nineteen away, so the day arXiv has nothing
+        new the top entry is yesterday's -- which is how the same paper came
+        round twice and got marked read twice. Returning the list lets the
+        caller skip the ones already surfaced.
+        """
         return self.cached(
-            "paper", self.settings.arxiv.cache_seconds, lambda: self._fetch_paper(today)
+            "papers", self.settings.arxiv.cache_seconds, lambda: self._fetch_papers(today)
         )
 
-    def _fetch_paper(self, today: dt.date) -> ArxivEntry:
+    def _fetch_papers(self, today: dt.date) -> list[ArxivEntry]:
         cfg = self.settings.arxiv
         url = (
             "http://export.arxiv.org/api/query?search_query="
@@ -279,9 +360,13 @@ class Feeds:
         if not papers:
             raise FeedError("arXiv returned nothing")
         yesterday = today - dt.timedelta(days=1)
-        fresh = [p for p in papers if p.published and p.published >= yesterday]
-        pick = (fresh or papers)[0]
-        return pick.model_copy(update={"fresh": bool(fresh)})
+        fresh = {p.link for p in papers if p.published and p.published >= yesterday}
+        # Freshest first, but everything stays in the list: on a quiet day the
+        # caller still needs candidates to fall through to.
+        return sorted(
+            (p.model_copy(update={"fresh": p.link in fresh}) for p in papers),
+            key=lambda p: not p.fresh,
+        )
 
     # -- lichess ------------------------------------------------------------
 

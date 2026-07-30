@@ -32,22 +32,30 @@ export default {
     };
 
     const paper = papers.surfaced;
-    const triaged = paper.status !== "surfaced";
-    const header = [
-      el("div.tag", { text: paper.published ? `arXiv — ${paper.published}` : "arXiv" }),
-      el("div.paper-title", null, link(paper.link, paper.title)),
-      paper.summary ? el("div.dim.small", { text: `${paper.summary}…` }) : null,
-      triaged
-        ? el("div.row", null, el("span.ok", { text: `marked: ${paper.status}` }))
-        : el("div.row", null,
-            ...["read", "queued", "skipped"].map((mark) =>
-              el("button", {
-                text: mark === "queued" ? "→ queue" : mark === "read" ? "read it" : "skip",
-                onclick: () => update(api.post("/api/paper/triage", { mark })),
-              }),
-            ),
-          ),
-    ];
+    // No candidate is now a real state, not a failure: every paper arXiv
+    // offered has already been triaged, so there is genuinely nothing new.
+    // Before the dedupe this could not happen — it just re-showed one.
+    const header = paper
+      ? [
+          el("div.tag", { text: paper.published ? `arXiv — ${paper.published}` : "arXiv" }),
+          el("div.paper-title", null, link(paper.link, paper.title)),
+          paper.summary ? el("div.dim.small", { text: `${paper.summary}…` }) : null,
+          paper.status !== "surfaced"
+            ? el("div.row", null, el("span.ok", { text: `marked: ${paper.status}` }))
+            : el("div.row", null,
+                ...["read", "queued", "skipped"].map((mark) =>
+                  el("button", {
+                    text: mark === "queued" ? "→ queue" : mark === "read" ? "read it" : "skip",
+                    onclick: () => update(api.post("/api/paper/triage", { mark })),
+                  }),
+                ),
+              ),
+        ]
+      : [
+          el("div.tag", { text: "arXiv" }),
+          el("div.faint", { text: "nothing new — every match has been triaged" }),
+          el("div.faint.small", { text: "widen [arxiv].query to see more" }),
+        ];
 
     const queueItem = (item, index) =>
       el("li", null,

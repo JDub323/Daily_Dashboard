@@ -615,6 +615,62 @@ class Repository:
 
     # -- papers -------------------------------------------------------------
 
+    # -- seen links ---------------------------------------------------------
+
+    def seen_links(self, since: dt.date, before: dt.date | None = None) -> set[str]:
+        """Normalised links last shown in `[since, before)`.
+
+        `before` exists so today's own picks can be excluded from today's
+        filter. Without it the panel is unreadable: showing a headline records
+        it, so the next request filters out what the previous one just
+        displayed and a refresh silently swaps every story. Suppression is a
+        between-days rule, not a within-day one.
+
+        Returned whole rather than queried per candidate: a fetch checks a
+        couple of hundred items against a table growing by a handful of rows a
+        day, so one query and a set beats N indexed lookups by enough that the
+        difference is not worth thinking about again.
+        """
+        if before is None:
+            return {
+                r[0]
+                for r in self.conn.execute(
+                    "SELECT link FROM seen_link WHERE last_seen >= ?", (_iso(since),)
+                )
+            }
+        return {
+            r[0]
+            for r in self.conn.execute(
+                "SELECT link FROM seen_link WHERE last_seen >= ? AND last_seen < ?",
+                (_iso(since), _iso(before)),
+            )
+        }
+
+    def record_seen(self, links: list[str], on: dt.date) -> None:
+        """Mark links as shown today. `first_seen` is never moved forward --
+        it is the answer to "how long have I been ignoring this"."""
+        self.conn.executemany(
+            "INSERT INTO seen_link (link, first_seen, last_seen) VALUES (?, ?, ?) "
+            "ON CONFLICT (link) DO UPDATE SET last_seen = excluded.last_seen",
+            [(link, _iso(on), _iso(on)) for link in links],
+        )
+
+    def prune_seen(self, before: dt.date) -> int:
+        """Drop links outside the window. Bounded storage is the point: this
+        table would otherwise grow forever to answer a 30-day question."""
+        cur = self.conn.execute("DELETE FROM seen_link WHERE last_seen < ?", (_iso(before),))
+        return cur.rowcount
+
+    # -- papers -------------------------------------------------------------
+
+    def paper_links(self) -> set[str]:
+        """Every arXiv link ever surfaced, queued or triaged."""
+        return {r[0] for r in self.conn.execute("SELECT link FROM paper")}
+
+    def paper_by_link(self, link: str) -> d.Paper | None:
+        row = self.conn.execute("SELECT * FROM paper WHERE link = ?", (link,)).fetchone()
+        return d.Paper(**dict(row)) if row else None
+
     def add_paper(self, paper: d.Paper) -> d.Paper:
         row = self.conn.execute(
             "INSERT INTO paper "

@@ -311,7 +311,19 @@ class TopicResponse(TopicInfo):
 class NewsItem(Base):
     title: str
     link: Url
+    """What the browser opens -- proxied through the library for a paywalled
+    domain, so not the same string as `key`."""
+
     cat: str
+
+    key: str = ""
+    """The story's identity: the normalised link *before* proxying.
+
+    Keyed on the original because `[news].paywalled` is config. Keying on the
+    proxied URL would mean adding a domain to that list silently changes the
+    identity of every story from it, and the whole back catalogue reappears
+    once as new.
+    """
 
 
 class MarketRow(Base):

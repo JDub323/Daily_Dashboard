@@ -270,12 +270,80 @@ def test_every_feed_failing_is_a_feed_error(fetcher, monkeypatch):
 
 def test_quotas_bound_each_category(fetcher, monkeypatch):
     monkeypatch.setattr(feeds, "http_get", lambda *a, **k: RSS)
-    picks = fetcher._fetch_news()
+    picks = feeds.apply_quotas(fetcher._fetch_news(), fetcher.settings.news.quotas)
     counts = {}
     for item in picks:
         counts[item.cat] = counts.get(item.cat, 0) + 1
     for quota in fetcher.settings.news.quotas:
         assert counts.get(quota.cat, 0) <= quota.n
+
+
+def _distinct_per_feed(url, *a, **k):
+    """Each feed returns four stories of its own, so the pool is bigger than
+    the quotas can take. The shared RSS fixture cannot show this: every feed
+    serving the *same* two links is exactly what the in-fetch dedupe
+    collapses, which leaves nothing for the quotas to trim."""
+    host = url.split("/")[2]
+    items = "".join(
+        f"<item><title>{host} {n}</title><link>https://{host}/story-{n}</link></item>"
+        for n in range(4)
+    )
+    return f'<?xml version="1.0"?><rss><channel>{items}</channel></rss>'
+
+
+def test_the_fetch_no_longer_applies_the_quotas_itself(fetcher, monkeypatch):
+    """They moved downstream of the seen-link filter. Quota-slicing first and
+    filtering second is what would leave a category short."""
+    monkeypatch.setattr(feeds, "http_get", _distinct_per_feed)
+    pool = fetcher._fetch_news()
+    picks = feeds.apply_quotas(pool, fetcher.settings.news.quotas)
+    assert len(pool) > len(picks)
+    assert len(picks) == sum(q.n for q in fetcher.settings.news.quotas)
+
+
+DUPLICATED = """<?xml version="1.0"?><rss><channel>
+<item><title>A story</title><link>https://example.com/a?utm_source=rss</link></item>
+<item><title>The same story, retitled</title><link>https://example.com/a#top</link></item>
+</channel></rss>"""
+
+
+def test_a_repeated_link_in_one_fetch_appears_once(fetcher, monkeypatch):
+    """Same URL, different headline: a desk re-titling a live story must not
+    put it on screen twice at once."""
+    monkeypatch.setattr(feeds, "http_get", lambda *a, **k: DUPLICATED)
+    items = fetcher._fetch_news()
+    keys = [i.key for i in items]
+    assert len(keys) == len(set(keys))
+    assert all(i.title == "A story" for i in items)  # the first one wins
+
+
+# --- link identity ---------------------------------------------------------
+
+
+def test_tracking_parameters_are_not_part_of_a_story_identity():
+    a = feeds.normalize_link("https://ex.com/a?utm_source=rss&utm_medium=feed&id=7")
+    b = feeds.normalize_link("https://ex.com/a?id=7&fbclid=xyz")
+    assert a == b == "https://ex.com/a?id=7"
+
+
+def test_a_meaningful_query_survives():
+    """Dropping the whole query would collapse a publication into one key."""
+    assert feeds.normalize_link("https://ex.com/story?id=7") != feeds.normalize_link(
+        "https://ex.com/story?id=8"
+    )
+
+
+def test_the_fragment_and_host_case_are_not_identity():
+    assert feeds.normalize_link("HTTPS://EX.com/a#section-2") == "https://ex.com/a"
+
+
+def test_the_path_keeps_its_case():
+    """Hosts are case-insensitive per RFC 3986; paths are not."""
+    assert feeds.normalize_link("https://ex.com/A") != feeds.normalize_link("https://ex.com/a")
+
+
+def test_a_non_url_is_returned_unchanged_rather_than_raising():
+    assert feeds.normalize_link("  not a url  ") == "not a url"
 
 
 # --- arXiv -----------------------------------------------------------------
@@ -290,16 +358,24 @@ ATOM = """<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
 
 def test_a_fresh_paper_wins_over_an_older_one(fetcher, monkeypatch):
     monkeypatch.setattr(feeds, "http_get", lambda *a, **k: ATOM)
-    entry = fetcher._fetch_paper(TODAY)
-    assert entry.title == "Fresh paper"
-    assert entry.fresh is True
+    papers = fetcher._fetch_papers(TODAY)
+    assert papers[0].title == "Fresh paper"
+    assert papers[0].fresh is True
+
+
+def test_every_candidate_is_returned_not_just_the_pick(fetcher, monkeypatch):
+    """The caller skips papers it has already surfaced, so it needs something
+    to fall through to. Returning one entry is what let a quiet day on arXiv
+    re-serve yesterday's paper."""
+    monkeypatch.setattr(feeds, "http_get", lambda *a, **k: ATOM)
+    assert [p.title for p in fetcher._fetch_papers(TODAY)] == ["Fresh paper", "Old paper"]
 
 
 def test_nothing_fresh_falls_back_to_the_newest(fetcher, monkeypatch):
     monkeypatch.setattr(feeds, "http_get", lambda *a, **k: ATOM)
-    entry = fetcher._fetch_paper(TODAY + dt.timedelta(days=30))
-    assert entry.fresh is False
-    assert entry.title == "Old paper"  # whitespace collapsed
+    papers = fetcher._fetch_papers(TODAY + dt.timedelta(days=30))
+    assert papers[0].fresh is False
+    assert papers[0].title == "Old paper"  # whitespace collapsed
 
 
 def test_an_empty_arxiv_response_is_a_feed_error(fetcher, monkeypatch):
@@ -307,7 +383,7 @@ def test_an_empty_arxiv_response_is_a_feed_error(fetcher, monkeypatch):
         feeds, "http_get", lambda *a, **k: '<feed xmlns="http://www.w3.org/2005/Atom"/>'
     )
     with pytest.raises(FeedError, match="arXiv returned nothing"):
-        fetcher._fetch_paper(TODAY)
+        fetcher._fetch_papers(TODAY)
 
 
 # --- lichess ---------------------------------------------------------------

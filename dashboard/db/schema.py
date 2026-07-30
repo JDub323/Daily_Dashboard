@@ -352,6 +352,64 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE math_problem ADD COLUMN area TEXT;
         """,
     ),
+    (
+        5,
+        """
+        -- Stop showing the same link twice.
+
+        -- Every news link that has been put on screen, and when. Not the
+        -- headline: the same URL under a re-written title is the same story,
+        -- and the title is what changes when a desk updates a piece.
+        CREATE TABLE seen_link (
+            link        TEXT PRIMARY KEY,
+            first_seen  TEXT NOT NULL
+                             CHECK (first_seen IS strftime('%Y-%m-%d', first_seen)),
+            last_seen   TEXT NOT NULL
+                             CHECK (last_seen IS strftime('%Y-%m-%d', last_seen))
+        ) STRICT;
+
+        -- The window query is `last_seen >= ?`, and pruning is the same
+        -- predicate reversed.
+        CREATE INDEX seen_link_last ON seen_link (last_seen);
+
+        -- Collapse papers already duplicated before the constraint existed.
+        -- Two ways in: arXiv served the same top entry on two days (one row
+        -- each), and `papers_today` raced itself -- check-then-insert with no
+        -- constraint, so two tabs both saw "nothing surfaced today" and both
+        -- inserted.
+        --
+        -- Keep the most advanced status per link, because that is the row
+        -- carrying a decision: `read` beats `cleared` beats `queued` beats
+        -- `skipped` beats an untouched `surfaced`. Ties go to the earliest
+        -- sighting, so `surfaced_on` records when it first came up.
+        DELETE FROM paper WHERE id NOT IN (
+            SELECT id FROM (
+                SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY link
+                    ORDER BY CASE status
+                                 WHEN 'read'    THEN 0
+                                 WHEN 'cleared' THEN 1
+                                 WHEN 'queued'  THEN 2
+                                 WHEN 'skipped' THEN 3
+                                 ELSE 4
+                             END,
+                             surfaced_on IS NULL, surfaced_on, id
+                ) AS rn
+                FROM paper
+            ) WHERE rn = 1
+        );
+
+        CREATE UNIQUE INDEX paper_link ON paper (link);
+
+        -- One surfaced candidate per day, enforced rather than assumed. This
+        -- is what actually closes the race: the loser of two concurrent
+        -- inserts now fails instead of adding a second row for the day.
+        -- Partial, because a pasted queue entry has no surfaced_on and any
+        -- number of those may share the NULL.
+        CREATE UNIQUE INDEX paper_surfaced_day ON paper (surfaced_on)
+            WHERE surfaced_on IS NOT NULL;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

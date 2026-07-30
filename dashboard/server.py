@@ -42,7 +42,7 @@ from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import content, logs, scoring, state
+from . import content, feeds, interests, logs, scoring, state
 from .config import Settings, load_env, settings
 from .content import ContentError
 from .db import Database, Repository
@@ -231,8 +231,36 @@ def _register(app: FastAPI) -> None:
     # -- feeds -------------------------------------------------------------
 
     @app.get("/api/news")
-    def news(fetch: Fetch) -> list[api.NewsItem]:
-        return fetch.news()
+    def news(cfg: Cfg, repo: Repo, fetch: Fetch, date: Today) -> list[api.NewsItem]:
+        """Headlines you have not already been shown.
+
+        Dated because the seen-window is measured in days and only the
+        browser knows which day it is -- the same rule every other dated
+        endpoint follows.
+
+        Order matters: filter, *then* quota. Slicing to two politics
+        headlines first and dropping the read ones second leaves one.
+        """
+        window = cfg.news.repeat_window_days
+        # `before=date`: today's own picks are excluded from today's filter.
+        # Showing a headline records it, so without that bound the second
+        # request of the day filters out what the first just displayed and a
+        # refresh swaps every story out from under you.
+        seen = repo.seen_links(date - dt.timedelta(days=window), date) if window else set()
+        candidates = fetch.news()
+        picks = feeds.apply_quotas([i for i in candidates if i.key not in seen], cfg.news.quotas)
+
+        if not picks:
+            # Every candidate is one you have seen. That means the feeds have
+            # gone stale, not that you have read the internet, and an empty
+            # panel would read as a fetch failure. Show the normal selection.
+            log.info("every news candidate was already seen; showing them anyway")
+            picks = feeds.apply_quotas(candidates, cfg.news.quotas)
+
+        repo.record_seen([i.key for i in picks], date)
+        if window:
+            repo.prune_seen(date - dt.timedelta(days=window))
+        return picks
 
     @app.get("/api/markets")
     def markets(fetch: Fetch) -> list[api.MarketRow]:
@@ -366,10 +394,36 @@ def _register(app: FastAPI) -> None:
     # -- papers ------------------------------------------------------------
 
     @app.get("/api/papers/today")
-    def papers_today(repo: Repo, fetch: Fetch, date: Today) -> api.PapersPanel:
-        """Surface the day's arXiv candidate, once per day."""
+    def papers_today(cfg: Cfg, repo: Repo, fetch: Fetch, date: Today) -> api.PapersPanel:
+        """Surface the day's arXiv candidate, once per day and never twice.
+
+        Two changes from taking `candidates[0]`. Papers already in the table
+        are skipped, which is what stops a quiet day on arXiv re-serving
+        yesterday's top entry -- it was surfaced twice and marked read twice
+        before this. And the remainder is ranked by `interests.md`, so the
+        pick is the most wanted unseen candidate rather than merely the
+        newest one.
+        """
         if repo.surfaced_paper(date) is None:
-            entry = fetch.paper(date)
+            seen = repo.paper_links()
+            candidates = fetch.papers(date)
+            unseen = [p for p in candidates if p.link not in seen]
+            if not unseen:
+                # Every candidate already triaged. Surfacing nothing is the
+                # honest answer and the one that was asked for -- re-showing a
+                # paper you have read is the whole complaint. The panel says
+                # so; the usual cause is an over-narrow [arxiv].query.
+                log.warning(
+                    "all %d arXiv candidates have been surfaced before; nothing new today",
+                    len(candidates),
+                )
+                return state.papers_panel(repo, date)
+
+            profile = interests.load(cfg.path("interests"))
+            entry = interests.rank(unseen, profile, text_of=lambda p: (p.title, p.summary or ""))[0]
+            if not profile.empty:
+                log.info("arXiv pick %r scored %.1f", entry.title[:60], profile.score(entry.title))
+
             repo.add_paper(
                 api.Paper(
                     title=entry.title,
@@ -395,7 +449,14 @@ def _register(app: FastAPI) -> None:
 
     @app.post("/api/paper/queue")
     def paper_queue(repo: Repo, body: api.PaperQueueRequest) -> api.PapersPanel:
-        url = str(body.url)
+        # Normalised on the way in so the paste box and the arXiv feed agree
+        # on what "the same paper" means, and checked before the insert so a
+        # re-paste is a 409 naming the paper rather than a 500 from the new
+        # UNIQUE index.
+        url = feeds.normalize_link(str(body.url))
+        existing = repo.paper_by_link(url)
+        if existing is not None:
+            raise ValueError(f"already in the list as {existing.status.value}: {existing.title}")
         repo.add_paper(
             api.Paper(
                 title=body.title or url.removeprefix("https://").removeprefix("http://"),

@@ -8,7 +8,9 @@ export default {
 
   async render(node) {
     mount(node, el("div.faint", { text: "fetching feeds…" }));
-    const items = await api.get("/api/news");
+    // Dated: the server suppresses links it has already shown you, and the
+    // window is measured in days that only the browser knows the bounds of.
+    const items = await api.get("/api/news", { date: api.today() });
     mount(node,
       el("ul.clean", null,
         ...items.map((item) =>

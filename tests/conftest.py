@@ -39,6 +39,10 @@ def settings(tmp_path) -> Settings:
                     "metrics": str(tmp_path / "metrics.jsonl"),
                     "problems": str(tmp_path / "problems.json"),
                     "batches": str(tmp_path / "batches"),
+                    # Absent by default, like the real one may be. A test that
+                    # wants a profile writes it here -- pointing at the real
+                    # path let a test create interests.md in the project root.
+                    "interests": str(tmp_path / "interests.md"),
                 }
             ),
             "server": cfg.server.model_copy(update={"log_file": None, "open_browser": False}),

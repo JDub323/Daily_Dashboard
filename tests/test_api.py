@@ -293,6 +293,105 @@ def test_pokedoku_correct_is_bounded(client):
     )
 
 
+# --- news dedupe -----------------------------------------------------------
+
+
+CATS = ["uspolitics", "world", "finance", "other"]
+
+
+def _serve(monkeypatch, *links):
+    """Stub `Feeds.news`, not `http_get`.
+
+    The fetch is memoised for `cache_seconds`, so patching the transport only
+    reaches the first call in a test and every later one silently re-reads the
+    first response -- which looks exactly like the filter failing.
+    """
+    items = [
+        feeds.NewsItem(
+            title=f"Story {i}", link=link, cat=CATS[i % len(CATS)], key=feeds.normalize_link(link)
+        )
+        for i, link in enumerate(links)
+    ]
+    monkeypatch.setattr(feeds.Feeds, "news", lambda self: items)
+
+
+def test_a_headline_shown_today_is_gone_tomorrow(client, monkeypatch):
+    """The dominant duplicate: an RSS feed carries a story for days, so the
+    same link came back every morning until you stopped opening the panel."""
+    # More stories than one day's quotas can take, so tomorrow has somewhere
+    # to go. A feed offering only what you have already read is the separate
+    # exhausted case below.
+    _serve(monkeypatch, *[f"https://ex.com/{n}" for n in range(8)])
+    first = client.get("/api/news", params={"date": DATE}).json()
+    assert first
+
+    tomorrow = (TODAY + dt.timedelta(days=1)).isoformat()
+    second = client.get("/api/news", params={"date": tomorrow}).json()
+    assert second
+    assert not ({i["key"] for i in first} & {i["key"] for i in second})
+
+
+def test_the_same_day_reload_is_stable(client, monkeypatch):
+    """Refreshing must not swap your headlines.
+
+    Showing a story records it, so a filter that looked at everything seen
+    "in the last 30 days" would exclude what it had just displayed and serve
+    the *next* five instead -- glance at the panel, reload for the markets,
+    and the news is gone. Caught live; the pool has to exceed one day's
+    quotas for a test to see it at all.
+    """
+    _serve(monkeypatch, *[f"https://ex.com/{n}" for n in range(8)])
+    first = client.get("/api/news", params={"date": DATE}).json()
+    second = client.get("/api/news", params={"date": DATE}).json()
+    third = client.get("/api/news", params={"date": DATE}).json()
+    assert [i["key"] for i in first] == [i["key"] for i in second] == [i["key"] for i in third]
+
+
+def test_a_tracking_parameter_does_not_make_a_story_new(client, monkeypatch):
+    _serve(monkeypatch, "https://ex.com/a")
+    client.get("/api/news", params={"date": DATE})
+
+    # Tomorrow the feed re-lists the same story with a campaign tag, plus one
+    # genuinely new item. Only the new one should come back.
+    _serve(monkeypatch, "https://ex.com/a?utm_source=rss", "https://ex.com/b")
+    tomorrow = (TODAY + dt.timedelta(days=1)).isoformat()
+    again = client.get("/api/news", params={"date": tomorrow}).json()
+    assert {i["key"] for i in again} == {"https://ex.com/b"}
+
+
+def test_an_exhausted_feed_shows_repeats_rather_than_nothing(client, monkeypatch):
+    """Stale feeds are the usual cause, and a blank panel reads as a fetch
+    failure rather than as "you have read everything"."""
+    _serve(monkeypatch, "https://ex.com/only")
+    assert client.get("/api/news", params={"date": DATE}).json()
+    tomorrow = (TODAY + dt.timedelta(days=1)).isoformat()
+    assert client.get("/api/news", params={"date": tomorrow}).json()
+
+
+def test_news_requires_a_date(client):
+    assert client.get("/api/news").status_code == 422
+
+
+def test_links_outside_the_window_are_pruned(client, repo, monkeypatch, settings):
+    """A link that stops being offered eventually leaves the table.
+
+    The second fetch serves a *different* story on purpose: showing the same
+    one again refreshes `last_seen`, which is correct -- you saw it again --
+    and would keep it alive forever, which is not what pruning is for.
+    """
+    _serve(monkeypatch, "https://ex.com/old")
+    client.get("/api/news", params={"date": DATE})
+    assert "https://ex.com/old" in repo.seen_links(TODAY - dt.timedelta(days=365))
+
+    _serve(monkeypatch, "https://ex.com/new")
+    beyond = (TODAY + dt.timedelta(days=settings.news.repeat_window_days + 1)).isoformat()
+    client.get("/api/news", params={"date": beyond})
+
+    remaining = repo.seen_links(TODAY - dt.timedelta(days=365))
+    assert "https://ex.com/old" not in remaining
+    assert "https://ex.com/new" in remaining
+
+
 # --- papers ----------------------------------------------------------------
 
 
@@ -301,16 +400,72 @@ def test_the_days_paper_is_surfaced_once(client, monkeypatch):
 
     def fake(self, date):
         calls.append(date)
-        return feeds.ArxivEntry(
-            title="A Paper", link="http://arxiv.org/abs/1", summary="s", published=TODAY
-        )
+        return [
+            feeds.ArxivEntry(
+                title="A Paper", link="http://arxiv.org/abs/1", summary="s", published=TODAY
+            )
+        ]
 
-    monkeypatch.setattr(feeds.Feeds, "paper", fake)
+    monkeypatch.setattr(feeds.Feeds, "papers", fake)
     first = client.get("/api/papers/today", params={"date": DATE}).json()
     second = client.get("/api/papers/today", params={"date": DATE}).json()
     assert first["surfaced"]["title"] == "A Paper"
     assert second["surfaced"]["id"] == first["surfaced"]["id"]
     assert len(calls) == 1
+
+
+def _entries(*titles):
+    return [
+        feeds.ArxivEntry(
+            title=t, link=f"http://arxiv.org/abs/{i}", summary=f"{t} summary", published=TODAY
+        )
+        for i, t in enumerate(titles)
+    ]
+
+
+def test_a_paper_already_surfaced_is_not_surfaced_again(client, monkeypatch):
+    """The observed bug: on a day arXiv had nothing new, the top entry was
+    yesterday's, and it was surfaced twice and marked read twice."""
+    monkeypatch.setattr(feeds.Feeds, "papers", lambda self, date: _entries("Old", "Newer"))
+    first = client.get("/api/papers/today", params={"date": DATE}).json()
+
+    tomorrow = (TODAY + dt.timedelta(days=1)).isoformat()
+    second = client.get("/api/papers/today", params={"date": tomorrow}).json()
+    assert second["surfaced"]["link"] != first["surfaced"]["link"]
+
+
+def test_all_candidates_seen_surfaces_nothing_rather_than_repeating(client, monkeypatch):
+    """Re-showing a paper you have already triaged is the exact complaint, so
+    the honest answer on an exhausted feed is an empty slot, not a repeat."""
+    monkeypatch.setattr(feeds.Feeds, "papers", lambda self, date: _entries("Only"))
+    client.get("/api/papers/today", params={"date": DATE})
+    tomorrow = (TODAY + dt.timedelta(days=1)).isoformat()
+    panel = client.get("/api/papers/today", params={"date": tomorrow}).json()
+    assert panel["surfaced"] is None
+    assert panel["queue"] == []
+
+
+def test_interests_choose_the_candidate(client, monkeypatch, settings):
+    """`interests.md` outranks arXiv's own order without an LLM call."""
+    settings.path("interests").write_text(
+        "# Interested in\n- widget alignment\n\n# Not interested in\n- federated learning\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        feeds.Feeds,
+        "papers",
+        lambda self, date: _entries("Federated learning at scale", "Widget alignment methods"),
+    )
+    panel = client.get("/api/papers/today", params={"date": DATE}).json()
+    assert panel["surfaced"]["title"] == "Widget alignment methods"
+
+
+def test_pasting_a_link_already_in_the_list_is_a_409(client, monkeypatch):
+    monkeypatch.setattr(feeds.Feeds, "papers", lambda self, date: _entries("A Paper"))
+    client.get("/api/papers/today", params={"date": DATE})
+    response = client.post("/api/paper/queue", json={"date": DATE, "url": "http://arxiv.org/abs/0"})
+    assert response.status_code == 409
+    assert "already in the list" in response.json()["error"]
 
 
 def test_triage_moves_the_paper_into_the_queue(client, repo):
@@ -534,7 +689,7 @@ def test_a_feed_outage_is_a_503_with_a_readable_message(client, monkeypatch):
         raise feeds.FeedError("all news feeds failed")
 
     monkeypatch.setattr(feeds.Feeds, "news", boom)
-    response = client.get("/api/news")
+    response = client.get("/api/news", params={"date": DATE})
     assert response.status_code == 503
     assert response.json()["error"] == "all news feeds failed"
 

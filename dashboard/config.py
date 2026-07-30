@@ -54,6 +54,10 @@ class PathSettings(Base):
     """Where the overnight scheduled task drops `<date>.json`. Serving one is
     free; generating one costs an API call. See `dashboard/batch.py`."""
 
+    interests: str = "interests.md"
+    """What you want to read, in your own words. Optional -- absent means the
+    arXiv candidate stays in arXiv's own order. See `dashboard/interests.py`."""
+
 
 class ModelPricing(Base):
     input: float = Field(gt=0)
@@ -227,6 +231,15 @@ class NewsSettings(Base):
     paywalled: list[str] = Field(default_factory=list)
     quotas: list[Quota] = Field(default_factory=list)
     feeds: list[Feed] = Field(default_factory=list)
+
+    repeat_window_days: int = Field(default=30, ge=0, le=365)
+    """How long a headline stays suppressed after it has been shown.
+
+    30 rather than forever. A URL that surfaced during a broken fetch would
+    otherwise be invisible permanently, and a story genuinely re-reported
+    months later is news again. 0 disables the filter without removing the
+    table.
+    """
 
 
 class ArxivSettings(Base):
