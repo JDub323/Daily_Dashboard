@@ -18,7 +18,8 @@ export function rerender(id) {
   if (def?.node) draw(def);
 }
 
-export function rerenderAll(ids) {
+/** Re-render the named panels, or every registered one. */
+export function rerenderAll(ids = [...registry.keys()]) {
   for (const id of ids) rerender(id);
 }
 

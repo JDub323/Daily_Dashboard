@@ -41,3 +41,35 @@ export function put(key, value) {
   notify(key);
   return value;
 }
+
+// --- the day the cache describes -------------------------------------------
+
+/**
+ * Has the local date moved past the day `store.state` was fetched for?
+ *
+ * `state.date` is the date the server was *asked* about, echoed back in the
+ * payload. It shipped from the beginning and nothing ever read it, so a tab
+ * left open past midnight went on serving yesterday's snapshot while every
+ * write it triggered carried today's date.
+ */
+export function dayHasTurned() {
+  return store.state !== null && store.state.date !== api.today();
+}
+
+/**
+ * The completion row `state` implies, or null when the stored row already says
+ * it — the caller writes only on a real change.
+ *
+ * The date is taken from the state the counts were read off, never from the
+ * clock. They are the same date except in the window between midnight and the
+ * rollover check, and there the clock is the wrong answer: it stamps
+ * yesterday's finished count onto a day nothing has been done on, and
+ * `perfect_days` (done = total) then counts that day as perfect. The streak
+ * grew on its own overnight.
+ */
+export function completionWrite(state, done, total) {
+  const date = state.date;
+  const stored = state.completion.find((row) => row.date === date);
+  if (stored && stored.done === done && stored.total === total) return null;
+  return { date, done, total };
+}

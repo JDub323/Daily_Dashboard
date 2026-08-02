@@ -7,7 +7,7 @@
 import * as api from "./api.js";
 import { renderChips } from "./chips.js";
 import { $ } from "./dom.js";
-import { mountAll, register, rerender } from "./panel.js";
+import { mountAll, register, rerender, rerenderAll } from "./panel.js";
 import calendar from "./panels/calendar.js";
 import chess from "./panels/chess.js";
 import elo from "./panels/elo.js";
@@ -18,7 +18,7 @@ import metrics from "./panels/metrics.js";
 import news from "./panels/news.js";
 import piano from "./panels/piano.js";
 import reading from "./panels/reading.js";
-import { loadState, store, subscribe } from "./store.js";
+import { dayHasTurned, loadState, store, subscribe } from "./store.js";
 import { initModal, onModalClose, toast } from "./ui.js";
 
 /**
@@ -33,15 +33,98 @@ const WATCHES = {
   metrics: ["games"],
 };
 
-async function boot() {
+async function loadConfig() {
+  // Dated: the topic rotates weekly, and the browser decides which week it is.
+  store.config = await api.get("/api/config", { date: api.today() });
   $("#hdr-date").textContent = new Date().toDateString();
+  $("#hdr-topic").textContent = `topic: ${store.config.topic}`;
+}
+
+/**
+ * Topic links, in the background.
+ *
+ * Only needed once the math panel has a problem open, so this never blocks
+ * first paint — and a failure leaves the panel's "loading…" line rather than
+ * taking the boot down with it.
+ */
+function loadTopic() {
+  return api
+    .get("/api/topic", { date: api.today() })
+    .then((topic) => {
+      store.topic = topic;
+      rerender("math");
+    })
+    .catch(() => {});
+}
+
+// --- the day rollover ------------------------------------------------------
+
+const DAY_CHECK_MS = 60_000;
+
+let rolling = null;
+
+/**
+ * Reload everything when the local date moves on.
+ *
+ * A dashboard is a tab you leave open, so midnight arrives with the page
+ * already mounted. Without this the boot snapshot simply stayed: panels went
+ * on showing yesterday's problem and yesterday's chips while every write they
+ * triggered was stamped with today's date.
+ *
+ * The completion write was the one that did damage. It POSTed yesterday's
+ * finished count against today's date, and `perfect_days` counts any row where
+ * `done = total` — so a day nothing had been done on was recorded as perfect
+ * and the 100%-days streak grew overnight on its own. `completionWrite` now
+ * addresses that write to the day it describes, which makes the corruption
+ * unreachable; this makes the *display* correct as well, so the fix is not
+ * "the numbers are right but the screen disagrees".
+ *
+ * Config is reloaded with the rest because the topic rotates on Sunday: a
+ * Saturday-night tab has the wrong one by morning. Reloading state also runs
+ * the server's lapse reconciliation, so an abandoned problem is closed out at
+ * midnight rather than waiting for the next time the tab is opened.
+ */
+async function rollOver() {
+  await loadConfig();
+  await loadState();
+  rerenderAll();
+  await renderChips();
+  await loadTopic();
+}
+
+/** Start a rollover if the day turned. True if one is now in flight. */
+function checkDay() {
+  if (!dayHasTurned()) return false;
+  // Serialised: the interval and the visibility handler both fire when a
+  // laptop wakes up after midnight, and two concurrent reloads would race to
+  // write the same completion row.
+  rolling ??= rollOver()
+    .catch((error) => toast(`could not load the new day: ${error.message}`))
+    .finally(() => {
+      rolling = null;
+    });
+  return true;
+}
+
+function watchForNewDay() {
+  // Both, deliberately. The interval covers a tab sitting visible through
+  // midnight; visibilitychange covers the suspended laptop, whose timers do
+  // not fire while it is asleep and which would otherwise stay stale until the
+  // minute after it woke.
+  setInterval(checkDay, DAY_CHECK_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) checkDay();
+  });
+}
+
+// --- boot ------------------------------------------------------------------
+
+async function boot() {
   initModal();
   onModalClose(renderChips);
 
   try {
-    // Dated: the topic rotates weekly, and the browser decides which week it is.
-    store.config = await api.get("/api/config", { date: api.today() });
-    $("#hdr-topic").textContent = `topic: ${store.config.topic}`;
+    await loadConfig();
   } catch {
     toast("could not load config — is the server running?");
   }
@@ -52,22 +135,21 @@ async function boot() {
   mountAll();
 
   subscribe((keys) => {
+    // A write is the other moment worth checking the date on. Finishing a
+    // puzzle just after midnight would otherwise be counted into yesterday's
+    // chips for as long as the interval had left to run — harmless for today,
+    // but it would rewrite yesterday's finished row with a mixed count. The
+    // rollover re-renders everything itself, so there is nothing to do after.
+    if (checkDay()) return;
     renderChips();
     for (const [id, watched] of Object.entries(WATCHES)) {
       if (keys.some((key) => watched.includes(key))) rerender(id);
     }
   });
   await renderChips();
+  watchForNewDay();
 
-  // Topic links are only needed once the math panel has a problem open, so
-  // they load in the background rather than blocking first paint.
-  api
-    .get("/api/topic", { date: api.today() })
-    .then((topic) => {
-      store.topic = topic;
-      rerender("math");
-    })
-    .catch(() => {});
+  loadTopic();
 }
 
 boot().catch((error) => {

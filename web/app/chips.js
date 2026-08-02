@@ -11,7 +11,7 @@ import { openGamesModal } from "./modals/games.js";
 import { openTheoremModal } from "./modals/theorems.js";
 import { openWordModal } from "./modals/word.js";
 import { focusPanel, markDone } from "./panel.js";
-import { store } from "./store.js";
+import { completionWrite, store } from "./store.js";
 
 function tasks() {
   const s = store.state;
@@ -61,9 +61,12 @@ export async function renderChips() {
   // The old client fired a save on every page load: it recomputed `pct` as a
   // float and compared it against a stored float, which differed often enough
   // to write on boot. Compare the integers, and only write on a real change.
-  const stored = store.state.completion.find((c) => c.date === api.today());
-  if (stored && stored.done === done && stored.total === list.length) return;
+  //
+  // `completionWrite` also decides which *day* the write belongs to, which is
+  // not necessarily today — see its comment.
+  const write = completionWrite(store.state, done, list.length);
+  if (!write) return;
 
-  const row = await api.post("/api/completion", { done, total: list.length });
+  const row = await api.post("/api/completion", write);
   store.state.completion = [...store.state.completion.filter((c) => c.date !== row.date), row];
 }
