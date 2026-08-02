@@ -4,6 +4,35 @@ import { $, el, mount } from "./dom.js";
 
 const registry = new Map();
 
+/**
+ * Live panels reschedule themselves after every draw.
+ *
+ * A panel marked `live` may return, from `render`, how long to wait before the
+ * next one — the feed panels compute that from the server's own cache TTL.
+ * Returning nothing falls back to `DEFAULT_REFRESH_MS`, and a throw retries on
+ * `RETRY_MS` instead, so a feed that was down when the page loaded recovers on
+ * its own rather than waiting for someone to press the retry button.
+ */
+const timers = new Map();
+const DEFAULT_REFRESH_MS = 300_000;
+const RETRY_MS = 60_000;
+
+function schedule(def, ms) {
+  if (!def.live) return;
+  clearTimeout(timers.get(def.id));
+  timers.set(
+    def.id,
+    setTimeout(() => {
+      // A hidden tab does not refetch. Nobody is reading it, and `main.js`
+      // redraws every live panel when it comes back into view, so polling in
+      // the background would buy a fresher number for a screen that is about
+      // to be redrawn anyway.
+      if (document.hidden) schedule(def, ms);
+      else draw(def);
+    }, ms),
+  );
+}
+
 export function register(...definitions) {
   for (const def of definitions) registry.set(def.id, def);
 }
@@ -25,12 +54,21 @@ export function rerenderAll(ids = [...registry.keys()]) {
 
 async function draw(def) {
   try {
-    await def.render(def.node);
+    const after = await def.render(def.node);
+    schedule(def, Number.isFinite(after) ? after : DEFAULT_REFRESH_MS);
   } catch (error) {
     mount(def.node,
       el("div.err", { text: error.message }),
       el("div.row", null, el("button", { text: "retry", onclick: () => draw(def) })),
     );
+    schedule(def, RETRY_MS);
+  }
+}
+
+/** Redraw every live panel — what the tab does when it comes back into view. */
+export function refreshLive() {
+  for (const def of registry.values()) {
+    if (def.live && def.node) draw(def);
   }
 }
 

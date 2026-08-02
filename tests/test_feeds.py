@@ -32,15 +32,29 @@ def test_a_fresh_value_is_cached(fetcher):
         calls.append(1)
         return "value"
 
-    assert fetcher.cached("x", 60, fn) == "value"
-    assert fetcher.cached("x", 60, fn) == "value"
+    assert fetcher.cached("x", 60, fn).value == "value"
+    assert fetcher.cached("x", 60, fn).value == "value"
     assert len(calls) == 1
+
+
+def test_a_cached_hit_is_not_stale(fetcher):
+    """Inside the TTL a cached value is *current*, not stale.
+
+    The distinction is the whole point of the flag: serving from cache is what
+    the cache is for, while serving past the TTL means the refetch was tried
+    and the source did not answer.
+    """
+    first = fetcher.cached("x", 60, lambda: "value")
+    second = fetcher.cached("x", 60, lambda: "value")
+    assert (first.stale, second.stale) == (False, False)
+    # And the timestamp is the fetch's, not the moment it was handed out again.
+    assert second.fetched_at == first.fetched_at
 
 
 def test_an_expired_entry_is_refetched(fetcher):
     fetcher.cached("x", 60, lambda: "old")
-    fetcher._cache["x"] = (0, "old")
-    assert fetcher.cached("x", 60, lambda: "new") == "new"
+    fetcher._cache["x"] = feeds.Cached("old", 0, 60)
+    assert fetcher.cached("x", 60, lambda: "new").value == "new"
 
 
 @pytest.mark.parametrize(
@@ -49,12 +63,35 @@ def test_an_expired_entry_is_refetched(fetcher):
 )
 def test_a_transport_failure_serves_stale(fetcher, error):
     fetcher.cached("x", 60, lambda: "stale")
-    fetcher._cache["x"] = (0, "stale")
+    fetcher._cache["x"] = feeds.Cached("stale", 0, 60)
 
     def boom():
         raise error
 
-    assert fetcher.cached("x", 60, boom) == "stale"
+    got = fetcher.cached("x", 60, boom)
+    assert got.value == "stale"
+    # Flagged, so the panel can say so rather than showing it as live.
+    assert got.stale is True
+    # The fetch time is the original one: being served again did not make the
+    # value any newer, and that is what the "as of" line has to report.
+    assert got.fetched_at == 0
+
+
+def test_a_stale_entry_keeps_being_retried(fetcher):
+    """The fallback must not settle in for a full TTL.
+
+    Leaving `fetched_at` at the original fetch keeps the entry expired, so the
+    next request attempts the source again. Bumping it to "now" on failure
+    would mean one outage bought the dead feed a quiet TTL.
+    """
+    fetcher._cache["x"] = feeds.Cached("stale", 0, 60)
+
+    def boom():
+        raise OSError("connection reset")
+
+    assert fetcher.cached("x", 60, boom).stale is True
+    assert fetcher.cached("x", 60, lambda: "back").value == "back"
+    assert fetcher.cached("x", 60, boom).stale is False  # fresh again, cached
 
 
 def test_our_own_parser_bug_propagates(fetcher):
@@ -65,7 +102,7 @@ def test_our_own_parser_bug_propagates(fetcher):
     week-old prices forever with no error anywhere.
     """
     fetcher.cached("x", 60, lambda: "stale")
-    fetcher._cache["x"] = (0, "stale")
+    fetcher._cache["x"] = feeds.Cached("stale", 0, 60)
 
     def bug():
         raise KeyError("regularMarketPrice")

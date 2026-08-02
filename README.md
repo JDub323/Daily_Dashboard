@@ -26,9 +26,9 @@ If the page says **"didn't send any data"**, something else already owns the por
 PY=~/.local/share/daily-dashboard/venv/bin; $PY/python -m pytest && npm test && $PY/ruff check . && $PY/ruff format --check .
 ```
 
-248 Python tests and 20 JavaScript ones; none touch the network, the API, `dashboard.db`, or `state.json`. The JS runner is node's built-in `node --test`, so there is nothing to `npm install`.
+365 Python tests and 33 JavaScript ones; none touch the network, the API, `dashboard.db`, or `state.json`. The JS runner is node's built-in `node --test`, so there is nothing to `npm install`.
 
-The suite is weighted toward the code that was hardest to check by hand: the elo curve, the hint penalty, the theorem draw, streaks, the LaTeX-in-JSON repair, the cache's exception policy, the double-submit guards, and the `state.json` importer's PROVENANCE/PRESERVE rules.
+The suite is weighted toward the code that was hardest to check by hand: the elo curve, the hint penalty, the theorem draw, streaks, the LaTeX-in-JSON repair, the cache's exception policy and staleness flag, the day-rollover guards, the double-submit guards, and the `state.json` importer's PROVENANCE/PRESERVE rules.
 
 ## Layout
 
@@ -52,7 +52,8 @@ web/                  the front end — native ES modules, no build step
     dom.js      el()/svg()/link() — the only way anything reaches the DOM
     api.js      fetch + ndjson, and the definition of "today"
     store.js    a cache of the server's read model, never pushed back whole
-    panel.js    mount / render / retry harness
+    panel.js    mount / render / retry / refresh harness
+    freshness.js  "as of 09:14", and when a live panel refetches
     charts.js   sparkline + line chart
     parsers.js  Wordle & Pokedoku share text — pure functions
     chips.js    the daily checklist
@@ -78,7 +79,9 @@ UI: task chips (top) → gold when done; three columns: feeds (calendar/markets/
 - **Elo**: dynamic K = max(24, 96/(1+n/8)) — fast movement with little history, stabilizing over time. The current rating is *derived* from the append-only `rating_event` log; the rating and the update are computed inside one transaction, so two tabs can't both read the same rating and clobber each other.
 - **Math problems**: served from `problems.json` when an unseen one is there, otherwise LLM-generated with the web-search server tool (max 4 searches) and verified against AoPS before being shown (~$0.15–0.80 per generation — the search results dominate the bill, so the pool is the real cost control). Theorem/textbook links come from `[topic_library]` in `config.toml`, not the LLM.
 - **Chess**: a lichess link plus three self-report buttons. Clean = 1.0, with mistakes = 0.4, fail = 0. The puzzle rating is still the elo opponent.
-- **Feeds** (markets/calendar/news/paper) are cached server-side and serve stale data when the *source* is unreachable. A bug in our own parsing propagates instead — a stale panel and a broken parser used to look identical.
+- **Feeds** (markets/calendar/news/paper) are cached server-side and serve stale data when the *source* is unreachable. A bug in our own parsing propagates instead — a stale panel and a broken parser used to look identical. The fallback now *says so*: every feed response carries `fetched_at`, `ttl_seconds` and `stale`, so the panel prints `as of 09:14` and turns it red when the source stopped answering. A stale panel and a live one used to look identical too.
+- **Live panels** (markets/calendar/news) re-render themselves, scheduling the next fetch from the server's own `cache_seconds` — so the interval lives in `config.toml` alone, and a panel mounted late in a TTL window refreshes sooner rather than a full window later. Polling stops while the tab is hidden and resumes on the way back.
+- **The day rolls over on its own.** The tab is one you leave open, so a 60s check plus `visibilitychange` reloads everything when the browser's local date moves on. The completion write is addressed to the day its counts were read off, never to the clock — otherwise a tab open past midnight posted yesterday's finished count against today, and `done = total` is what makes a perfect day.
 - **No `innerHTML`.** Every panel builds real nodes through `dom.js`, so text is a text node and escaping is structural rather than a hand-rolled `esc()` each render has to remember to call.
 - **Offline-clean.** The page makes no request to anything but `127.0.0.1`.
 - **Adding a panel**: a request/response model in `models/api.py`, a repository method, a route in `server.py`, and a module in `web/app/panels/` registered in `main.js`.

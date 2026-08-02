@@ -231,7 +231,7 @@ def _register(app: FastAPI) -> None:
     # -- feeds -------------------------------------------------------------
 
     @app.get("/api/news")
-    def news(cfg: Cfg, repo: Repo, fetch: Fetch, date: Today) -> list[api.NewsItem]:
+    def news(cfg: Cfg, repo: Repo, fetch: Fetch, date: Today) -> api.NewsResponse:
         """Headlines you have not already been shown.
 
         Dated because the seen-window is measured in days and only the
@@ -247,7 +247,8 @@ def _register(app: FastAPI) -> None:
         # request of the day filters out what the first just displayed and a
         # refresh swaps every story out from under you.
         seen = repo.seen_links(date - dt.timedelta(days=window), date) if window else set()
-        candidates = fetch.news()
+        got = fetch.news()
+        candidates = got.value
         picks = feeds.apply_quotas([i for i in candidates if i.key not in seen], cfg.news.quotas)
 
         if not picks:
@@ -260,15 +261,17 @@ def _register(app: FastAPI) -> None:
         repo.record_seen([i.key for i in picks], date)
         if window:
             repo.prune_seen(date - dt.timedelta(days=window))
-        return picks
+        return api.NewsResponse(items=picks, feed=_feed_meta(got))
 
     @app.get("/api/markets")
-    def markets(fetch: Fetch) -> list[api.MarketRow]:
-        return fetch.markets()
+    def markets(fetch: Fetch) -> api.MarketsResponse:
+        got = fetch.markets()
+        return api.MarketsResponse(rows=got.value, feed=_feed_meta(got))
 
     @app.get("/api/calendar")
     def calendar(fetch: Fetch, date: Today) -> api.CalendarResponse:
-        return fetch.calendar(date)
+        got = fetch.calendar(date)
+        return got.value.model_copy(update={"feed": _feed_meta(got)})
 
     @app.post("/api/calendar/add")
     def calendar_add(fetch: Fetch, body: api.CalendarAddRequest) -> dict[str, str]:
@@ -406,7 +409,10 @@ def _register(app: FastAPI) -> None:
         """
         if repo.surfaced_paper(date) is None:
             seen = repo.paper_links()
-            candidates = fetch.papers(date)
+            # `.value`: the reading panel shows a stored row, so it has no use
+            # for the fetch's freshness — the candidate list is upstream of
+            # what is on screen, not the thing on screen.
+            candidates = fetch.papers(date).value
             unseen = [p for p in candidates if p.link not in seen]
             if not unseen:
                 # Every candidate already triaged. Surfacing nothing is the
@@ -514,6 +520,21 @@ def _register(app: FastAPI) -> None:
 
 
 # --- helpers ---------------------------------------------------------------
+
+
+def _feed_meta(got: feeds.Cached[Any]) -> api.FeedMeta:
+    """The cache entry's freshness, in the shape the browser reads.
+
+    UTC and tz-aware on purpose. A naive timestamp would be interpreted by
+    `new Date(...)` as local time, which on this machine means WSL's clock
+    against the browser's -- the same skew [Invariant 1] exists to keep out of
+    everything else that is dated.
+    """
+    return api.FeedMeta(
+        fetched_at=dt.datetime.fromtimestamp(got.fetched_at, dt.UTC),
+        ttl_seconds=got.ttl,
+        stale=got.stale,
+    )
 
 
 def _domain_wordle(body: api.WordleLogRequest) -> WordleResult:

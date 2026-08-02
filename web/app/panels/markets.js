@@ -1,6 +1,7 @@
 import * as api from "../api.js";
 import { sparkline } from "../charts.js";
 import { el, mount } from "../dom.js";
+import { feedStamp, refreshAfter } from "../freshness.js";
 
 function row(quote) {
   if (quote.error || typeof quote.price !== "number") {
@@ -27,9 +28,12 @@ export default {
   id: "mkt",
   title: "markets",
   col: "left",
+  live: true,
 
   async render(node) {
     mount(node, el("div.faint", { text: "fetching quotes…" }));
-    mount(node, ...(await api.get("/api/markets")).map(row));
+    const markets = await api.get("/api/markets");
+    mount(node, ...markets.rows.map(row), feedStamp(markets.feed));
+    return refreshAfter(markets.feed);
   },
 };

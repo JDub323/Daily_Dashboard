@@ -23,7 +23,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, Generic, NamedTuple, TypeVar
 
 from . import logs
 from .config import Settings
@@ -137,6 +137,27 @@ def http_get(url: str, headers: dict[str, str] | None = None, timeout: int = 15)
         return r.read().decode("utf-8", "replace")
 
 
+class Cached(NamedTuple, Generic[T]):
+    """A cached value, and how much to trust it.
+
+    `fetched_at` is when the value came off the wire, not when it was last
+    handed out: an hour-old quote is an hour old however many requests it has
+    answered since.
+
+    `stale` is the distinction the panel actually needs. Inside the TTL a
+    cached value is simply *current* -- that is what the cache is for. Past the
+    TTL, a cached value means the refetch was attempted and the source did not
+    answer, so what is on screen is a fallback. Both cases used to leave the
+    process as the same bare list, which is why a Yahoo outage rendered
+    identically to live quotes.
+    """
+
+    value: T
+    fetched_at: float
+    ttl: int
+    stale: bool = False
+
+
 class Feeds:
     """External data, with a stale-tolerant cache.
 
@@ -146,26 +167,33 @@ class Feeds:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self._cache: dict[str, tuple[float, Any]] = {}
+        self._cache: dict[str, Cached[Any]] = {}
 
     # -- cache --------------------------------------------------------------
 
-    def cached(self, name: str, ttl: int, fn: Callable[[], T]) -> T:
+    def cached(self, name: str, ttl: int, fn: Callable[[], T]) -> Cached[T]:
         now = time.time()
         entry = self._cache.get(name)
-        if entry and now - entry[0] < ttl:
-            return entry[1]
+        if entry and now - entry.fetched_at < ttl:
+            return entry
         try:
             value = fn()
         except (*TRANSPORT_ERRORS, FeedError) as e:
             if entry:
-                age = int(now - entry[0])
+                age = int(now - entry.fetched_at)
                 log.warning("%s unreachable (%s); serving cache from %ss ago", name, e, age)
-                return entry[1]
+                # Flagged from here on, and `fetched_at` deliberately keeps the
+                # original fetch time: the value did not become newer by being
+                # served again, and leaving the timestamp alone is also what
+                # keeps the entry expired, so the next request retries rather
+                # than settling into the fallback for a full TTL.
+                fallback = entry._replace(stale=True, ttl=ttl)
+                self._cache[name] = fallback
+                return fallback
             log.warning("%s unreachable and nothing cached: %s", name, e)
             raise
-        self._cache[name] = (now, value)
-        return value
+        self._cache[name] = Cached(value, now, ttl)
+        return self._cache[name]
 
     def invalidate(self, prefix: str) -> None:
         for key in [k for k in self._cache if k == prefix or k.startswith(f"{prefix}:")]:
@@ -178,7 +206,7 @@ class Feeds:
             return self.settings.news.proxy_prefix + urllib.parse.quote(link, safe="")
         return link
 
-    def news(self) -> list[NewsItem]:
+    def news(self) -> Cached[list[NewsItem]]:
         """Every item every feed offered, in feed order. *Not* quota-sliced.
 
         The quotas moved to `apply_quotas`, downstream of the seen-link
@@ -222,7 +250,7 @@ class Feeds:
 
     # -- markets ------------------------------------------------------------
 
-    def markets(self) -> list[MarketRow]:
+    def markets(self) -> Cached[list[MarketRow]]:
         return self.cached("markets", self.settings.markets.cache_seconds, self._fetch_markets)
 
     def _fetch_markets(self) -> list[MarketRow]:
@@ -302,7 +330,7 @@ class Feeds:
             raise FeedError(message[:200] or "gcalcli failed")
         return r.stdout
 
-    def calendar(self, today: dt.date) -> CalendarResponse:
+    def calendar(self, today: dt.date) -> Cached[CalendarResponse]:
         return self.cached(
             f"calendar:{today.isoformat()}",
             self.settings.calendar.cache_seconds,
@@ -326,7 +354,7 @@ class Feeds:
 
     # -- arXiv --------------------------------------------------------------
 
-    def papers(self, today: dt.date) -> list[ArxivEntry]:
+    def papers(self, today: dt.date) -> Cached[list[ArxivEntry]]:
         """The whole candidate list, freshest first.
 
         Was `paper()`, returning only the top one. `max_results` already

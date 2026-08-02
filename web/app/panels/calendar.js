@@ -1,5 +1,6 @@
 import * as api from "../api.js";
 import { el, mount } from "../dom.js";
+import { feedStamp, refreshAfter } from "../freshness.js";
 
 function list(items, empty, format) {
   if (!items.length) return el("ul.clean", null, el("li.faint", { text: empty }));
@@ -10,6 +11,7 @@ export default {
   id: "cal",
   title: "calendar",
   col: "left",
+  live: true,
 
   async render(node) {
     const message = el("div.faint");
@@ -37,6 +39,9 @@ export default {
     try {
       calendar = await api.get("/api/calendar", { date: api.today() });
     } catch (error) {
+      // Handled here rather than thrown, because the quick-add box has to
+      // survive gcalcli being down — it is how you fix the thing that is
+      // wrong. The harness's error card would replace the whole panel.
       mount(node,
         el("div.err", { text: `calendar: ${error.message}` }),
         el("div.row", null, el("button", { text: "retry", onclick: () => this.render(node) })),
@@ -53,6 +58,8 @@ export default {
       list(calendar.week, "clear", (ev) =>
         el("li", null, el("span.dim", { text: ev.date }), " ", ev.title)),
       ...addBox,
+      feedStamp(calendar.feed),
     );
+    return refreshAfter(calendar.feed);
   },
 };

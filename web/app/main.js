@@ -7,7 +7,7 @@
 import * as api from "./api.js";
 import { renderChips } from "./chips.js";
 import { $ } from "./dom.js";
-import { mountAll, register, rerender, rerenderAll } from "./panel.js";
+import { mountAll, refreshLive, register, rerender, rerenderAll } from "./panel.js";
 import calendar from "./panels/calendar.js";
 import chess from "./panels/chess.js";
 import elo from "./panels/elo.js";
@@ -113,7 +113,13 @@ function watchForNewDay() {
   // minute after it woke.
   setInterval(checkDay, DAY_CHECK_MS);
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) checkDay();
+    if (document.hidden) return;
+    // The day check wins: a rollover redraws every panel anyway, so refreshing
+    // the live ones as well would fetch each of them twice.
+    if (checkDay()) return;
+    // Live panels stop polling while hidden. Coming back is the moment their
+    // data is furthest out of date and the moment someone is looking at it.
+    refreshLive();
   });
 }
 

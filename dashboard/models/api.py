@@ -308,6 +308,28 @@ class TopicResponse(TopicInfo):
 # --- feeds -----------------------------------------------------------------
 
 
+class FeedMeta(Base):
+    """How fresh the data behind a feed panel is.
+
+    The server has always cached every feed and served the last good copy when
+    the source was unreachable, which is the right behaviour and was entirely
+    invisible: a Yahoo outage put week-old prices on screen looking exactly
+    like live ones. These three fields are that state, crossing HTTP.
+
+    `ttl_seconds` is here so the browser does not have to keep its own copy of
+    the cache windows. The panel schedules its next poll from the server's own
+    number, which means the interval lives in `config.toml` alone -- polling
+    faster would only get the same cached answer handed back.
+    """
+
+    fetched_at: dt.datetime
+    """When the value came off the wire. UTC; the browser renders it local."""
+
+    ttl_seconds: int
+    stale: bool = False
+    """The refetch was attempted and the source did not answer."""
+
+
 class NewsItem(Base):
     title: str
     link: Url
@@ -341,9 +363,30 @@ class CalendarEvent(Base):
     title: str
 
 
+class MarketsResponse(Base):
+    """Was a bare `list[MarketRow]`. An envelope, so freshness has somewhere
+    to live -- a list has no room for anything about itself."""
+
+    rows: list[MarketRow] = Field(default_factory=list)
+    feed: FeedMeta
+
+
+class NewsResponse(Base):
+    items: list[NewsItem] = Field(default_factory=list)
+    feed: FeedMeta
+
+
 class CalendarResponse(Base):
     today: list[CalendarEvent] = Field(default_factory=list)
     week: list[CalendarEvent] = Field(default_factory=list)
+
+    feed: FeedMeta | None = None
+    """Attached by the route, not by the fetcher.
+
+    Optional because `Feeds._fetch_calendar` builds this response *inside* the
+    cache and so cannot know when it will be considered fetched. The route
+    wraps it once the cache has answered. Never None over HTTP.
+    """
 
 
 # --- streaming -------------------------------------------------------------

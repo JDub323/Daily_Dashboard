@@ -7,6 +7,7 @@ Nothing here reaches the network or the LLM: the two endpoints that would
 from __future__ import annotations
 
 import datetime as dt
+import time
 
 import pytest
 
@@ -299,6 +300,20 @@ def test_pokedoku_correct_is_bounded(client):
 CATS = ["uspolitics", "world", "finance", "other"]
 
 
+def _cached(value):
+    """Wrap a stub's return value the way the real cache would.
+
+    The fetchers hand back a `Cached` now, not a bare list: the panel has to be
+    able to say when the data was fetched and whether the source answered.
+    """
+    return feeds.Cached(value, time.time(), 60)
+
+
+def _headlines(client, date):
+    """GET /api/news, unwrapped — the response is an envelope now."""
+    return client.get("/api/news", params={"date": date}).json()["items"]
+
+
 def _serve(monkeypatch, *links):
     """Stub `Feeds.news`, not `http_get`.
 
@@ -312,7 +327,7 @@ def _serve(monkeypatch, *links):
         )
         for i, link in enumerate(links)
     ]
-    monkeypatch.setattr(feeds.Feeds, "news", lambda self: items)
+    monkeypatch.setattr(feeds.Feeds, "news", lambda self: _cached(items))
 
 
 def test_a_headline_shown_today_is_gone_tomorrow(client, monkeypatch):
@@ -322,11 +337,11 @@ def test_a_headline_shown_today_is_gone_tomorrow(client, monkeypatch):
     # to go. A feed offering only what you have already read is the separate
     # exhausted case below.
     _serve(monkeypatch, *[f"https://ex.com/{n}" for n in range(8)])
-    first = client.get("/api/news", params={"date": DATE}).json()
+    first = _headlines(client, DATE)
     assert first
 
     tomorrow = (TODAY + dt.timedelta(days=1)).isoformat()
-    second = client.get("/api/news", params={"date": tomorrow}).json()
+    second = _headlines(client, tomorrow)
     assert second
     assert not ({i["key"] for i in first} & {i["key"] for i in second})
 
@@ -341,9 +356,9 @@ def test_the_same_day_reload_is_stable(client, monkeypatch):
     quotas for a test to see it at all.
     """
     _serve(monkeypatch, *[f"https://ex.com/{n}" for n in range(8)])
-    first = client.get("/api/news", params={"date": DATE}).json()
-    second = client.get("/api/news", params={"date": DATE}).json()
-    third = client.get("/api/news", params={"date": DATE}).json()
+    first = _headlines(client, DATE)
+    second = _headlines(client, DATE)
+    third = _headlines(client, DATE)
     assert [i["key"] for i in first] == [i["key"] for i in second] == [i["key"] for i in third]
 
 
@@ -355,7 +370,7 @@ def test_a_tracking_parameter_does_not_make_a_story_new(client, monkeypatch):
     # genuinely new item. Only the new one should come back.
     _serve(monkeypatch, "https://ex.com/a?utm_source=rss", "https://ex.com/b")
     tomorrow = (TODAY + dt.timedelta(days=1)).isoformat()
-    again = client.get("/api/news", params={"date": tomorrow}).json()
+    again = _headlines(client, tomorrow)
     assert {i["key"] for i in again} == {"https://ex.com/b"}
 
 
@@ -363,9 +378,9 @@ def test_an_exhausted_feed_shows_repeats_rather_than_nothing(client, monkeypatch
     """Stale feeds are the usual cause, and a blank panel reads as a fetch
     failure rather than as "you have read everything"."""
     _serve(monkeypatch, "https://ex.com/only")
-    assert client.get("/api/news", params={"date": DATE}).json()
+    assert _headlines(client, DATE)
     tomorrow = (TODAY + dt.timedelta(days=1)).isoformat()
-    assert client.get("/api/news", params={"date": tomorrow}).json()
+    assert _headlines(client, tomorrow)
 
 
 def test_news_requires_a_date(client):
@@ -400,11 +415,13 @@ def test_the_days_paper_is_surfaced_once(client, monkeypatch):
 
     def fake(self, date):
         calls.append(date)
-        return [
-            feeds.ArxivEntry(
-                title="A Paper", link="http://arxiv.org/abs/1", summary="s", published=TODAY
-            )
-        ]
+        return _cached(
+            [
+                feeds.ArxivEntry(
+                    title="A Paper", link="http://arxiv.org/abs/1", summary="s", published=TODAY
+                )
+            ]
+        )
 
     monkeypatch.setattr(feeds.Feeds, "papers", fake)
     first = client.get("/api/papers/today", params={"date": DATE}).json()
@@ -415,12 +432,14 @@ def test_the_days_paper_is_surfaced_once(client, monkeypatch):
 
 
 def _entries(*titles):
-    return [
-        feeds.ArxivEntry(
-            title=t, link=f"http://arxiv.org/abs/{i}", summary=f"{t} summary", published=TODAY
-        )
-        for i, t in enumerate(titles)
-    ]
+    return _cached(
+        [
+            feeds.ArxivEntry(
+                title=t, link=f"http://arxiv.org/abs/{i}", summary=f"{t} summary", published=TODAY
+            )
+            for i, t in enumerate(titles)
+        ]
+    )
 
 
 def test_a_paper_already_surfaced_is_not_surfaced_again(client, monkeypatch):
@@ -679,6 +698,67 @@ def test_calendar_add_takes_no_date(client, monkeypatch):
     assert (
         client.post("/api/calendar/add", json={"text": "x", "date": DATE}).status_code == 422
     )  # extra="forbid"
+
+
+# --- feed freshness --------------------------------------------------------
+
+
+def test_markets_reports_when_it_was_fetched(client, monkeypatch):
+    monkeypatch.setattr(
+        feeds.Feeds, "markets", lambda self: _cached([feeds.MarketRow(ticker="AAPL", price=1.0)])
+    )
+    body = client.get("/api/markets").json()
+    assert body["rows"][0]["ticker"] == "AAPL"
+    # The TTL crosses HTTP so the browser schedules its next poll from the
+    # server's own cache window rather than keeping a second copy of it.
+    assert body["feed"]["ttl_seconds"] == 60
+    assert body["feed"]["stale"] is False
+    # tz-aware: `new Date(...)` reads a naive timestamp as *local*, which on
+    # this machine means WSL's clock against the browser's.
+    assert dt.datetime.fromisoformat(body["feed"]["fetched_at"]).tzinfo is not None
+
+
+def test_a_source_outage_is_flagged_rather_than_served_as_live(client, monkeypatch):
+    """The complaint this fixes: a Yahoo outage rendered like live quotes.
+
+    The cache serving its last good copy is right — an empty panel would be
+    worse. What was missing is that the panel had no way to say so.
+    """
+    rows = [feeds.MarketRow(ticker="AAPL", price=1.0)]
+
+    def once(self):
+        # The real `cached`, driven through a source that works and then does
+        # not — stubbing `markets` itself would skip the code under test.
+        return self.cached("markets", 60, next(sources))
+
+    sources = iter([lambda: rows, _boom])
+    monkeypatch.setattr(feeds.Feeds, "markets", once)
+
+    fresh = client.get("/api/markets").json()
+    assert fresh["feed"]["stale"] is False
+
+    client.app.state.feeds._cache["markets"] = feeds.Cached(rows, 0.0, 60)
+    stale = client.get("/api/markets").json()
+    assert stale["feed"]["stale"] is True
+    assert stale["rows"][0]["ticker"] == "AAPL"  # still served, just labelled
+    assert stale["feed"]["fetched_at"].startswith("1970-")  # the original fetch
+
+
+def _boom():
+    raise OSError("connection reset")
+
+
+def test_news_and_calendar_carry_freshness_too(client, monkeypatch):
+    _serve(monkeypatch, "https://ex.com/a")
+    assert client.get("/api/news", params={"date": DATE}).json()["feed"]["ttl_seconds"] == 60
+
+    monkeypatch.setattr(
+        feeds.Feeds, "calendar", lambda self, today: _cached(feeds.CalendarResponse())
+    )
+    body = client.get("/api/calendar", params={"date": DATE}).json()
+    # Attached by the route: the fetcher builds this response inside the cache
+    # and cannot know when it will count as fetched.
+    assert body["feed"]["ttl_seconds"] == 60
 
 
 # --- error mapping ---------------------------------------------------------

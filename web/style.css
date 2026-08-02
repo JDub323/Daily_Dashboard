@@ -94,6 +94,14 @@ ul.clean li { margin: 5px 0; }
 .katex { font-size: 1.1em; }
 .katex-display { margin: .7em 0; }
 
+/* ---- feed freshness ----
+   Always rendered, not only on failure: a timestamp that appears only when
+   something is wrong is one nobody has learned to read. `--bad` for stale
+   because that is what it is — the source did not answer and the numbers on
+   screen are not current, which is a wrong answer rather than a slow one. */
+.stamp { color: var(--faint); font-size: 11px; margin-top: 8px; }
+.stamp.stale { color: var(--bad); }
+
 /* ---- reading panel ---- */
 .paper-title { margin: 6px 0; }
 
