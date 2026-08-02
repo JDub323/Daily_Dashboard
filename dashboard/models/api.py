@@ -65,6 +65,15 @@ class MathFinishRequest(DateBody):
     hints_revealed and applies the elo update in one transaction."""
 
 
+class MathLateRequest(DateBody):
+    """`date` is today, as everywhere; `target` is the lapsed day being
+    submitted. Both, because the window is measured between them and only the
+    browser knows which day today is."""
+
+    target: dt.date
+    outcome: MathOutcome
+
+
 class ChessNewRequest(DateBody):
     pass
 
@@ -219,6 +228,57 @@ class MathPanel(Base):
     """Only the hints actually revealed. The unrevealed ones are not sent --
     previously the whole hint list shipped to the client and was merely not
     rendered."""
+
+
+class MathArchiveEntry(Base):
+    """One past day, for the archive.
+
+    Carries the whole problem — statement, answer, hints and all. The archive
+    is a reading surface for work already done, so withholding the answer the
+    way the live panel does would only mean the record you came to consult is
+    the one thing it will not show you. The exception is a day still open to
+    late submission, which the modal keeps behind a reveal: seeing the answer
+    first would make the self-report meaningless.
+    """
+
+    date: dt.date
+    problem: MathProblem
+    status: str
+    score: Score | None = None
+    hints_revealed: int = 0
+    delta: int | None = None
+    """Net pooled rating change on that date, summed across its rows."""
+
+    late_eligible: bool = False
+    """Lapsed, and still inside the submission window."""
+
+    late_score_if_solved: Score | None = None
+    """What a late `solved` would be worth, given the hints already revealed.
+
+    Computed server-side and sent, rather than derived in the browser, for the
+    same reason the elo update is: scoring lives in one place. It is also the
+    number that makes the offer honest — "submit late" without saying what it
+    will score is asking for a decision with the price hidden.
+    """
+
+
+class MathArchiveResponse(Base):
+    entries: list[MathArchiveEntry] = Field(default_factory=list)
+    late_window_days: int
+    """From `scoring`, so the modal can say how long is left without keeping
+    its own copy of the rule."""
+
+
+class MathLateResponse(Base):
+    """Both halves of what a late submission changes.
+
+    One round trip rather than two: the panel's summary moved (rating, areas,
+    history) and so did the archive row that was just submitted, and fetching
+    them separately would flash the old numbers in between.
+    """
+
+    panel: MathPanel
+    archive: MathArchiveResponse
 
 
 class ChessPanel(Base):

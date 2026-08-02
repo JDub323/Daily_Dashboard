@@ -306,6 +306,29 @@ def _register(app: FastAPI) -> None:
         repo.finish_math(body.date, body.outcome)
         return state.math_panel(cfg, repo, body.date)
 
+    @app.get("/api/math/archive")
+    def math_archive(repo: Repo, date: Today) -> api.MathArchiveResponse:
+        """Past problems, and which of them can still be submitted.
+
+        Dated for the eligibility window, which is counted in days from today
+        -- and only the browser knows which day that is.
+        """
+        return state.math_archive(repo, date)
+
+    @app.post("/api/math/late")
+    def math_late(cfg: Cfg, repo: Repo, body: api.MathLateRequest) -> api.MathLateResponse:
+        """Submit a lapsed day. Cancels the lapse and rates the result.
+
+        A 409 for a day that is not a lapse, out of the window, or already
+        submitted -- all three are `ValueError` from the repository, which is
+        the conflict the client should be told about rather than a fault.
+        """
+        repo.finish_math_late(body.date, body.target, body.outcome)
+        return api.MathLateResponse(
+            panel=state.math_panel(cfg, repo, body.date),
+            archive=state.math_archive(repo, body.date),
+        )
+
     # -- chess -------------------------------------------------------------
 
     @app.post("/api/chess/new")

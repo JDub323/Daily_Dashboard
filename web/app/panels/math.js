@@ -1,7 +1,18 @@
 import * as api from "../api.js";
 import { el, link, mount } from "../dom.js";
+import { openMathArchive } from "../modals/math.js";
 import { put, store } from "../store.js";
 import { typeset } from "../ui.js";
+
+/**
+ * The way through to past problems — and the only surface that says a lapsed
+ * day can still be submitted, since the archive is where you would go to do it.
+ */
+function archiveLink() {
+  return el("div.row.gap", null,
+    el("button", { text: "past problems →", onclick: openMathArchive }),
+  );
+}
 
 /** The elo header both hero panels share. */
 export function summaryRow(summary) {
@@ -115,6 +126,7 @@ export default {
           },
         }),
         el("div.faint", { text: `topic: ${store.config.topic} · verified against AoPS via web search` }),
+        archiveLink(),
       );
       return;
     }
@@ -126,6 +138,7 @@ export default {
       mount(node, head, areas,
         el("div.ok", null, `done for today ✓ (${problem.source}) `, lastDelta(math.summary)),
         answer,
+        archiveLink(),
       );
       typeset(answer);
       return;
@@ -193,6 +206,7 @@ export default {
       revealed,
       el("div.row", null, hintButton, revealAnswer, solved, failed),
       answerSlot,
+      archiveLink(),
     );
     typeset(node);
   },

@@ -58,6 +58,25 @@ class Provenance(StrEnum):
     K-factor's `n` and from `success_rate`. A day you ghosted should cost you
     rating without also making the estimate more confident."""
 
+    late = "late"
+    """A lapsed day submitted afterwards, scored at `late_math_score`.
+
+    Evidence about skill -- you did the problem -- so unlike `lapsed` it counts
+    toward the K-factor's `n`. It is excluded from `success_rate`, which
+    thresholds at score > 0.5: a late score is deflated by design and tops out
+    at 0.40, so every late solve would read as a failure and catching up would
+    look like getting worse."""
+
+    unlapsed = "unlapsed"
+    """Bookkeeping: hands back exactly what a lapse took, before its `late`
+    result is applied.
+
+    Submitting late replaces the lapse rather than stacking on it, and the log
+    is append-only -- so the lapse row stays and this row cancels it. Excluded
+    from `n` and from `success_rate` alike: nothing was attempted here, and
+    `score`/`k` on the row are the lapse's own values carried over only because
+    the columns are NOT NULL. Nothing reads them."""
+
 
 class MathStatus(StrEnum):
     open = "open"

@@ -19,7 +19,7 @@ from . import scoring
 from .config import Settings
 from .db.repository import Repository
 from .models import api
-from .models.common import Game, HealthMetric, Track
+from .models.common import Game, HealthMetric, MathOutcome, Track
 
 HISTORY_LIMIT = 40
 """Rating events sent to the elo charts. The chart plots the last 40 anyway;
@@ -86,6 +86,44 @@ def math_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.MathPanel
         # Only what has actually been revealed. The old client received all
         # three hints and merely declined to render them.
         hints_visible=problem.hints[: attempt.hints_revealed],
+    )
+
+
+ARCHIVE_LIMIT = 60
+"""Past problems sent to the archive. Two months of daily problems, which is
+what "have I seen this before" reaches back for in practice — and the whole
+statement of each ships, so the payload is the reason there is a limit."""
+
+
+def math_archive(repo: Repository, today: dt.date) -> api.MathArchiveResponse:
+    """Every past problem, newest first, with what it did to the rating.
+
+    Read-only like everything here. Eligibility is *computed*, not stored: a
+    day drops out of the window by the calendar moving, so a stored flag would
+    be a fact that quietly stops being true.
+    """
+    history = repo.math_history(ARCHIVE_LIMIT)
+    deltas = repo.rating_deltas([attempt.date for attempt, _ in history])
+    eligible = set(repo.late_eligible_dates(today))
+    return api.MathArchiveResponse(
+        entries=[
+            api.MathArchiveEntry(
+                date=attempt.date,
+                problem=problem,
+                status=attempt.status.value,
+                score=attempt.score,
+                hints_revealed=attempt.hints_revealed,
+                delta=deltas.get(attempt.date),
+                late_eligible=attempt.date in eligible,
+                late_score_if_solved=(
+                    scoring.late_math_score(MathOutcome.solved, attempt.hints_revealed)
+                    if attempt.date in eligible
+                    else None
+                ),
+            )
+            for attempt, problem in history
+        ],
+        late_window_days=scoring.LATE_WINDOW_DAYS,
     )
 
 

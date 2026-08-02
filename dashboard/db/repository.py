@@ -35,6 +35,24 @@ from .connection import transaction
 
 SEEDS = {Track.math: scoring.MATH_SEED, Track.chess: scoring.CHESS_SEED}
 
+NOT_ATTEMPTS = (Provenance.lapsed, Provenance.unlapsed)
+"""Rows that move the rating without anybody having attempted anything.
+
+Excluded from the K-factor's `n`, because `n` measures how much evidence
+exists and neither of these is evidence. A lapse is a day nobody did; an
+unlapse is the bookkeeping that cancels one.
+"""
+
+_ATTEMPT_ONLY = frozenset({"a_date", "problem_id", "hints_revealed", "status", "score"})
+"""Columns the archive join adds for the attempt side. Everything else in the
+row belongs to `math_problem` -- `id` included, which is why the attempt's own
+date is aliased rather than selected twice."""
+
+NOT_SUCCESSES = (*NOT_ATTEMPTS, Provenance.late)
+"""...and additionally the rows whose score cannot be read against the 0.5
+threshold `success_rate` uses. A late result is a real attempt, so it counts
+toward `n` -- but it is scored out of 0.40, so it can never clear a half."""
+
 
 def _iso(value: dt.date | str | None) -> str | None:
     if value is None:
@@ -110,13 +128,13 @@ class Repository:
         little evidence, and a rating that pretended otherwise would be a
         confident wrong answer rather than an uncertain right one.
         """
+        placeholders = ", ".join("?" * len(NOT_ATTEMPTS))
+        params: tuple[object, ...] = (Track(track).value, *[p.value for p in NOT_ATTEMPTS])
         return self.conn.execute(
             f"SELECT COUNT(*) FROM rating_event "
-            f"WHERE track = ? AND provenance <> ? "
+            f"WHERE track = ? AND provenance NOT IN ({placeholders}) "
             f"AND area {'IS NULL' if area is None else '= ?'}",
-            (Track(track).value, Provenance.lapsed.value)
-            if area is None
-            else (Track(track).value, Provenance.lapsed.value, area),
+            params if area is None else (*params, area),
         ).fetchone()[0]
 
     def area_ratings(self, areas: list[str]) -> list[tuple[str, int, int]]:
@@ -171,11 +189,19 @@ class Repository:
         Lapses are excluded on the same ground as in `event_count`: this is a
         measure of how you do on problems, and a lapse is a problem you did
         not do. Their cost shows up in the rating, which is where it belongs.
+
+        Late results are excluded for the opposite reason. They *are* attempts
+        -- that is why they count toward `n` -- but their score is deflated on
+        purpose and tops out at 0.40, so against a threshold of 0.5 every late
+        solve would read as a failure and a week of catching up would look
+        like a week of getting worse.
         """
+        placeholders = ", ".join("?" * len(NOT_SUCCESSES))
         rows = self.conn.execute(
-            "SELECT score FROM rating_event WHERE track = ? AND provenance <> ? "
-            "AND area IS NULL ORDER BY id DESC LIMIT ?",
-            (Track(track).value, Provenance.lapsed.value, window),
+            f"SELECT score FROM rating_event WHERE track = ? "
+            f"AND provenance NOT IN ({placeholders}) "
+            f"AND area IS NULL ORDER BY id DESC LIMIT ?",
+            (Track(track).value, *[p.value for p in NOT_SUCCESSES], window),
         ).fetchall()
         if not rows:
             return None
@@ -332,6 +358,172 @@ class Repository:
             provenance=Provenance.measured,
             score_for=lambda attempt: scoring.math_score(outcome, attempt.hints_revealed),
         )
+
+    def finish_math_late(
+        self, today: dt.date, target: dt.date, outcome: MathOutcome
+    ) -> tuple[d.MathAttempt, d.RatingEvent]:
+        """Submit a lapsed day afterwards. Replaces the lapse; atomic.
+
+        Three things happen in one transaction, in this order:
+
+        1. every `lapsed` rating row for `target` is cancelled by an
+           `unlapsed` row that hands back exactly its delta;
+        2. the attempt flips from `lapsed` to solved/failed at
+           `late_math_score`;
+        3. the late result is rated normally, chaining off the rating the
+           cancellations just restored.
+
+        The cancellation is a new row rather than an edit because the log is
+        append-only and its lineage is preserved, not rewritten -- the same
+        rule that keeps the imported `reconstructed` rows in place. What it
+        cannot be is exact in a stronger sense: results recorded *after* the
+        lapse chained off the depressed rating, and no single row can unwind
+        that. Handing back the delta puts the rating where it would be if the
+        lapse had scored what the late submission scores, which is the
+        question being asked, and is why this is a window rather than
+        something you can do to a lapse from March.
+        """
+        outcome = MathOutcome(outcome)
+        if target >= today:
+            raise ValueError(f"{target} is not a past day")
+        if (today - target).days > scoring.LATE_WINDOW_DAYS:
+            raise ValueError(
+                f"{target} is more than {scoring.LATE_WINDOW_DAYS} days ago; that lapse is final"
+            )
+
+        with transaction(self.conn):
+            attempt = self.math_attempt(target)
+            if attempt is None:
+                raise LookupError(f"no math attempt on {target}")
+            if attempt.status is not MathStatus.lapsed:
+                # Guards the double-submit and the wrong-status case together:
+                # an already-solved day is not a lapse to be replaced.
+                raise ValueError(f"math attempt on {target} is {attempt.status.value}, not lapsed")
+            problem = self.problem(attempt.problem_id)
+            assert problem is not None
+
+            score = scoring.late_math_score(outcome, attempt.hints_revealed)
+            row = self.conn.execute(
+                "UPDATE math_attempt SET status = ?, score = ? "
+                "WHERE date = ? AND status = 'lapsed' RETURNING *",
+                (
+                    (MathStatus.solved if outcome is MathOutcome.solved else MathStatus.failed),
+                    score,
+                    _iso(target),
+                ),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"math attempt on {target} was changed concurrently")
+
+            # Pooled first and area second, matching `_close_math` -- the
+            # pooled row is what the panel and the chart read, so it must not
+            # be able to exist without its partner or vice versa.
+            self._unlapse(target, problem, area=None)
+            ev = self._rate_math(target, problem, score, Provenance.late, area=None)
+            if problem.area is not None:
+                self._unlapse(target, problem, area=problem.area)
+                self._rate_math(target, problem, score, Provenance.late, area=problem.area)
+            return d.MathAttempt(**dict(row)), ev
+
+    def _unlapse(self, date: dt.date, problem: d.MathProblem, *, area: str | None) -> None:
+        """Hand back exactly what the lapse on `date` took. Caller holds the
+        transaction.
+
+        A no-op when there is no lapse row for that day and area, which is the
+        case for a problem carrying no area: those rated pooled only, so there
+        is nothing to cancel in the area chain.
+
+        `score` and `k` are copied off the lapse row. Neither means anything
+        here -- nothing was scored and no K was applied -- but both columns are
+        NOT NULL with CHECKs, and carrying the lapse's own values is the least
+        inventive way to satisfy them. `NOT_ATTEMPTS` keeps every reader away
+        from them.
+        """
+        lapse = self.conn.execute(
+            f"SELECT * FROM rating_event WHERE track = 'math' AND date = ? "
+            f"AND provenance = ? AND area {'IS NULL' if area is None else '= ?'} "
+            f"ORDER BY id DESC LIMIT 1",
+            (_iso(date), Provenance.lapsed.value)
+            if area is None
+            else (_iso(date), Provenance.lapsed.value, area),
+        ).fetchone()
+        if lapse is None:
+            return
+
+        delta = lapse["rating_after"] - lapse["rating_before"]
+        before = self.current_rating(Track.math, area)
+        self.conn.execute(
+            "INSERT INTO rating_event "
+            "(track, date, ref, opponent, score, k, rating_before, rating_after, "
+            "provenance, area) "
+            "VALUES ('math', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                _iso(date),
+                problem.source,
+                problem.anchor,
+                lapse["score"],
+                lapse["k"],
+                before,
+                before - delta,
+                Provenance.unlapsed.value,
+                area,
+            ),
+        )
+
+    def late_eligible_dates(self, today: dt.date) -> list[dt.date]:
+        """Lapsed days still inside the submission window."""
+        earliest = today - dt.timedelta(days=scoring.LATE_WINDOW_DAYS)
+        rows = self.conn.execute(
+            "SELECT date FROM math_attempt WHERE status = 'lapsed' "
+            "AND date >= ? AND date < ? ORDER BY date DESC",
+            (_iso(earliest), _iso(today)),
+        ).fetchall()
+        return [dt.date.fromisoformat(r[0]) for r in rows]
+
+    def math_history(self, limit: int = 60) -> list[tuple[d.MathAttempt, d.MathProblem]]:
+        """Past attempts with their problems, newest first.
+
+        Joined here rather than looped in the caller: the archive is the one
+        read that wants every problem at once, and N+1 selects over sixty days
+        is the shape that turns a modal into a spinner.
+        """
+        rows = self.conn.execute(
+            "SELECT a.date AS a_date, a.problem_id, a.hints_revealed, a.status, a.score, "
+            "p.* FROM math_attempt a JOIN math_problem p ON p.id = a.problem_id "
+            "ORDER BY a.date DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        out = []
+        for row in rows:
+            data = _unpack(row, "hints")
+            attempt = d.MathAttempt(
+                date=data["a_date"],
+                problem_id=data["problem_id"],
+                hints_revealed=data["hints_revealed"],
+                status=data["status"],
+                score=data["score"],
+            )
+            problem = d.MathProblem(**{k: v for k, v in data.items() if k not in _ATTEMPT_ONLY})
+            out.append((attempt, problem))
+        return out
+
+    def rating_deltas(self, dates: list[dt.date]) -> dict[dt.date, int]:
+        """Net pooled rating change per date, for the archive's margin.
+
+        Summed rather than taken from one row because a day can carry more
+        than one: a lapse later replaced by a late result leaves three rows on
+        the same date, and their net is what actually happened to the rating.
+        """
+        if not dates:
+            return {}
+        placeholders = ", ".join("?" * len(dates))
+        rows = self.conn.execute(
+            f"SELECT date, SUM(rating_after - rating_before) FROM rating_event "
+            f"WHERE track = 'math' AND area IS NULL AND rating_after IS NOT NULL "
+            f"AND date IN ({placeholders}) GROUP BY date",
+            [_iso(d) for d in dates],
+        ).fetchall()
+        return {dt.date.fromisoformat(r[0]): r[1] for r in rows}
 
     def unmarked_math_dates(self, before: dt.date) -> list[dt.date]:
         """Days whose problem was drawn, never marked, and are now over.

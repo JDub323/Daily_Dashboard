@@ -92,6 +92,46 @@ def math_score(outcome: MathOutcome, hints_revealed: int) -> float:
     return round(1.0 - HINT_PENALTY * hints_revealed, 4)
 
 
+LATE_MULTIPLIER = 0.4
+"""What a late submission keeps of what it would have been worth on the day.
+
+0.4 is not a free parameter: it is `math_score(solved, 2)`, so being a day late
+costs exactly what two hints cost. That is the whole rule, and stating it as
+the two-hint score rather than as "0.4" is what keeps the two in step if the
+hint penalty ever changes.
+"""
+
+LATE_WINDOW_DAYS = 14
+"""How far back a lapse can still be submitted.
+
+After this a lapse is final. The archive still shows the problem and its
+answer -- reading it back is the point of an archive -- but the rating stops
+being re-litigable, so a month-old figure means what it said it meant.
+"""
+
+
+def late_math_score(outcome: MathOutcome, hints_revealed: int) -> float:
+    """Score for a lapsed day submitted late.
+
+    The whole on-time ladder, scaled: 0.40 / 0.28 / 0.16 / 0.04 for zero
+    through three hints. Multiplying rather than subtracting is what the
+    "hints as a percentage of the late score" rule amounts to -- each hint
+    costs 30% of what the attempt is still worth, so it comes to 0.12 off 0.40
+    rather than the full 0.30 off 1.0.
+
+    Subtracting in full would have run a three-hint late solve to
+    `0.4 - 0.9 = -0.5`, and `math_score` deliberately has no clamp. Scaling
+    keeps the ladder inside the score column's 0..1 CHECK, keeps the ordering,
+    and keeps the shape: a fully-hinted late solve is worth barely more than
+    nothing, for the same reason it is on the day.
+
+    A late `failed` scores 0.0, exactly what the lapse already charged -- so
+    honestly reporting that you tried and could not do it costs nothing beyond
+    what ghosting it already did, and still converts the day into evidence.
+    """
+    return round(LATE_MULTIPLIER * math_score(outcome, hints_revealed), 4)
+
+
 LAPSE_SCORE = 0.0
 """What a drawn-but-never-marked day scores.
 

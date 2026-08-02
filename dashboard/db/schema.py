@@ -410,6 +410,65 @@ MIGRATIONS: list[tuple[int, str]] = [
             WHERE surfaced_on IS NOT NULL;
         """,
     ),
+    (
+        6,
+        """
+        -- Late submission: a lapsed day you actually went back and did.
+        --
+        -- Two new provenances, so another CHECK rebuild of rating_event --
+        -- the same 12-step dance migration 2 did to add 'lapsed', and for the
+        -- same reason. Migration 4 avoided a rebuild here on the grounds that
+        -- this is the one table that cannot be regenerated; that argument is
+        -- about *recomputing* the rows, and this copies them verbatim by
+        -- explicit column list, `area` included. Both indexes come back.
+        --
+        --   'late'      the result itself, scored by `late_math_score`
+        --   'unlapsed'  hands back exactly what the lapse took, so the late
+        --               result replaces it instead of stacking on top
+        --
+        -- Replacing rather than stacking is what makes the stated rule true:
+        -- being late costs what two hints cost. Stacking would have charged
+        -- the full lapse *and* the deflated score, which is a much steeper
+        -- penalty than the one advertised.
+
+        CREATE TABLE rating_event_v3 (
+            id             INTEGER PRIMARY KEY,
+            track          TEXT    NOT NULL CHECK (track IN ('math', 'chess')),
+            date           TEXT    NOT NULL CHECK (date IS strftime('%Y-%m-%d', date)),
+            ref            TEXT    NOT NULL,
+            opponent       INTEGER NOT NULL CHECK (opponent BETWEEN 100 AND 4000),
+            score          REAL    NOT NULL CHECK (score BETWEEN 0.0 AND 1.0),
+            k              INTEGER NOT NULL CHECK (k >= 1),
+            rating_before  INTEGER,
+            rating_after   INTEGER,
+            provenance     TEXT    NOT NULL DEFAULT 'measured'
+                                   CHECK (provenance IN ('measured', 'reconstructed',
+                                                         'lapsed', 'late', 'unlapsed')),
+            area           TEXT,
+            -- Unchanged, and still true of both new rows: only
+            -- `reconstructed` fabricated its trajectory, so only
+            -- `reconstructed` stores NULL ratings.
+            CHECK ((rating_before IS NULL) = (rating_after IS NULL)),
+            CHECK ((rating_after IS NULL) = (provenance = 'reconstructed'))
+        ) STRICT;
+
+        INSERT INTO rating_event_v3
+            (id, track, date, ref, opponent, score, k,
+             rating_before, rating_after, provenance, area)
+        SELECT id, track, date, ref, opponent, score, k,
+               rating_before, rating_after, provenance, area
+        FROM rating_event;
+
+        DROP TABLE rating_event;
+        ALTER TABLE rating_event_v3 RENAME TO rating_event;
+        CREATE INDEX rating_event_track_id ON rating_event (track, id);
+        CREATE INDEX rating_event_area ON rating_event (track, area, id);
+
+        -- Finding the lapse to cancel is a per-day lookup, and the archive
+        -- reads the whole span at once.
+        CREATE INDEX rating_event_date ON rating_event (track, date);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

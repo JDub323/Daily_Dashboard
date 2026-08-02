@@ -26,7 +26,7 @@ If the page says **"didn't send any data"**, something else already owns the por
 PY=~/.local/share/daily-dashboard/venv/bin; $PY/python -m pytest && npm test && $PY/ruff check . && $PY/ruff format --check .
 ```
 
-365 Python tests and 33 JavaScript ones; none touch the network, the API, `dashboard.db`, or `state.json`. The JS runner is node's built-in `node --test`, so there is nothing to `npm install`.
+392 Python tests and 33 JavaScript ones; none touch the network, the API, `dashboard.db`, or `state.json`. The JS runner is node's built-in `node --test`, so there is nothing to `npm install`.
 
 The suite is weighted toward the code that was hardest to check by hand: the elo curve, the hint penalty, the theorem draw, streaks, the LaTeX-in-JSON repair, the cache's exception policy and staleness flag, the day-rollover guards, the double-submit guards, and the `state.json` importer's PROVENANCE/PRESERVE rules.
 
@@ -58,7 +58,7 @@ web/                  the front end — native ES modules, no build step
     parsers.js  Wordle & Pokedoku share text — pure functions
     chips.js    the daily checklist
     panels/     one file per panel
-    modals/     word, games, theorems, daylog
+    modals/     word, games, theorems, math (the archive), daylog
   data/         piano.json — scale/chord content, out of the logic file
   vendor/katex  see PROVENANCE.txt
 
@@ -78,6 +78,8 @@ UI: task chips (top) → gold when done; three columns: feeds (calendar/markets/
 - **The browser owns "today".** Every dated request carries the browser's local date. The server never calls `date.today()` to decide what day it is.
 - **Elo**: dynamic K = max(24, 96/(1+n/8)) — fast movement with little history, stabilizing over time. The current rating is *derived* from the append-only `rating_event` log; the rating and the update are computed inside one transaction, so two tabs can't both read the same rating and clobber each other.
 - **Math problems**: served from `problems.json` when an unseen one is there, otherwise LLM-generated with the web-search server tool (max 4 searches) and verified against AoPS before being shown (~$0.15–0.80 per generation — the search results dominate the bill, so the pool is the real cost control). Theorem/textbook links come from `[topic_library]` in `config.toml`, not the LLM.
+- **Late submission**: a day you drew a problem and never marked is auto-scored 0. For **14 days** you can still submit it from the math archive, and being late costs exactly what two hints cost — the whole ladder scaled by 0.4, so 0–3 hints already taken give `0.40 / 0.28 / 0.16 / 0.04`. Each hint costs 30% of what the attempt is still worth rather than a flat 0.30, which is what keeps a three-hint late solve from scoring −0.5. The late result *replaces* the zero: the lapse row stays in the append-only log and an `unlapsed` row hands back exactly what it took. A late row counts toward the K-factor (you did the problem) but is kept out of `success_rate`, whose threshold is 0.5 and which would otherwise read every late solve as a failure.
+- **Math archive**: a modal off the math panel, holding the last 60 problems with statements, answers and what each did to the rating. A closed day shows its answer outright — that is what an archive is for — while a day still open to late submission keeps it behind a reveal, because a self-reported "solved" means nothing if the answer was already on screen.
 - **Chess**: a lichess link plus three self-report buttons. Clean = 1.0, with mistakes = 0.4, fail = 0. The puzzle rating is still the elo opponent.
 - **Feeds** (markets/calendar/news/paper) are cached server-side and serve stale data when the *source* is unreachable. A bug in our own parsing propagates instead — a stale panel and a broken parser used to look identical. The fallback now *says so*: every feed response carries `fetched_at`, `ttl_seconds` and `stale`, so the panel prints `as of 09:14` and turns it red when the source stopped answering. A stale panel and a live one used to look identical too.
 - **Live panels** (markets/calendar/news) re-render themselves, scheduling the next fetch from the server's own `cache_seconds` — so the interval lives in `config.toml` alone, and a panel mounted late in a TTL window refreshes sooner rather than a full window later. Polling stops while the tab is hidden and resumes on the way back.
