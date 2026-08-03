@@ -203,6 +203,41 @@ def papers_panel(repo: Repository, today: dt.date) -> api.PapersPanel:
     )
 
 
+DAYLOG_LIMIT = 180
+"""Day logs sent to the history modal. Six months, which is as far back as
+"what was I doing then" reaches before it becomes a different question."""
+
+
+def history(cfg: Settings, repo: Repository) -> api.HistoryResponse:
+    """The retrospective view: per-area elo lines and the day-log archive.
+
+    Undated, unlike almost everything else here, and that is not an oversight.
+    Nothing in it is relative to today -- a rating trajectory and a pile of
+    dated log entries mean the same thing whichever day you open them on, so
+    there is no "today" for the browser to be the authority on.
+
+    Areas with no measured results are dropped rather than drawn flat. A line
+    through a rating that was only ever the pooled figure standing in would
+    show a trend that never happened; the panel strip already reports those as
+    dimmed placeholders, and this is the same honesty in chart form.
+    """
+    histories = repo.area_rating_history()
+    areas = [
+        api.AreaSeries(area=area, points=histories[area], events=len(histories[area]))
+        for area in cfg.math.area_names
+        if histories.get(area)
+    ]
+    return api.HistoryResponse(
+        # Strongest first, matching the panel strip's order so the two surfaces
+        # agree about which area is which.
+        areas=sorted(areas, key=lambda a: -a.points[-1][1]),
+        daylogs=[
+            api.DayLogEntry(date=entry.date, text=entry.text)
+            for entry in repo.daylogs(DAYLOG_LIMIT)
+        ],
+    )
+
+
 def health_series(repo: Repository) -> list[api.HealthSeries]:
     return [
         api.HealthSeries(

@@ -74,11 +74,23 @@ export function refreshLive() {
 
 export function mountAll() {
   for (const def of registry.values()) {
-    const card = el(`section.panel${def.hero ? ".hero" : ""}`, { id: `panel-${def.id}` },
-      el("h2", { text: def.title }),
-    );
+    const card = el(`section.panel${def.hero ? ".hero" : ""}`, { id: `panel-${def.id}` });
+    const head = el("h2", { text: def.title });
+
+    // A collapsible panel's heading is also its toggle. No separate chevron
+    // button: the heading is already the full width of the card and is the
+    // thing you would reach for.
+    if (def.collapsible) {
+      head.classList.add("collapse-toggle");
+      head.append(el("span.panel-summary"));
+      head.addEventListener("click", () => {
+        manual.add(def.id);
+        setCollapsed(def.id, !card.classList.contains("collapsed"));
+      });
+    }
+
     const body = el("div.body");
-    card.append(body);
+    card.append(head, body);
     $(`#col-${def.col}`).append(card);
     def.node = body;
     def.card = card;
@@ -86,15 +98,51 @@ export function mountAll() {
   }
 }
 
+// --- collapsing a finished panel -------------------------------------------
+//
+// The stated design is hierarchy rather than a flat grid, and until now that
+// applied only across space: the centre column looked identical at 0/8 and at
+// 8/8. A hero panel whose task is done collapses to its heading plus a
+// one-line summary and sorts to the bottom of its column, so what is still
+// open rises without anything having to move in the DOM.
+
+const manual = new Set();
+/** Panels the user has toggled by hand. Auto-collapse leaves these alone —
+ *  expanding a finished panel to reread the answer should not be undone by
+ *  the next store change half a second later. */
+
+export function setCollapsed(id, collapsed) {
+  const def = registry.get(id);
+  if (!def?.card) return;
+  def.card.classList.toggle("collapsed", collapsed);
+  const slot = def.card.querySelector(".panel-summary");
+  if (slot) slot.textContent = collapsed ? (def.summary?.() ?? "") : "";
+}
+
+/** Forget the manual overrides — what a day rollover does. */
+export function resetCollapse() {
+  manual.clear();
+}
+
 /** Flash a panel's border and scroll to it — what the task chips do. */
 export function focusPanel(id) {
   const def = registry.get(id);
   if (!def?.card) return;
+  // Asking for a panel is asking to see it. Scrolling to a one-line summary
+  // and flashing its border would be the shortcut appearing not to work, so a
+  // collapsed panel opens — and counts as manual, since you asked for it.
+  if (def.card.classList.contains("collapsed")) {
+    manual.add(id);
+    setCollapsed(id, false);
+  }
   def.card.scrollIntoView({ behavior: "smooth", block: "center" });
   def.card.classList.add("flash");
   setTimeout(() => def.card.classList.remove("flash"), 1200);
 }
 
 export function markDone(id, done) {
-  registry.get(id)?.card?.classList.toggle("done-gold", done);
+  const def = registry.get(id);
+  if (!def?.card) return;
+  def.card.classList.toggle("done-gold", done);
+  if (def.collapsible && !manual.has(id)) setCollapsed(id, done);
 }

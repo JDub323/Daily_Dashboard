@@ -106,6 +106,23 @@ export default {
   title: "∑ math problem of the day",
   col: "center",
   hero: true,
+  collapsible: true,
+
+  /**
+   * The one line the panel keeps once the day's problem is done.
+   *
+   * Rating, what happened, and what it cost or earned — enough to not need to
+   * expand it, which is the whole test of a summary.
+   */
+  summary() {
+    const math = store.state.math;
+    if (!math.problem || math.status === "open") return `${math.summary.rating}`;
+    const last = math.summary.history[math.summary.history.length - 1];
+    const delta = last?.delta == null ? "" : ` ${last.delta >= 0 ? "+" : ""}${last.delta}`;
+    const verb = math.status === "solved" ? "solved" : math.status;
+    const time = math.minutes ? ` · ${math.minutes}m` : "";
+    return `${math.summary.rating}${delta} · ${verb}${time}`;
+  },
 
   async render(node) {
     const math = store.state.math;

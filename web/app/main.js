@@ -7,7 +7,9 @@
 import * as api from "./api.js";
 import { renderChips } from "./chips.js";
 import { $ } from "./dom.js";
-import { mountAll, refreshLive, register, rerender, rerenderAll } from "./panel.js";
+import { initKeys } from "./keys.js";
+import { invalidateHistory } from "./modals/history.js";
+import { mountAll, refreshLive, register, rerender, rerenderAll, resetCollapse } from "./panel.js";
 import calendar from "./panels/calendar.js";
 import chess from "./panels/chess.js";
 import elo from "./panels/elo.js";
@@ -30,8 +32,13 @@ import { initModal, onModalClose, toast } from "./ui.js";
  */
 const WATCHES = {
   elo: ["math", "chess"],
-  metrics: ["games"],
+  // `math` because generating a problem is the one action in the app that
+  // spends real money, and the spend strip lives in this panel.
+  metrics: ["games", "math"],
 };
+
+/** Store keys whose writes make the history modal's cached fetch stale. */
+const HISTORY_KEYS = ["math", "daylog"];
 
 async function loadConfig() {
   // Dated: the topic rotates weekly, and the browser decides which week it is.
@@ -87,6 +94,10 @@ let rolling = null;
 async function rollOver() {
   await loadConfig();
   await loadState();
+  // A new day is a new set of open tasks, so yesterday's "I expanded this to
+  // reread the answer" should not keep a finished panel open into it.
+  resetCollapse();
+  invalidateHistory();
   rerenderAll();
   await renderChips();
   await loadTopic();
@@ -148,12 +159,14 @@ async function boot() {
     // rollover re-renders everything itself, so there is nothing to do after.
     if (checkDay()) return;
     renderChips();
+    if (keys.some((key) => HISTORY_KEYS.includes(key))) invalidateHistory();
     for (const [id, watched] of Object.entries(WATCHES)) {
       if (keys.some((key) => watched.includes(key))) rerender(id);
     }
   });
   await renderChips();
   watchForNewDay();
+  initKeys();
 
   loadTopic();
 }
