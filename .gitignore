@@ -23,3 +23,7 @@ __pycache__/
 
 # overnight batches from the scheduled task — regenerated nightly, never a diff
 batches/
+
+# ND proxy
+proxy.txt
+
