@@ -168,7 +168,8 @@ function item(title, subtitle, rootIndex, intervals, entry, notes, kind) {
 export default {
   id: "piano",
   title: "♪ piano of the day",
-  col: "right",
+  tab: "hobbies",
+  slot: "grid",
 
   async render(node) {
     const { notes, scales, chords } = await load();

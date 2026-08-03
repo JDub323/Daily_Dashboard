@@ -10,20 +10,36 @@
 <script defer src="/vendor/katex/auto-render.min.js"></script>
 <link rel="stylesheet" href="/style.css">
 </head><body>
-<header>
-  <h1>daily dashboard</h1>
-  <span class="sub" id="hdr-date"></span>
-  <span class="sub" id="hdr-topic"></span>
-  <span class="sub" id="hdr-completion"></span>
-</header>
 
-<div id="tasks"></div>
+<!-- The per-tab backdrop. A sibling of the content rather than a body
+     background, because it has to be swappable and fadeable without the
+     content inheriting the transition. Inert: it is decoration and must never
+     be reachable by the focus ring or a screen reader. -->
+<div id="bg" aria-hidden="true"></div>
 
-<main id="layout">
-  <div class="col" id="col-left"></div>
-  <div class="col" id="col-center"></div>
-  <div class="col" id="col-right"></div>
-</main>
+<div id="shell">
+  <header id="topbar">
+    <h1>daily dashboard</h1>
+    <span class="sub" id="hdr-date"></span>
+    <span class="sub" id="hdr-topic"></span>
+  </header>
+
+  <nav id="tabbar" role="tablist" aria-label="sections"></nav>
+
+  <!-- One pane per tab, built by tabs.js. Panels mount into their pane's
+       .hero or .grid rather than into a global column. -->
+  <main id="panes"></main>
+</div>
+
+<!-- nvchad's statusline: where you are, what is left, and the way to the
+     cheatsheet. Fixed to the bottom so it survives scrolling the pane. -->
+<footer id="statusline">
+  <span id="st-tab">home</span>
+  <span id="st-mode" class="st-seg">panels</span>
+  <span id="st-completion" class="st-seg"></span>
+  <span class="st-spacer"></span>
+  <span class="st-seg st-hint"><kbd>?</kbd> keys</span>
+</footer>
 
 <div id="modal-overlay" hidden>
   <div id="modal">

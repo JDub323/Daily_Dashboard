@@ -10,7 +10,8 @@ function list(items, empty, format) {
 export default {
   id: "cal",
   title: "calendar",
-  col: "left",
+  tab: "home",
+  slot: "grid",
   live: true,
 
   async render(node) {

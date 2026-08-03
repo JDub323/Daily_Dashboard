@@ -11,7 +11,9 @@ const METRICS = [
 export default {
   id: "health",
   title: "health",
-  col: "right",
+  tab: "health",
+  slot: "hero",
+  hero: true,
 
   async render(node) {
     const byMetric = Object.fromEntries(store.state.health.map((s) => [s.metric, s.points]));

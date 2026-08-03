@@ -1,6 +1,8 @@
 // The panel harness: mount, render, and turn a thrown error into a retry.
 
-import { $, el, mount } from "./dom.js";
+import { el, mount } from "./dom.js";
+import { focusPanelNode, repaint } from "./nav.js";
+import { activate, slotNode } from "./tabs.js";
 
 const registry = new Map();
 
@@ -63,6 +65,9 @@ async function draw(def) {
     );
     schedule(def, RETRY_MS);
   }
+  // A render replaces the panel's whole body, which silently throws away the
+  // item highlight. The ring is put back on whatever now occupies that slot.
+  repaint();
 }
 
 /** Redraw every live panel — what the tab does when it comes back into view. */
@@ -91,7 +96,7 @@ export function mountAll() {
 
     const body = el("div.body");
     card.append(head, body);
-    $(`#col-${def.col}`).append(card);
+    slotNode(def.tab, def.slot).append(card);
     def.node = body;
     def.card = card;
     draw(def);
@@ -100,11 +105,9 @@ export function mountAll() {
 
 // --- collapsing a finished panel -------------------------------------------
 //
-// The stated design is hierarchy rather than a flat grid, and until now that
-// applied only across space: the centre column looked identical at 0/8 and at
-// 8/8. A hero panel whose task is done collapses to its heading plus a
-// one-line summary and sorts to the bottom of its column, so what is still
-// open rises without anything having to move in the DOM.
+// A hero panel whose task is done folds to its heading plus a one-line
+// summary. The tab it heads is then a short page saying what happened rather
+// than a full-height card restating a problem you already solved.
 
 const manual = new Set();
 /** Panels the user has toggled by hand. Auto-collapse leaves these alone —
@@ -124,10 +127,17 @@ export function resetCollapse() {
   manual.clear();
 }
 
-/** Flash a panel's border and scroll to it — what the task chips do. */
+/**
+ * Show a panel: switch to its tab, put the focus ring on it, and flash it.
+ *
+ * This is what a task chip does, and what `n` does. Under tabs it has to move
+ * the *section* as well — the old version scrolled to a card that, half the
+ * time, is now on a page you are not looking at.
+ */
 export function focusPanel(id) {
   const def = registry.get(id);
   if (!def?.card) return;
+  activate(def.tab);
   // Asking for a panel is asking to see it. Scrolling to a one-line summary
   // and flashing its border would be the shortcut appearing not to work, so a
   // collapsed panel opens — and counts as manual, since you asked for it.
@@ -135,6 +145,9 @@ export function focusPanel(id) {
     manual.add(id);
     setCollapsed(id, false);
   }
+  // nav.js knows nothing about the registry — it addresses panels by element
+  // id — so this is the one place the two meet.
+  focusPanelNode(def.card.id);
   def.card.scrollIntoView({ behavior: "smooth", block: "center" });
   def.card.classList.add("flash");
   setTimeout(() => def.card.classList.remove("flash"), 1200);

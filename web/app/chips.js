@@ -1,135 +1,110 @@
 // The daily checklist. Gold = done.
 //
-// Chips are not a panel — they live in the header, and they re-render off the
-// store's change notification rather than being poked by whichever panel
-// happened to change something.
+// Chips lost two jobs in the tab rewrite and kept the important one. They are
+// no longer the keyboard surface — nav.js moves a focus ring over real panels
+// now, and the digits belong to the tabs — and they no longer carry a cursor.
+// What they still are is the only place the whole day is visible at once,
+// which is why they head the home tab: eight tabs is eight things you could be
+// forgetting, and this is the row that says which.
 //
-// They are also the whole keyboard surface. Eight chips is eight mouse trips
-// through something you do every morning, so the list below is exported as the
-// thing `keys.js` drives: a cursor that moves over it, digits that jump into
-// it, and "the next one you have not done" as a first-class destination.
+// Clicking one switches to its tab and lands the ring on its panel, so the
+// checklist doubles as the map.
+//
+// They also own the completion write, which is why this renders on every store
+// change rather than only when the home tab is showing. Every pane is mounted
+// at boot — hidden, not absent — so the count is correct from whichever tab
+// you happen to be standing on when you finish something.
 
 import * as api from "./api.js";
-import { $, el, mount } from "./dom.js";
-import { openDaylogModal } from "./modals/daylog.js";
-import { openGamesModal } from "./modals/games.js";
-import { openTheoremModal } from "./modals/theorems.js";
-import { openWordModal } from "./modals/word.js";
+import { el, mount } from "./dom.js";
 import { focusPanel, markDone } from "./panel.js";
 import { completionWrite, store } from "./store.js";
 
 function tasks() {
   const s = store.state;
   return [
-    { id: "math", label: "math problem", done: s.math.status !== "open", open: () => focusPanel("math") },
-    { id: "chess", label: "chess puzzle", done: s.chess.status !== "open", open: () => focusPanel("chess") },
-    { id: "word", label: "word of day", done: Boolean(s.word?.grade), open: openWordModal },
-    { id: "wordle", label: "wordle", done: Boolean(s.games.wordle_today), open: () => openGamesModal("wordle") },
-    { id: "pokedoku", label: "pokedoku", done: Boolean(s.games.pokedoku_today), open: () => openGamesModal("pokedoku") },
+    { id: "math", label: "math problem", done: s.math.status !== "open", panel: "math" },
+    { id: "chess", label: "chess puzzle", done: s.chess.status !== "open", panel: "chess" },
+    { id: "word", label: "word of day", done: Boolean(s.word?.grade), panel: "word" },
+    { id: "wordle", label: "wordle", done: Boolean(s.games.wordle_today), panel: "games" },
+    { id: "pokedoku", label: "pokedoku", done: Boolean(s.games.pokedoku_today), panel: "games" },
     {
       // Done means answered, not merely drawn. The boot payload never draws,
       // so an unopened day shows `today: null` — which is correctly not done.
       id: "theorem",
       label: "theorem recall",
       done: s.theorems.recalled !== null,
-      open: openTheoremModal,
+      panel: "theorem",
     },
     {
       id: "paper",
       label: "paper triage",
       done: Boolean(s.papers.surfaced) && s.papers.surfaced.status !== "surfaced",
-      open: () => focusPanel("reading"),
+      panel: "reading",
     },
-    { id: "log", label: "day log", done: Boolean(s.daylog), open: openDaylogModal },
+    { id: "log", label: "day log", done: Boolean(s.daylog), panel: "log" },
   ];
 }
 
-// --- the keyboard cursor ---------------------------------------------------
-//
-// Held here rather than in `keys.js` because the chips are redrawn on every
-// store change, so the highlight has to be reapplied by whatever does the
-// drawing. -1 is "no cursor yet", which is the state on load: the first `j`
-// should land on the first chip rather than on the second.
-
-let cursor = -1;
-let nodes = [];
-
-/** Today's tasks, in chip order. The list `keys.js` indexes into. */
+/** Today's tasks, in chip order. What the cheatsheet counts. */
 export function chipTasks() {
   return tasks();
 }
 
-function paint() {
-  nodes.forEach((node, i) => node.classList.toggle("cursor", i === cursor));
-  nodes[cursor]?.scrollIntoView({ block: "nearest", inline: "nearest" });
-}
-
-/** Move the cursor by `delta`, wrapping. Does not open anything. */
-export function moveChipCursor(delta) {
-  const list = tasks();
-  if (!list.length) return;
-  cursor = cursor < 0 ? (delta > 0 ? 0 : list.length - 1) : (cursor + delta + list.length) % list.length;
-  paint();
-}
-
-/** Open chip `i` and leave the cursor on it. */
-export function openChip(i) {
-  const list = tasks();
-  if (i < 0 || i >= list.length) return;
-  cursor = i;
-  paint();
-  list[i].open();
-}
-
-/** Open the chip under the cursor, if there is one. */
-export function openCursorChip() {
-  if (cursor >= 0) openChip(cursor);
-}
-
 /**
- * Jump to the next thing you have not done, wrapping past the cursor.
+ * Jump to the next thing you have not done. The ritual key, `n`.
  *
- * The ritual key. Searching from *after* the cursor rather than from the start
- * means pressing it repeatedly walks the remaining work instead of bouncing
- * off whichever task you happen to be avoiding.
+ * False when there is nothing left, so the caller can say so rather than
+ * silently doing nothing — which is indistinguishable from a broken binding.
  */
 export function openNextUnfinished() {
-  const list = tasks();
-  for (let n = 1; n <= list.length; n++) {
-    const i = (Math.max(cursor, -1) + n) % list.length;
-    if (!list[i].done) {
-      openChip(i);
-      return true;
-    }
-  }
-  return false;
+  const next = tasks().find((task) => !task.done);
+  if (!next) return false;
+  focusPanel(next.panel);
+  return true;
 }
+
+/** The panel wrapper. Registered first on the home tab, so it heads the page. */
+export const todayPanel = {
+  id: "today",
+  title: "today",
+  tab: "home",
+  slot: "hero",
+  hero: true,
+  render(node) {
+    target = node;
+    return renderChips();
+  },
+};
+
+let target = null;
 
 export async function renderChips() {
   const list = tasks();
-  const done = list.filter((t) => t.done).length;
+  const done = list.filter((task) => task.done).length;
 
-  nodes = list.map((task, i) =>
-    el(`div.chip${task.done ? ".done" : ""}`, {
-      text: task.label,
-      onclick: () => openChip(i),
-      // The digit is the shortcut, shown on the chip so the binding is
-      // discoverable without a legend to memorise first.
-      dataset: { key: i + 1 <= 9 ? String(i + 1) : "" },
-    }),
-  );
-  if (cursor >= list.length) cursor = list.length - 1;
+  if (target) {
+    mount(target,
+      el("div.chips", null,
+        ...list.map((task) =>
+          el(`div.chip${task.done ? ".done" : ""}`, {
+            text: task.label,
+            role: "button",
+            tabIndex: 0,
+            onclick: () => focusPanel(task.panel),
+          }),
+        ),
+      ),
+    );
+  }
 
-  mount($("#tasks"), ...nodes);
-  paint();
-
-  mount($("#hdr-completion"),
+  mount(document.querySelector("#st-completion"),
     el("span.completion-ring", { text: `${done}/${list.length}` }),
-    done === list.length ? " — perfect day ✦" : " done today",
+    done === list.length ? " perfect ✦" : " done",
   );
 
   for (const id of ["math", "chess"]) {
-    markDone(id, list.find((t) => t.id === id).done);
+    markDone(id, list.find((task) => task.id === id).done);
   }
 
   // The old client fired a save on every page load: it recomputed `pct` as a

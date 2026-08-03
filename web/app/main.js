@@ -5,22 +5,28 @@
 // snapshot and never compute a rating, a score, or a streak themselves.
 
 import * as api from "./api.js";
-import { renderChips } from "./chips.js";
+import { renderChips, todayPanel } from "./chips.js";
 import { $ } from "./dom.js";
 import { initKeys } from "./keys.js";
-import { invalidateHistory } from "./modals/history.js";
+import { resetToTab } from "./nav.js";
 import { mountAll, refreshLive, register, rerender, rerenderAll, resetCollapse } from "./panel.js";
 import calendar from "./panels/calendar.js";
 import chess from "./panels/chess.js";
-import elo from "./panels/elo.js";
+import daylog from "./panels/daylog.js";
+import { chessElo, mathElo } from "./panels/elo.js";
+import games from "./panels/games.js";
 import health from "./panels/health.js";
 import markets from "./panels/markets.js";
 import math from "./panels/math.js";
 import metrics from "./panels/metrics.js";
-import news from "./panels/news.js";
+import { finance, misc, politics } from "./panels/news.js";
 import piano from "./panels/piano.js";
 import reading from "./panels/reading.js";
+import { activity, archive, areas, invalidateHistory } from "./panels/stats.js";
+import theorem from "./panels/theorem.js";
+import word from "./panels/word.js";
 import { dayHasTurned, loadState, store, subscribe } from "./store.js";
+import { initTabs, onTabChange } from "./tabs.js";
 import { initModal, onModalClose, toast } from "./ui.js";
 
 /**
@@ -29,16 +35,47 @@ import { initModal, onModalClose, toast } from "./ui.js";
  * This is the whole cross-panel coupling. Panels used to call
  * `rerender("elo")` and `updateChips()` directly after a write, so finishing a
  * puzzle meant knowing which other panels existed.
+ *
+ * It shrank under tabs: the elo charts split into one per track, so each now
+ * watches only its own, and the spend strip moved off the trophies panel to
+ * the home tab, taking `metrics`' dependency on `math` with it.
  */
 const WATCHES = {
-  elo: ["math", "chess"],
-  // `math` because generating a problem is the one action in the app that
-  // spends real money, and the spend strip lives in this panel.
-  metrics: ["games", "math"],
+  "elo-math": ["math"],
+  "elo-chess": ["chess"],
+  metrics: ["games"],
+  // Generating a problem is the one action in the app that spends real money,
+  // and the spend strip lives in this panel.
+  activity: ["math"],
 };
 
-/** Store keys whose writes make the history modal's cached fetch stale. */
-const HISTORY_KEYS = ["math", "daylog"];
+/** Store keys whose writes make the cached /api/history fetch stale. */
+const HISTORY_KEYS = ["math", "chess", "daylog"];
+
+/**
+ * The panel set, in the order each tab lays them out.
+ *
+ * Registration order is mount order within a slot, so this list *is* the
+ * layout — there is no separate ordering table to disagree with it.
+ */
+const PANELS = [
+  // home — the checklist, then the year, then everything backward-looking
+  todayPanel, activity, word, calendar, daylog, areas, archive,
+  // math
+  math, theorem, mathElo,
+  // politics
+  politics,
+  // newsletters
+  reading, misc,
+  // games
+  games, metrics,
+  // markets
+  markets, finance,
+  // hobbies
+  chess, piano, chessElo,
+  // health
+  health,
+];
 
 async function loadConfig() {
   // Dated: the topic rotates weekly, and the browser decides which week it is.
@@ -94,10 +131,8 @@ let rolling = null;
 async function rollOver() {
   await loadConfig();
   await loadState();
-  // A new day is a new set of open tasks, so yesterday's "I expanded this to
-  // reread the answer" should not keep a finished panel open into it.
-  resetCollapse();
   invalidateHistory();
+  resetCollapse();
   rerenderAll();
   await renderChips();
   await loadTopic();
@@ -137,8 +172,13 @@ function watchForNewDay() {
 // --- boot ------------------------------------------------------------------
 
 async function boot() {
+  initTabs();
   initModal();
   onModalClose(renderChips);
+  // The focus ring belongs to whichever section is showing; a switch parks it
+  // on that tab's first panel rather than leaving it on a card you can no
+  // longer see.
+  onTabChange(resetToTab);
 
   try {
     await loadConfig();
@@ -148,8 +188,9 @@ async function boot() {
 
   await loadState();
 
-  register(math, chess, piano, calendar, markets, news, reading, elo, metrics, health);
+  register(...PANELS);
   mountAll();
+  resetToTab();
 
   subscribe((keys) => {
     // A write is the other moment worth checking the date on. Finishing a

@@ -22,7 +22,8 @@ const OUTCOMES = [
 export default {
   id: "chess",
   title: "♞ chess puzzle",
-  col: "center",
+  tab: "hobbies",
+  slot: "hero",
   hero: true,
   collapsible: true,
 

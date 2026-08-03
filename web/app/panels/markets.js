@@ -27,7 +27,9 @@ function row(quote) {
 export default {
   id: "mkt",
   title: "markets",
-  col: "left",
+  tab: "markets",
+  slot: "hero",
+  hero: true,
   live: true,
 
   async render(node) {

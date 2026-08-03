@@ -1,43 +1,34 @@
 // Wordle and Pokedoku, logged from their share text.
 //
-// One modal for both games, opened focused on whichever chip you clicked. It
-// used to be one modal that was *about* Wordle whichever chip you clicked: the
-// title was the focus but nothing else was, so the placeholder showed a Wordle
-// share, the Wordle line was rendered first, and a logged Pokedoku result was
-// a bare "pokedoku 8/9 ✓" with no grid — because the grid never parsed, and
-// because there was no code here that could have drawn one.
+// This was one modal that opened focused on whichever chip you clicked, and
+// the focus existed because 680px only had room to lead with one of them. A
+// tab has room for both, so the ordering question goes away: both games are
+// laid out side by side, and the single paste box already auto-detects which
+// share you gave it.
 
 import * as api from "../api.js";
 import { el, link, mount } from "../dom.js";
 import { parseShare } from "../parsers.js";
 import { put, store } from "../store.js";
-import { openModal } from "../ui.js";
 
 const GAMES = {
   wordle: {
     label: "wordle",
-    endpoint: "/api/games/wordle",
     play: ["https://www.nytimes.com/games/wordle", "play wordle ↗"],
     grid: "wgrid",
-    placeholder: "Wordle 1,496 4/6\n⬛🟨⬛⬛⬛\n⬛🟩🟨⬛⬛\n🟩🟩🟩🟩🟩",
     summary: (r) => `wordle #${r.puzzle_no ?? "?"} ${r.won ? `${r.guesses}/6` : "X/6"}`,
   },
   pokedoku: {
     label: "pokedoku",
-    endpoint: "/api/games/pokedoku",
     play: ["https://pokedoku.com", "play pokedoku ↗"],
     grid: "pgrid",
-    placeholder: "PokéDoku\nScore: 8/9\nUniqueness: 137\n✅✅✅\n✅✅✅\n✅✅❌",
     // Uniqueness is the interesting number and the one that was never stored,
     // so it is shown when there is one rather than folded away.
     summary: (r) => `pokedoku ${r.correct}/9${r.score != null ? ` · ${r.score} uniqueness` : ""}`,
   },
 };
 
-export function openGamesModal(focus = "wordle") {
-  const game = GAMES[focus] ? focus : "wordle";
-  openModal(GAMES[game].label, (body) => draw(body, game));
-}
+const PLACEHOLDER = "Wordle 1,496 4/6\n⬛🟨⬛⬛⬛\n⬛🟩🟨⬛⬛\n🟩🟩🟩🟩🟩\n\n…or a PokéDoku share. Either one.";
 
 /**
  * Emoji tile -> the cell class that draws it.
@@ -65,22 +56,27 @@ function gridBlock(rows, cls) {
   );
 }
 
-/** One logged result: the headline, then the grid it came with. */
-function logged(game, result) {
-  if (!result) return null;
-  return el("div.gap", null,
-    el("div.dim", { text: `${GAMES[game].summary(result)} ✓` }),
-    gridBlock(result.grid, GAMES[game].grid),
+/** One game's column: how to play it, and today's result if there is one. */
+function gameBlock(game, result) {
+  const spec = GAMES[game];
+  return el("div.game-card", null,
+    el("div.row.spread", null,
+      el("span.gold", { text: spec.label }),
+      link(...spec.play),
+    ),
+    result
+      ? el("div", null,
+          el("div.dim", { text: `${spec.summary(result)} ✓` }),
+          gridBlock(result.grid, spec.grid),
+        )
+      : el("div.faint", { text: "not logged yet" }),
   );
 }
 
-function draw(body, focus) {
+function draw(body) {
   const games = store.state.games;
-  const other = focus === "wordle" ? "pokedoku" : "wordle";
-  const today = { wordle: games.wordle_today, pokedoku: games.pokedoku_today };
-
   const message = el("span.faint");
-  const paste = el("textarea", { rows: 8, placeholder: GAMES[focus].placeholder });
+  const paste = el("textarea", { rows: 6, placeholder: PLACEHOLDER });
 
   const log = el("button.primary", {
     text: "parse & log",
@@ -93,12 +89,8 @@ function draw(body, focus) {
         return;
       }
       try {
-        put("games", await api.post(GAMES[parsed.game].endpoint, parsed.body));
-        // Redrawn focused on whichever game was actually pasted, not on
-        // whichever chip opened the modal. Pasting a Pokedoku share into a
-        // modal opened from the Wordle chip is a normal thing to do, and the
-        // result it shows you should be the one you just logged.
-        draw(body, parsed.game);
+        put("games", await api.post(`/api/games/${parsed.game}`, parsed.body));
+        draw(body);
       } catch (error) {
         message.textContent = `failed: ${error.message}`;
       }
@@ -106,16 +98,24 @@ function draw(body, focus) {
   });
 
   mount(body,
-    el("div.row", null,
-      link(...GAMES[focus].play),
-      link(...GAMES[other].play),
+    el("div.game-row", null,
+      gameBlock("wordle", games.wordle_today),
+      gameBlock("pokedoku", games.pokedoku_today),
     ),
-    // The game in focus first, so what you came to do is what you see.
-    logged(focus, today[focus]),
-    logged(other, today[other]),
-    el("div.faint", { text: "paste your share text (auto-detects which game):" }),
+    el("div.faint.divider", { text: "paste your share text (it works out which game):" }),
     paste,
     el("div.row", null, log, message),
   );
-  paste.focus();
 }
+
+export default {
+  id: "games",
+  title: "⬛ daily games",
+  tab: "games",
+  slot: "hero",
+  hero: true,
+
+  async render(node) {
+    draw(node);
+  },
+};

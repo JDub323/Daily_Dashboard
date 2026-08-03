@@ -17,7 +17,9 @@ const ACTIONS = [
 export default {
   id: "reading",
   title: "reading",
-  col: "left",
+  tab: "papers",
+  slot: "hero",
+  hero: true,
 
   async render(node) {
     let papers = store.state.papers;

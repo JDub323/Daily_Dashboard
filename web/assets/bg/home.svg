@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+<!-- Home: the contribution grid and a rising staircase. Weighted left and
+     right; the middle band is left clear for the content column. -->
+<g fill="none" stroke="#cdd6e4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+
+  <!-- a contribution grid, upper left -->
+  <g>
+    <rect x="70"  y="120" width="26" height="26" rx="4"/>
+    <rect x="106" y="120" width="26" height="26" rx="4"/>
+    <rect x="142" y="120" width="26" height="26" rx="4"/>
+    <rect x="178" y="120" width="26" height="26" rx="4"/>
+    <rect x="214" y="120" width="26" height="26" rx="4"/>
+    <rect x="70"  y="156" width="26" height="26" rx="4"/>
+    <rect x="106" y="156" width="26" height="26" rx="4" fill="#cdd6e4"/>
+    <rect x="142" y="156" width="26" height="26" rx="4"/>
+    <rect x="178" y="156" width="26" height="26" rx="4" fill="#cdd6e4"/>
+    <rect x="214" y="156" width="26" height="26" rx="4"/>
+    <rect x="70"  y="192" width="26" height="26" rx="4" fill="#cdd6e4"/>
+    <rect x="106" y="192" width="26" height="26" rx="4"/>
+    <rect x="142" y="192" width="26" height="26" rx="4" fill="#cdd6e4"/>
+    <rect x="178" y="192" width="26" height="26" rx="4"/>
+    <rect x="214" y="192" width="26" height="26" rx="4" fill="#cdd6e4"/>
+    <rect x="70"  y="228" width="26" height="26" rx="4"/>
+    <rect x="106" y="228" width="26" height="26" rx="4" fill="#cdd6e4"/>
+    <rect x="142" y="228" width="26" height="26" rx="4"/>
+    <rect x="178" y="228" width="26" height="26" rx="4"/>
+    <rect x="214" y="228" width="26" height="26" rx="4" fill="#cdd6e4"/>
+  </g>
+
+  <!-- a second, sparser grid low left -->
+  <g opacity=".7">
+    <rect x="120" y="640" width="22" height="22" rx="3"/>
+    <rect x="150" y="640" width="22" height="22" rx="3" fill="#cdd6e4"/>
+    <rect x="180" y="640" width="22" height="22" rx="3"/>
+    <rect x="120" y="670" width="22" height="22" rx="3" fill="#cdd6e4"/>
+    <rect x="150" y="670" width="22" height="22" rx="3"/>
+    <rect x="180" y="670" width="22" height="22" rx="3" fill="#cdd6e4"/>
+    <rect x="120" y="700" width="22" height="22" rx="3"/>
+    <rect x="150" y="700" width="22" height="22" rx="3" fill="#cdd6e4"/>
+    <rect x="180" y="700" width="22" height="22" rx="3"/>
+  </g>
+
+  <!-- the streak, climbing right -->
+  <path d="M1140 720 h70 v-60 h70 v-90 h70 v-70 h70 v-110 h70 v-80 h70"/>
+  <circle cx="1560" cy="310" r="9"/>
+
+  <!-- a ring, upper right — the completion ring writ large -->
+  <circle cx="1330" cy="200" r="96" opacity=".5"/>
+  <path d="M1330 104 a96 96 0 0 1 83 144" stroke-width="7"/>
+
+  <!-- the perfect-day star -->
+  <path d="M1230 790 l14 -40 l14 40 l40 14 l-40 14 l-14 40 l-14 -40 l-40 -14 z"/>
+  <path d="M300 430 l10 -28 l10 28 l28 10 l-28 10 l-10 28 l-10 -28 l-28 -10 z" opacity=".6"/>
+
+  <!-- horizon rules, very faint, to tie the two sides together -->
+  <path d="M0 860 h420 M1180 860 h420" opacity=".35"/>
+</g>
+</svg>

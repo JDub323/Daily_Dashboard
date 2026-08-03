@@ -104,7 +104,8 @@ async function generate(node, panel) {
 export default {
   id: "math",
   title: "∑ math problem of the day",
-  col: "center",
+  tab: "math",
+  slot: "hero",
   hero: true,
   collapsible: true,
 

@@ -1,7 +1,12 @@
+// Word of the day: Claude picks one, you write sentences, Claude grades them.
+//
+// On the home tab rather than with math. It is vocabulary, not problem
+// solving, and the thing it actually has in common with the heatmap and the
+// day log is that it is part of the morning rather than part of a subject.
+
 import * as api from "../api.js";
 import { el, mount } from "../dom.js";
 import { put, store } from "../store.js";
-import { openModal } from "../ui.js";
 
 const SENTENCES = 2;
 /** Must match `domain.SENTENCES` — the server's WordCheckRequest requires
@@ -56,10 +61,6 @@ function wordHead(word) {
         )
       : null,
   );
-}
-
-export function openWordModal() {
-  openModal("word of the day", (body) => draw(body));
 }
 
 function draw(body) {
@@ -161,3 +162,14 @@ function drawEditor(body, word) {
     el("div.row", null, check, message),
   );
 }
+
+export default {
+  id: "word",
+  title: "word of the day",
+  tab: "home",
+  slot: "grid",
+
+  async render(node) {
+    draw(node);
+  },
+};

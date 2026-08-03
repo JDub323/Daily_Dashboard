@@ -1,15 +1,28 @@
+// One line about today, and the same line from a week and a month ago.
+//
+// The echoes are the point — a day log you only ever write into is a diary you
+// never read. They need days the boot payload does not carry, so they arrive
+// after the input is already usable rather than gating it.
+//
+// The archive of every entry is its own panel further down this tab; this one
+// stays about today.
+
 import * as api from "../api.js";
 import { el, mount } from "../dom.js";
 import { put, store } from "../store.js";
-import { openModal } from "../ui.js";
 
 const ECHOES = [
   [7, "a week ago"],
   [30, "a month ago"],
 ];
 
-export function openDaylogModal() {
-  openModal("day log", async (body) => {
+export default {
+  id: "log",
+  title: "day log",
+  tab: "home",
+  slot: "grid",
+
+  async render(node) {
     const message = el("div.faint.gap", { text: store.state.daylog ? "saved ✓" : "" });
     const line = el("input", {
       placeholder: "one line about today",
@@ -20,14 +33,15 @@ export function openDaylogModal() {
         message.textContent = "saved ✓";
       },
     });
+    const echoes = el("div");
 
-    mount(body, line, message);
+    mount(node, line, message, echoes);
 
-    // The echoes need days the boot payload doesn't carry, so they arrive
-    // after the input is already usable.
     for (const [days, label] of ECHOES) {
       const past = await api.get("/api/state", { date: api.daysAgo(days) }).catch(() => null);
-      if (past?.daylog) body.prepend(el("div.faint", { text: `${label}: ${past.daylog}` }));
+      if (past?.daylog) {
+        echoes.append(el("div.faint", { text: `${label}: ${past.daylog}` }));
+      }
     }
-  });
-}
+  },
+};

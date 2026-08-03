@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+<!-- Health: an ECG across the foot of the page, a heart left, sleep right. -->
+<g fill="none" stroke="#cdd6e4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+
+  <!-- the trace. Flat through the middle third so it passes behind the
+       content column without competing with it. -->
+  <path d="M0 700 h150 l24 -60 l22 130 l26 -190 l26 160 l24 -40 h110
+           M1140 700 h60 l24 -60 l22 130 l26 -190 l26 160 l24 -40 h278"
+        stroke-width="3"/>
+  <path d="M512 700 h576" opacity=".3"/>
+
+  <!-- heart, left -->
+  <g transform="translate(90 180)">
+    <path d="M170 300 c-100 -70 -170 -130 -170 -200 c0 -50 40 -84 84 -84
+             c34 0 62 20 86 52 c24 -32 52 -52 86 -52 c44 0 84 34 84 84
+             c0 70 -70 130 -170 200 z"/>
+    <path d="M60 116 h60 l20 -40 l30 80 l24 -50 h140" opacity=".7" stroke-width="3"/>
+  </g>
+
+  <!-- a moon and z's, upper right -->
+  <g transform="translate(1240 140)">
+    <path d="M180 40 a110 110 0 1 0 84 168 a86 86 0 0 1 -84 -168 z"/>
+    <g opacity=".6" stroke-width="3">
+      <path d="M300 60 h48 l-48 54 h48"/>
+      <path d="M368 -10 h34 l-34 38 h34"/>
+    </g>
+  </g>
+
+  <!-- a scale, lower right -->
+  <g transform="translate(1300 560)" opacity=".65">
+    <rect x="0" y="0" width="200" height="150" rx="16"/>
+    <path d="M100 130 a54 54 0 0 1 -54 -54" opacity=".8"/>
+    <path d="M100 130 a54 54 0 0 1 54 -54" opacity=".8"/>
+    <path d="M100 130 l30 -44" stroke-width="3"/>
+    <circle cx="100" cy="130" r="6" fill="#cdd6e4"/>
+  </g>
+
+  <!-- a water glass, small, left edge -->
+  <g transform="translate(430 520)" opacity=".45">
+    <path d="M0 0 h80 l-10 130 h-60 z"/>
+    <path d="M6 60 h68" />
+  </g>
+</g>
+</svg>

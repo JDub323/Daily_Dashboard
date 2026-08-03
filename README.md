@@ -57,8 +57,11 @@ web/                  the front end — native ES modules, no build step
     charts.js   sparkline + line chart
     parsers.js  Wordle & Pokedoku share text — pure functions
     chips.js    the daily checklist
+    tabs.js     the eight sections, and which pane a panel mounts into
+    nav.js      the focus ring — what h/j/k/l actually move
+    keys.js     the bindings, as data; the cheatsheet is generated from them
     panels/     one file per panel
-    modals/     word, games, theorems, math (the archive), daylog
+    modals/     theorems (the archive), math (the archive)
   data/         piano.json — scale/chord content, out of the logic file
   vendor/katex  see PROVENANCE.txt
 
@@ -70,7 +73,19 @@ vendored and everything else is hand-written — so native `<script type="module
 does the whole job, and a build step would only add a thing that can break
 between you and the page.
 
-UI: task chips (top) → gold when done; three columns: feeds (calendar/markets/news/reading) | hero (chess puzzle, math problem, piano of the day) | metrics (elo history, trophies & streaks, health).
+UI: eight tabs, each a subject with one **hero** panel saying what the tab is
+for and supporting panels under it — home (checklist, completion heatmap, LLM
+spend, word of the day, calendar, day log, elo by area) · math · politics ·
+newsletters · games · markets · hobbies · health. The content column is capped
+at 1040px and centred, so the margins stay empty on a wide screen.
+
+Keyboard-first, and the mouse still works. `Tab`/`Shift-Tab` cycle sections,
+`1`–`8` jump to one, `h`/`j`/`k`/`l` move a focus ring between panels — and,
+after `Enter` descends into a panel, between the links and controls inside it.
+`Enter` opens the focused thing, `Esc` backs out a level, `gg`/`G` go to the
+first/last panel, `n` opens the next unfinished task, `?` lists the lot. The
+bindings are data in `keys.js`; the cheatsheet is generated from the same list
+that dispatches them.
 
 ## Key mechanics
 
@@ -86,4 +101,5 @@ UI: task chips (top) → gold when done; three columns: feeds (calendar/markets/
 - **The day rolls over on its own.** The tab is one you leave open, so a 60s check plus `visibilitychange` reloads everything when the browser's local date moves on. The completion write is addressed to the day its counts were read off, never to the clock — otherwise a tab open past midnight posted yesterday's finished count against today, and `done = total` is what makes a perfect day.
 - **No `innerHTML`.** Every panel builds real nodes through `dom.js`, so text is a text node and escaping is structural rather than a hand-rolled `esc()` each render has to remember to call.
 - **Offline-clean.** The page makes no request to anything but `127.0.0.1`.
-- **Adding a panel**: a request/response model in `models/api.py`, a repository method, a route in `server.py`, and a module in `web/app/panels/` registered in `main.js`.
+- **Adding a panel**: a request/response model in `models/api.py`, a repository method, a route in `server.py`, and a module in `web/app/panels/` exporting `{ id, title, tab, slot }` — added to the `PANELS` list in `main.js`, whose order *is* the layout within each slot. `slot: "hero"` claims the top of the tab; anything else lands in the grid below it.
+- **Adding a tab**: one entry in `TABS` in `tabs.js` and one SVG in `web/assets/bg/`. The digit shortcut is the array index, so there is no second table of bindings to keep in sync.

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+<!-- Politics: a domed capitol left, a ballot box right, stripes along the top. -->
+<g fill="none" stroke="#cdd6e4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+
+  <!-- capitol, lower left -->
+  <g transform="translate(60 320)">
+    <path d="M60 460 h420"/>                        <!-- ground -->
+    <path d="M90 460 v-190 h360 v190"/>             <!-- base block -->
+    <path d="M70 270 h400"/>                        <!-- entablature -->
+    <!-- colonnade -->
+    <path d="M120 270 v-90 M160 270 v-90 M200 270 v-90 M240 270 v-90
+             M300 270 v-90 M340 270 v-90 M380 270 v-90 M420 270 v-90"/>
+    <path d="M100 180 h340"/>
+    <!-- the dome -->
+    <path d="M190 180 v-40 h160 v40"/>
+    <path d="M200 140 a70 90 0 0 1 140 0"/>
+    <path d="M270 50 v-34"/>
+    <circle cx="270" cy="44" r="8"/>
+    <!-- steps -->
+    <path d="M110 460 v-14 h320 v14 M126 446 v-14 h288 v14" opacity=".6"/>
+  </g>
+
+  <!-- ballot box, right -->
+  <g transform="translate(1170 440)">
+    <path d="M40 90 h300 v220 h-300 z"/>
+    <path d="M120 90 l30 -60 h140 l-30 60"/>        <!-- lid, in perspective -->
+    <path d="M150 60 h120" stroke-width="5"/>       <!-- the slot -->
+    <!-- the paper going in -->
+    <path d="M182 40 v-90 h96 v90" opacity=".8"/>
+    <path d="M198 -34 h64 M198 -14 h64" opacity=".55"/>
+    <path d="M198 -60 l16 16 l30 -34" stroke-width="3"/>
+  </g>
+
+  <!-- stripes, top right — a flag without being one -->
+  <g opacity=".45">
+    <path d="M1120 90 h430 M1120 130 h430 M1120 170 h430 M1120 210 h430"/>
+    <path d="M1120 90 v160" opacity=".7"/>
+  </g>
+
+  <!-- a speaker's rostrum, small, mid-left edge -->
+  <g opacity=".5" transform="translate(70 120)">
+    <path d="M30 130 h120 M60 130 v-70 h60 v70"/>
+    <path d="M70 60 l-14 -46 h88 l-14 46"/>
+  </g>
+</g>
+</svg>

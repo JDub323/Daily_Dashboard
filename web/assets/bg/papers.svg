@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+<!-- Newsletters: a stack of preprints left, one open sheet right. -->
+<g fill="none" stroke="#cdd6e4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+
+  <!-- the stack, left. Each sheet offset so the pile reads as depth. -->
+  <g transform="translate(70 180)">
+    <path d="M60 460 h300 v-380 h-300 z" opacity=".4"/>
+    <path d="M40 440 h300 v-380 h-300 z" opacity=".65"/>
+    <path d="M20 420 h300 v-380 h-300 z"/>
+    <!-- the top sheet's text -->
+    <path d="M52 90 h150" stroke-width="5"/>                       <!-- title -->
+    <path d="M52 130 h236 M52 156 h236 M52 182 h190" opacity=".6"/>
+    <path d="M52 230 h110 M182 230 h106" opacity=".45"/>           <!-- two columns -->
+    <path d="M52 256 h110 M182 256 h106" opacity=".45"/>
+    <path d="M52 282 h110 M182 282 h106" opacity=".45"/>
+    <path d="M52 308 h110 M182 308 h72"  opacity=".45"/>
+    <!-- a plot inset -->
+    <path d="M182 330 h106 v56 h-106 z" opacity=".5"/>
+    <path d="M190 378 l24 -22 l22 12 l30 -32" opacity=".7"/>
+  </g>
+
+  <!-- an open sheet, right, folded corner -->
+  <g transform="translate(1130 240)">
+    <path d="M0 0 h300 l60 60 v420 h-360 z"/>
+    <path d="M300 0 v60 h60"/>
+    <path d="M40 120 h180" stroke-width="5"/>
+    <path d="M40 170 h280 M40 200 h280 M40 230 h240" opacity=".6"/>
+    <path d="M40 290 h280 M40 320 h280 M40 350 h280 M40 380 h180" opacity=".4"/>
+    <!-- an equation block, because it is arXiv -->
+    <path d="M110 420 h140" opacity=".7"/>
+    <path d="M96 412 v24 M264 412 v24" opacity=".7"/>
+  </g>
+
+  <!-- a paperclip, top right -->
+  <g opacity=".55" transform="translate(1420 90)">
+    <path d="M20 120 v-74 a26 26 0 0 1 52 0 v96 a44 44 0 0 1 -88 0 v-84"
+          stroke-width="3"/>
+  </g>
+
+  <!-- a bookmark ribbon, lower centre-left edge -->
+  <path d="M470 660 v160 l30 -30 l30 30 v-160 z" opacity=".45"/>
+</g>
+</svg>

@@ -1,9 +1,16 @@
 // Elo history. The philosophy — high variance early, stabilising over time —
-// is the server's now; this only plots what it returns.
+// is the server's; this only plots what it returns.
+//
+// One panel per track now, each on the tab of the thing it rates, rather than
+// one card holding both. Two lines side by side invited a comparison that does
+// not exist: the math and chess ratings are different scales against different
+// opponents, and the only reason they were ever adjacent is that they were the
+// two numbers the app happened to keep.
+//
+// The way through to the full retrospective is gone from here because the
+// retrospective is the home tab now — press 1.
 
 import { chartBlock } from "../charts.js";
-import { el } from "../dom.js";
-import { openHistoryModal } from "../modals/history.js";
 import { store } from "../store.js";
 
 const SEED = { math: 1500, chess: 1400 };
@@ -21,22 +28,33 @@ function series(track) {
   return [SEED[track], ...measured].slice(-WINDOW);
 }
 
-export default {
-  id: "elo",
-  title: "elo history",
-  col: "right",
+function eloPanel({ track, tab, title, label, color }) {
+  return {
+    id: `elo-${track}`,
+    title,
+    tab,
+    slot: "grid",
 
-  async render(node) {
-    node.replaceChildren(
-      chartBlock("♞ chess", store.state.chess.summary.rating, series("chess"), "var(--gold)"),
-      chartBlock("∑ math", store.state.math.summary.rating, series("math"), "var(--accent)"),
-      // The way through to everything backward-looking. It lives here because
-      // this is the only panel that already looks backwards, and these two
-      // pooled lines are the shallow end of what the tables can answer.
-      el("div.row.gap", null,
-        el("button", { text: "history →", onclick: openHistoryModal }),
-        el("span.faint.small", { text: "or press h" }),
-      ),
-    );
-  },
-};
+    async render(node) {
+      node.replaceChildren(
+        chartBlock(label, store.state[track].summary.rating, series(track), color),
+      );
+    },
+  };
+}
+
+export const mathElo = eloPanel({
+  track: "math",
+  tab: "math",
+  title: "rating history",
+  label: "∑ math",
+  color: "var(--accent)",
+});
+
+export const chessElo = eloPanel({
+  track: "chess",
+  tab: "hobbies",
+  title: "rating history",
+  label: "♞ chess",
+  color: "var(--gold)",
+});
