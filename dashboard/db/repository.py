@@ -590,6 +590,54 @@ class Repository:
         ).fetchall()
         return {dt.date.fromisoformat(r[0]): r[1] for r in rows}
 
+    def area_rating_history(self) -> dict[str, list[tuple[dt.date, int]]]:
+        """`area -> [(date, rating_after)]`, oldest first, measured rows only.
+
+        The per-area counterpart to `rating_history`, which is pooled-only
+        because the pooled chart is one line. Here the areas are the point, so
+        they come back grouped rather than interleaved -- one query for all of
+        them, because the alternative is a query per area and the caller wants
+        every one of them every time.
+
+        `rating_after IS NOT NULL` drops the reconstructed rows, whose
+        trajectories were interpolated by the old backfill and are flagged
+        rather than trusted. Plotting them would draw a line through numbers
+        nobody measured.
+        """
+        rows = self.conn.execute(
+            "SELECT area, date, rating_after FROM rating_event "
+            "WHERE track = 'math' AND area IS NOT NULL AND rating_after IS NOT NULL "
+            "ORDER BY id"
+        ).fetchall()
+        out: dict[str, list[tuple[dt.date, int]]] = {}
+        for row in rows:
+            out.setdefault(row[0], []).append((dt.date.fromisoformat(row[1]), row[2]))
+        return out
+
+    def math_attempt_count(self, since: dt.date, until: dt.date) -> int:
+        """Problems drawn in `[since, until]`, whatever became of them.
+
+        Counted for the spend strip, against the number of *paid* generations
+        in the metrics log. Every attempt row is a problem that was served;
+        only some of them cost anything, and the difference is what the
+        overnight batch and the curated pool covered.
+        """
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM math_attempt WHERE date BETWEEN ? AND ?",
+            (_iso(since), _iso(until)),
+        ).fetchone()[0]
+
+    def daylogs(self, limit: int = 180) -> list[d.DayLog]:
+        """Every day log, newest first.
+
+        `daylog(today)` was the only read path in the app: months of writing
+        into a box that nothing would ever show back. This is the other half.
+        """
+        rows = self.conn.execute(
+            "SELECT date, text FROM daylog ORDER BY date DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [d.DayLog(**dict(r)) for r in rows]
+
     def unmarked_math_dates(self, before: dt.date) -> list[dt.date]:
         """Days whose problem was drawn, never marked, and are now over.
 

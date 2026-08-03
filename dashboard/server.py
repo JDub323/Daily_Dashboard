@@ -42,7 +42,7 @@ from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import content, feeds, interests, logs, scoring, state
+from . import content, feeds, interests, logs, scoring, spend, state
 from .config import Settings, load_env, settings
 from .content import ContentError
 from .db import Database, Repository
@@ -227,6 +227,35 @@ def _register(app: FastAPI) -> None:
     @app.get("/api/topic")
     def topic(cfg: Cfg, repo: Repo, date: Today) -> api.TopicResponse:
         return content.topic_info(cfg, repo, date)
+
+    @app.get("/api/spend")
+    def spend_summary(cfg: Cfg, repo: Repo, date: Today) -> api.SpendResponse:
+        """Estimated LLM spend over today / 7 / 30 days, by call kind.
+
+        Dated because the windows are counted back from today and, as
+        everywhere else, only the browser knows which day that is -- a server
+        in WSL's timezone would roll "today" over at the wrong hour and the
+        strip would disagree with the chips beside it.
+
+        Reads the log rather than the database, and counts problems from the
+        database rather than the log. That split is the point: a problem served
+        from the batch or the pool appears in one and not the other, so the two
+        numbers together say what the batch saved.
+        """
+        entries, bad = spend.load(cfg.path("metrics"))
+        window = max(days for days, _ in spend.WINDOWS)
+        served = repo.math_attempt_count(date - dt.timedelta(days=window - 1), date)
+        return spend.summarise(entries, bad, date, served)
+
+    @app.get("/api/history")
+    def history(cfg: Cfg, repo: Repo) -> api.HistoryResponse:
+        """Per-area elo trajectories and the day-log archive.
+
+        The one GET in this app with no `date` parameter. Nothing it returns is
+        relative to today, so asking the browser for a day it would not use
+        would be cargo-culting the invariant rather than honouring it.
+        """
+        return state.history(cfg, repo)
 
     # -- feeds -------------------------------------------------------------
 

@@ -391,6 +391,90 @@ class ConfigResponse(Base):
     tickers: list[str]
 
 
+# --- spend -----------------------------------------------------------------
+
+
+class SpendKind(Base):
+    """One call kind's share of a window."""
+
+    kind: str
+    calls: int
+    usd: float
+
+
+class SpendWindow(Base):
+    days: int
+    label: str
+    usd: float
+    calls: int
+    by_kind: list[SpendKind] = Field(default_factory=list)
+
+
+class SpendResponse(Base):
+    """Estimated LLM spend, and whether the overnight batch is earning its keep.
+
+    Every figure here is an *estimate*, priced from `[llm.pricing]` at the
+    moment of each call. A later rate change does not rewrite history, which is
+    why the label says estimate wherever this surfaces -- it is a spend log,
+    not an invoice.
+    """
+
+    windows: list[SpendWindow] = Field(default_factory=list)
+
+    window_days: int
+    """The span the two counts below are measured over -- the longest window,
+    so the strip can say what "6 of 7" is counting without hardcoding 30."""
+
+    problems_served: int
+    problems_paid: int
+    """Math problems drawn, and how many of them cost a live generation. The
+    difference is what the batch and the curated pool covered; counting them
+    from two different sources is what makes the difference meaningful."""
+
+    last_live_generation: dt.date | None = None
+    tracking_since: dt.date | None = None
+    """First day the log has any record of. Anything before this is not $0, it
+    is unmeasured, and the strip says so rather than implying a clean history."""
+
+    unreadable_lines: int = 0
+    """Lines the parser could not use. Surfaced rather than swallowed: a total
+    computed from a partial read is not wrong, but it is not complete, and
+    those are different claims."""
+
+
+# --- history ---------------------------------------------------------------
+
+
+class AreaSeries(Base):
+    """One area's rating trajectory, for the retrospective charts.
+
+    The pooled headline already has a sparkline. This is the number that
+    actually decides what you get served each morning, and it has never been
+    plotted -- only ever shown as a single current figure in the panel strip.
+    """
+
+    area: str
+    points: list[tuple[dt.date, int]] = Field(default_factory=list)
+    events: int
+
+
+class DayLogEntry(Base):
+    date: dt.date
+    text: str
+
+
+class HistoryResponse(Base):
+    """Everything backward-looking that is not already in the boot payload.
+
+    `completion` is deliberately absent: it ships whole with `/api/state`
+    already, so the heatmap draws from the store and this response carries only
+    what would otherwise be unreachable.
+    """
+
+    areas: list[AreaSeries] = Field(default_factory=list)
+    daylogs: list[DayLogEntry] = Field(default_factory=list)
+
+
 class WordCheckResponse(Base):
     grade: WordGrade
 

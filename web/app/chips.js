@@ -3,6 +3,11 @@
 // Chips are not a panel — they live in the header, and they re-render off the
 // store's change notification rather than being poked by whichever panel
 // happened to change something.
+//
+// They are also the whole keyboard surface. Eight chips is eight mouse trips
+// through something you do every morning, so the list below is exported as the
+// thing `keys.js` drives: a cursor that moves over it, digits that jump into
+// it, and "the next one you have not done" as a first-class destination.
 
 import * as api from "./api.js";
 import { $, el, mount } from "./dom.js";
@@ -39,15 +44,84 @@ function tasks() {
   ];
 }
 
+// --- the keyboard cursor ---------------------------------------------------
+//
+// Held here rather than in `keys.js` because the chips are redrawn on every
+// store change, so the highlight has to be reapplied by whatever does the
+// drawing. -1 is "no cursor yet", which is the state on load: the first `j`
+// should land on the first chip rather than on the second.
+
+let cursor = -1;
+let nodes = [];
+
+/** Today's tasks, in chip order. The list `keys.js` indexes into. */
+export function chipTasks() {
+  return tasks();
+}
+
+function paint() {
+  nodes.forEach((node, i) => node.classList.toggle("cursor", i === cursor));
+  nodes[cursor]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+/** Move the cursor by `delta`, wrapping. Does not open anything. */
+export function moveChipCursor(delta) {
+  const list = tasks();
+  if (!list.length) return;
+  cursor = cursor < 0 ? (delta > 0 ? 0 : list.length - 1) : (cursor + delta + list.length) % list.length;
+  paint();
+}
+
+/** Open chip `i` and leave the cursor on it. */
+export function openChip(i) {
+  const list = tasks();
+  if (i < 0 || i >= list.length) return;
+  cursor = i;
+  paint();
+  list[i].open();
+}
+
+/** Open the chip under the cursor, if there is one. */
+export function openCursorChip() {
+  if (cursor >= 0) openChip(cursor);
+}
+
+/**
+ * Jump to the next thing you have not done, wrapping past the cursor.
+ *
+ * The ritual key. Searching from *after* the cursor rather than from the start
+ * means pressing it repeatedly walks the remaining work instead of bouncing
+ * off whichever task you happen to be avoiding.
+ */
+export function openNextUnfinished() {
+  const list = tasks();
+  for (let n = 1; n <= list.length; n++) {
+    const i = (Math.max(cursor, -1) + n) % list.length;
+    if (!list[i].done) {
+      openChip(i);
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function renderChips() {
   const list = tasks();
   const done = list.filter((t) => t.done).length;
 
-  mount($("#tasks"),
-    ...list.map((task) =>
-      el(`div.chip${task.done ? ".done" : ""}`, { text: task.label, onclick: task.open }),
-    ),
+  nodes = list.map((task, i) =>
+    el(`div.chip${task.done ? ".done" : ""}`, {
+      text: task.label,
+      onclick: () => openChip(i),
+      // The digit is the shortcut, shown on the chip so the binding is
+      // discoverable without a legend to memorise first.
+      dataset: { key: i + 1 <= 9 ? String(i + 1) : "" },
+    }),
   );
+  if (cursor >= list.length) cursor = list.length - 1;
+
+  mount($("#tasks"), ...nodes);
+  paint();
 
   mount($("#hdr-completion"),
     el("span.completion-ring", { text: `${done}/${list.length}` }),

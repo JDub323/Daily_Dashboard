@@ -7,6 +7,7 @@ Nothing here reaches the network or the LLM: the two endpoints that would
 from __future__ import annotations
 
 import datetime as dt
+import json
 import time
 
 import pytest
@@ -802,3 +803,85 @@ def test_an_unexpected_error_does_not_leak_internals(client, monkeypatch):
     response = client.get("/api/topic", params={"date": DATE})
     assert response.status_code == 500
     assert response.json() == {"error": "internal error — see the server log"}
+
+
+# --- spend -----------------------------------------------------------------
+
+
+def test_spend_reports_three_windows_on_an_empty_log(client):
+    """The strip has to render on a fresh install, before anything is spent."""
+    body = client.get("/api/spend", params={"date": DATE}).json()
+    assert [w["label"] for w in body["windows"]] == ["today", "7d", "30d"]
+    assert body["problems_served"] == 0
+    assert body["tracking_since"] is None
+
+
+def test_spend_counts_problems_served_from_the_database(client, settings, repo, problem):
+    """Served comes from `math_attempt` and paid from the metrics log, so a
+    problem with no log line reads as one the batch or the pool covered."""
+    repo.open_math_attempt(TODAY, problem.id)
+    settings.path("metrics").write_text(
+        json.dumps({"date": DATE, "kind": "word", "est_cost_usd": 0.01}) + "\n",
+        encoding="utf-8",
+    )
+    body = client.get("/api/spend", params={"date": DATE}).json()
+    assert body["problems_served"] == 1
+    assert body["problems_paid"] == 0
+    assert body["windows"][0]["usd"] == 0.01
+
+
+def test_spend_survives_a_corrupt_log(client, settings):
+    """One bad line from July must not take the whole panel down -- it is
+    counted and reported instead."""
+    settings.path("metrics").write_text("{not json\n", encoding="utf-8")
+    body = client.get("/api/spend", params={"date": DATE}).json()
+    assert body["unreadable_lines"] == 1
+    assert body["windows"][2]["usd"] == 0.0
+
+
+# --- history ---------------------------------------------------------------
+
+
+def test_history_is_empty_but_well_formed_with_no_data(client):
+    body = client.get("/api/history").json()
+    assert body == {"areas": [], "daylogs": []}
+
+
+def test_history_returns_day_logs_newest_first(client, repo):
+    repo.set_daylog(TODAY - dt.timedelta(days=2), "older")
+    repo.set_daylog(TODAY, "newer")
+    body = client.get("/api/history").json()
+    assert [e["text"] for e in body["daylogs"]] == ["newer", "older"]
+
+
+def test_history_plots_only_areas_with_measured_results(client, repo, settings):
+    """An area showing the pooled rating as a placeholder has no trajectory of
+    its own; drawing one would show a trend that never happened."""
+    stored = repo.add_problem(
+        d.MathProblem(
+            source="AIME 2012 Problem 3",
+            tier="aime-late",
+            anchor=1500,
+            statement="s",
+            answer="a",
+            hints=["1", "2", "3"],
+            model="test",
+            generated_at=dt.datetime(2026, 7, 26, 9, 0),
+            topic="generating functions",
+            area="combinatorics",
+        )
+    )
+    repo.open_math_attempt(TODAY, stored.id)
+    repo.finish_math(TODAY, "solved")
+
+    body = client.get("/api/history").json()
+    assert [a["area"] for a in body["areas"]] == ["combinatorics"]
+    (point,) = body["areas"][0]["points"]
+    assert point[0] == DATE
+    assert body["areas"][0]["events"] == 1
+
+
+def test_history_takes_no_date_parameter(client):
+    """The one GET with nothing relative to today in it. Asking the browser
+    for a day it would not use would be cargo-culting the invariant."""
+    assert client.get("/api/history", params={"date": DATE}).status_code == 200

@@ -45,6 +45,22 @@ a:hover { text-decoration: underline; }
 /* focusPanel(): the chips flash the panel they scroll to. */
 .panel.flash { transition: box-shadow .3s; box-shadow: 0 0 0 2px var(--gold-dim); }
 
+/* ---- a finished hero panel collapses ----
+   Hierarchy over time, not just over space: the centre column used to look
+   identical at 0/8 and 8/8. `order` rather than a DOM move — the columns are
+   flex, so a finished panel sinks without anything being re-appended and
+   without the panel harness having to know about layout. */
+.col > .panel.collapsed { order: 1; }
+.panel.collapsed .body { display: none; }
+.panel.collapsed h2 { margin-bottom: 0; border-bottom: none; padding-bottom: 0; }
+.collapse-toggle { cursor: pointer; display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.collapse-toggle:hover { color: var(--gold); }
+/* The affordance is the heading itself, so it needs to say it is one. */
+.collapse-toggle::after { content: "▾"; font-size: 10px; color: var(--faint); order: 3; }
+.panel.collapsed .collapse-toggle::after { content: "▸"; }
+.panel-summary { color: var(--gold); font-weight: 600; letter-spacing: 0; text-transform: none;
+                 font-size: 12.5px; margin-left: auto; }
+
 /* ---- typography + inline utilities ----
    Every one of these replaces an inline style= the old renders wrote by hand:
    style="margin:6px 0", style="font-size:11.5px", style="flex:1",
@@ -143,6 +159,22 @@ input.minutes { width: 5.5em; flex: 0 0 auto; text-align: right; }
 .chip.done::before { content: "✦ "; }
 .completion-ring { color: var(--gold); font-weight: 700; }
 
+/* The digit that opens this chip, shown so the binding needs no legend. */
+.chip[data-key]:not([data-key=""])::after {
+  content: attr(data-key); font-size: 10px; color: var(--faint);
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.4;
+}
+/* Where `j`/`k` currently are. Cyan, not gold: gold means done, and the
+   cursor sitting on a finished chip must not read as a fifth completion. */
+.chip.cursor { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.chip.cursor::after { border-color: var(--accent); color: var(--accent); }
+
+/* ---- the keyboard help sheet ---- */
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; align-items: baseline; margin-top: 10px; }
+.keycombo { display: flex; gap: 4px; }
+kbd { font: inherit; font-size: 11.5px; border: 1px solid var(--border); border-bottom-width: 2px;
+      border-radius: 4px; padding: 1px 6px; color: var(--fg); background: var(--bg); }
+
 /* ---- modal ---- */
 #modal-overlay { position: fixed; inset: 0; background: rgba(4,6,10,.72);
                  display: flex; align-items: flex-start; justify-content: center;
@@ -175,6 +207,30 @@ svg text { font: 10px "Cascadia Code", Consolas, monospace; fill: var(--faint); 
 .cell { width: 16px; height: 16px; border-radius: 3px; background: #2a3040; }
 .cell.g { background: #6aaa64; } .cell.y { background: #c9b458; }
 .cell.r { background: #a04652; } .cell.w { background: #4a5165; }
+
+/* ---- history modal ---- */
+/* The completion heatmap. Column-major: `grid-auto-flow: column` over seven
+   fixed rows means cells appended in date order land as weeks, so the DOM
+   order is the reading order and no cell needs to name its own position. */
+:root { --hm-col: 10px; --hm-gap: 3px; }
+.hm-scroll { overflow-x: auto; padding-bottom: 4px; margin: 8px 0; }
+.hm-wrap { display: inline-block; min-width: min-content; }
+.heatmap { display: grid; grid-template-rows: repeat(7, var(--hm-col));
+           grid-auto-flow: column; grid-auto-columns: var(--hm-col); gap: var(--hm-gap); }
+.hm-months { display: grid; gap: var(--hm-gap); margin-bottom: 3px; }
+.hm-month { font-size: 9.5px; color: var(--faint); white-space: nowrap; }
+.hm-cell { width: var(--hm-col); height: var(--hm-col); border-radius: 2px; background: var(--panel2);
+           border: 1px solid var(--border-soft); }
+/* Four steps of gold, so "nearly done" and "done" are different squares. The
+   top step is the one worth earning and is the only one that is fully solid. */
+.hm-1 { background: rgba(232,180,88,.22); border-color: transparent; }
+.hm-2 { background: rgba(232,180,88,.44); border-color: transparent; }
+.hm-3 { background: rgba(232,180,88,.68); border-color: transparent; }
+.hm-4 { background: var(--gold); border-color: transparent; }
+/* Days that have not happened yet are absent, not empty. */
+.hm-future { background: transparent; border-color: transparent; }
+.daylog-text { margin: 2px 0 0; }
+.archive-item .daylog-text { color: var(--fg); }
 
 /* ---- piano ---- */
 .piano-item + .piano-item { margin-top: 10px; border-top: 1px solid var(--border-soft); padding-top: 8px; }

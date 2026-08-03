@@ -24,6 +24,16 @@ export default {
   title: "♞ chess puzzle",
   col: "center",
   hero: true,
+  collapsible: true,
+
+  /** Rating and what today's puzzle did to it. See the math panel's. */
+  summary() {
+    const chess = store.state.chess;
+    if (!chess.puzzle_id || chess.status === "open") return `${chess.summary.rating}`;
+    const last = chess.summary.history[chess.summary.history.length - 1];
+    const delta = last?.delta == null ? "" : ` ${last.delta >= 0 ? "+" : ""}${last.delta}`;
+    return `${chess.summary.rating}${delta} · ${chess.puzzle_id}`;
+  },
 
   async render(node) {
     const chess = store.state.chess;
