@@ -368,3 +368,41 @@ def test_a_weekday_still_serves_the_rung_nearest_the_rating(settings):
     _batch_file(settings, WEDNESDAY, rungs)
     picked = content._from_batch(settings, WEDNESDAY, set(), 1500)
     assert picked.tier == "aime-late"
+
+
+# --- word pronunciation ----------------------------------------------------
+
+
+def test_the_word_prompt_asks_for_both_spellings_of_the_sound(settings, paid):
+    paid["reply"] = {
+        "word": "susurrus",
+        "pos": "noun",
+        "definition": "a whispering sound",
+        "pronunciation": "/səˈsʌrəs/",
+        "respelling": "suh-SUR-us",
+    }
+    word = content.word_of_day(settings, TODAY)
+    assert word.pronunciation == "/səˈsʌrəs/"
+    assert word.respelling == "suh-SUR-us"
+
+
+def test_a_word_generation_without_a_pronunciation_still_succeeds(settings, paid):
+    """A word with no pronunciation is a slightly poorer card. A word with no
+    definition is not a card at all, and only the second is worth failing on."""
+    paid["reply"] = {"word": "x", "pos": "n", "definition": "d"}
+    word = content.word_of_day(settings, TODAY)
+    assert word.pronunciation is None and word.respelling is None
+
+
+def test_an_empty_pronunciation_string_is_stored_as_absent(settings, paid):
+    """`""` and None mean the same thing here, and the renderer only checks
+    one of them."""
+    paid["reply"] = {
+        "word": "x",
+        "pos": "n",
+        "definition": "d",
+        "pronunciation": "",
+        "respelling": "",
+    }
+    word = content.word_of_day(settings, TODAY)
+    assert word.pronunciation is None and word.respelling is None

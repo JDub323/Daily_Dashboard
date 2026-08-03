@@ -489,6 +489,26 @@ MIGRATIONS: list[tuple[int, str]] = [
             CHECK (minutes IS NULL OR minutes BETWEEN 1 AND 1440);
         """,
     ),
+    (
+        8,
+        """
+        -- How to say the word of the day.
+        --
+        -- Two columns rather than one: `pronunciation` is IPA, which is exact
+        -- and unreadable without training, and `respelling` is the same sound
+        -- written for someone who does not read IPA. Dictionaries print both,
+        -- and the pair costs nothing -- it is two more fields on a generation
+        -- that was already being paid for.
+        --
+        -- Both nullable and both NULL on every existing row. A word already
+        -- generated is not regenerated to fill them in: the row is what was
+        -- served that day, and paying for a second call to backfill a field
+        -- onto a word from last week would be spending real money to change
+        -- the historical record.
+        ALTER TABLE word_of_day ADD COLUMN pronunciation TEXT;
+        ALTER TABLE word_of_day ADD COLUMN respelling TEXT;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

@@ -694,15 +694,19 @@ class Repository:
 
     def upsert_word(self, word: d.WordOfDay) -> d.WordOfDay:
         row = self.conn.execute(
-            "INSERT INTO word_of_day (date, word, pos, definition, sentences, grade) "
-            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (date) DO UPDATE SET "
+            "INSERT INTO word_of_day "
+            "(date, word, pos, definition, pronunciation, respelling, sentences, grade) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (date) DO UPDATE SET "
             "word = excluded.word, pos = excluded.pos, definition = excluded.definition, "
+            "pronunciation = excluded.pronunciation, respelling = excluded.respelling, "
             "sentences = excluded.sentences, grade = excluded.grade RETURNING *",
             (
                 _iso(word.date),
                 word.word,
                 word.pos,
                 word.definition,
+                word.pronunciation,
+                word.respelling,
                 _json(word.sentences),
                 _json(word.grade) if word.grade else None,
             ),

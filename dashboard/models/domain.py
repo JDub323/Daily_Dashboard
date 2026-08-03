@@ -205,6 +205,26 @@ class WordOfDay(Base):
     word: str
     pos: str
     definition: str
+
+    pronunciation: str | None = None
+    """IPA, in slashes -- `/səˈsʌrəs/`.
+
+    NULL on every word that predates the column, and on any generation where
+    the model declined to give one. The point of an uncommon-but-usable word
+    is the *usable* half, and a word you cannot say out loud is not one you
+    will use.
+    """
+
+    respelling: str | None = None
+    """The same sound written for someone who does not read IPA --
+    `suh-SUR-us`, stressed syllable capitalised.
+
+    Both, rather than one. IPA is exact and unreadable without training;
+    a respelling is readable and imprecise about vowels. Dictionaries print
+    the pair for this reason, and the pair costs nothing here -- it is two
+    fields on a generation that was already being paid for.
+    """
+
     sentences: list[str] = Field(default_factory=list, max_length=MAX_SENTENCES)
     grade: WordGrade | None = None
 

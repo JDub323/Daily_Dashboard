@@ -115,6 +115,10 @@ input.minutes { width: 5.5em; flex: 0 0 auto; text-align: right; }
 /* ---- word modal ---- */
 .sentence { margin: 3px 0; }
 .verdict { margin-top: 6px; }
+/* Respelling and IPA sit under the word, with the speak button on the same
+   line — it is a property of the word, not a separate action. */
+.pronounce { margin: 2px 0 6px; gap: 10px; }
+.say { font-size: 11.5px; padding: 2px 8px; flex: 0 0 auto; }
 
 /* ---- theorem archive ----
    No height or overflow here: #modal already caps at 84vh and scrolls, with

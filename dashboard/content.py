@@ -441,13 +441,25 @@ def word_of_day(settings: Settings, date: dt.date) -> d.WordOfDay:
         settings,
         kind="word",
         date=date,
-        system='Respond ONLY JSON: {"word":"...","pos":"...","definition":"..."}',
+        system="Respond ONLY JSON: "
+        '{"word":"...","pos":"...","definition":"...",'
+        '"pronunciation":"IPA between slashes, e.g. /səˈsʌrəs/",'
+        '"respelling":"the same sound without IPA, hyphenated, stressed '
+        'syllable in CAPITALS, e.g. suh-SUR-us"}',
         user=f"Pick an uncommon-but-usable English word of the day for {date.isoformat()}. "
         f"Deterministic-ish: base the choice on that date.",
     )
     try:
         return d.WordOfDay(
-            date=date, word=raw["word"], pos=raw["pos"], definition=raw["definition"]
+            date=date,
+            word=raw["word"],
+            pos=raw["pos"],
+            definition=raw["definition"],
+            # Optional, unlike the three above. A word with no pronunciation is
+            # a slightly poorer card; a word with no definition is not a card
+            # at all, and only the second is worth failing the day over.
+            pronunciation=raw.get("pronunciation") or None,
+            respelling=raw.get("respelling") or None,
         )
     except (KeyError, TypeError) as e:
         raise ContentError(f"the word generation was missing {e}") from e

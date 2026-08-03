@@ -521,3 +521,59 @@ def test_an_untimed_solve_scores_exactly_what_it_always_did(repo, problem):
     _, event = repo.finish_math(TODAY, MathOutcome.solved, None, PARS)
     assert event.k == scoring.k_factor(0)
     assert event.rating_after == scoring.elo_update(1500, 1750, 1.0, 0)
+
+
+# --- word pronunciation ----------------------------------------------------
+
+
+def test_a_word_round_trips_its_pronunciation(repo):
+    stored = repo.upsert_word(
+        d.WordOfDay(
+            date=TODAY,
+            word="susurrus",
+            pos="noun",
+            definition="a whispering sound",
+            pronunciation="/səˈsʌrəs/",
+            respelling="suh-SUR-us",
+        )
+    )
+    assert stored.pronunciation == "/səˈsʌrəs/"
+    assert repo.word(TODAY).respelling == "suh-SUR-us"
+
+
+def test_a_word_without_a_pronunciation_is_still_a_word(repo):
+    """Every row written before the columns existed is this case, and the
+    modal renders it with the line simply absent."""
+    repo.upsert_word(d.WordOfDay(date=TODAY, word="x", pos="n", definition="d"))
+    stored = repo.word(TODAY)
+    assert stored.pronunciation is None and stored.respelling is None
+
+
+def test_regrading_a_word_does_not_drop_its_pronunciation(repo):
+    """`upsert_word` is an UPSERT over every column, so a second write that
+    forgot these two would blank them."""
+    repo.upsert_word(
+        d.WordOfDay(
+            date=TODAY,
+            word="w",
+            pos="n",
+            definition="d",
+            pronunciation="/w/",
+            respelling="dubya",
+        )
+    )
+    repo.set_sentences(TODAY, ["a", "b"])
+    repo.set_grade(
+        TODAY,
+        d.WordGrade(
+            distinct=True,
+            verdict="ok",
+            per_sentence=[
+                d.SentenceGrade(ok=True, note="fine"),
+                d.SentenceGrade(ok=True, note="fine"),
+            ],
+        ),
+    )
+    after = repo.word(TODAY)
+    assert (after.pronunciation, after.respelling) == ("/w/", "dubya")
+    assert after.grade is not None

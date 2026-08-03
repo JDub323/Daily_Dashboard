@@ -20,15 +20,28 @@ const POKEDOKU = /pok[eé]doku/i;
 // logged before this.
 const POKEDOKU_TILES = "✅❌✔️❎⬜⬛🟩🟥🟦🟨";
 
-/** Rows of exactly `width` tile characters, all drawn from `alphabet`. */
+/**
+ * Rows of exactly `width` tile characters, all drawn from `alphabet`.
+ *
+ * Whitespace is stripped from *inside* the line, not merely off its ends, and
+ * that is the whole difference between a grid and no grid. Pokedoku separates
+ * its tiles with spaces and leaves a trailing one — `✅ ✅ 🟥 ` — so a trim
+ * left a three-tile row measuring five characters, no row ever matched, and
+ * every Pokedoku result ever logged stored `grid: []`. Nothing said so,
+ * because an empty grid renders as nothing at all.
+ *
+ * Variation selectors go for the same reason: `✔️` is two code points, and
+ * counting it as two makes a three-tile row look four wide.
+ *
+ * The cleaned row is what gets returned, so what is stored is normalised
+ * rather than carrying whichever spacing that day's share text happened to use.
+ */
 function gridRows(text, width, alphabet) {
   return text
     .split("\n")
-    .map((line) => line.trim())
+    .map((line) => line.replace(/\s/g, "").replace(/[︎️]/g, ""))
     .filter((line) => {
-      // Strip variation selectors before measuring: "✔️" is two code points,
-      // and counting it as two makes a three-tile row look like four.
-      const chars = [...line.replace(/[︎️]/g, "")];
+      const chars = [...line];
       return chars.length === width && chars.every((c) => alphabet.includes(c));
     });
 }

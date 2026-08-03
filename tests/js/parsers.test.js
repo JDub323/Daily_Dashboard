@@ -153,6 +153,54 @@ describe("parsePokedoku", () => {
   });
 });
 
+// The real thing, pasted from the app's own share button. Every earlier
+// Pokedoku test in this file was written against a guess at the format, and
+// every one of them passed while the actual share text produced `grid: []` —
+// which is what the database has been storing all along.
+const REAL_POKEDOKU_SHARE = `🔴 PokeDoku Summary ⚪️
+By: Kwikpanik
+
+Score: 7/9
+Uniqueness: 275 (best possible: 93)
+Better than 38.0% of players today
+
+✅ ✅ 🟥
+✅ ✅ ✅
+✅ ✅ 🟥
+
+
+Play at: https://pokedoku.com/share/2eGbxgnRwUAd`;
+
+describe("the real Pokedoku share text", () => {
+  it("parses the grid, which space-separated tiles used to defeat", () => {
+    // `.trim()` leaves "✅ ✅ 🟥" at five characters against a width of three,
+    // so no row ever matched and the failure was completely silent.
+    assert.deepEqual(parsePokedoku(REAL_POKEDOKU_SHARE).grid, ["✅✅🟥", "✅✅✅", "✅✅🟥"]);
+  });
+
+  it("reads 7 correct from the fraction, not from counting ticks", () => {
+    assert.equal(parsePokedoku(REAL_POKEDOKU_SHARE).correct, 7);
+  });
+
+  it("reads 275 as the uniqueness score, not the 7 from 'Score: 7/9'", () => {
+    assert.equal(parsePokedoku(REAL_POKEDOKU_SHARE).score, 275);
+  });
+
+  it("is not confused by the '(best possible: 93)' that follows it", () => {
+    assert.notEqual(parsePokedoku(REAL_POKEDOKU_SHARE).score, 93);
+  });
+
+  it("is not confused by 'Better than 38.0% of players today'", () => {
+    assert.notEqual(parsePokedoku(REAL_POKEDOKU_SHARE).score, 38);
+  });
+
+  it("routes to pokedoku and carries no keys the server forbids", () => {
+    const parsed = parseShare(REAL_POKEDOKU_SHARE);
+    assert.equal(parsed.game, "pokedoku");
+    assert.deepEqual(Object.keys(parsed.body).sort(), ["correct", "grid", "score"]);
+  });
+});
+
 describe("parseShare", () => {
   it("routes a wordle share to the wordle endpoint", () => {
     const parsed = parseShare(WORDLE_SHARE);

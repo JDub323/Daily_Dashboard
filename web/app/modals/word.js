@@ -7,6 +7,57 @@ const SENTENCES = 2;
 /** Must match `domain.SENTENCES` — the server's WordCheckRequest requires
  * exactly this many, so a mismatch here is a 422 rather than a short list. */
 
+// --- saying it out loud ----------------------------------------------------
+//
+// `speechSynthesis` is built into the browser: no audio files to serve, no
+// network call, no API key, and it keeps the app's "no external runtime
+// dependency" property intact. It is also the only pronunciation that helps
+// if you do not read IPA and the respelling still leaves you guessing.
+
+/** Speak the word, if this browser can. Silent no-op if it cannot. */
+function say(word) {
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+  // Cancel first: pressing the button twice otherwise queues a second reading
+  // behind the first rather than restarting it, which reads as a stuck button.
+  synth.cancel();
+  const utterance = new SpeechSynthesisUtterance(word);
+  utterance.lang = "en-US";
+  utterance.rate = 0.8; // a word said at conversational speed is a word missed
+  synth.speak(utterance);
+}
+
+/**
+ * `susurrus noun` over `suh-SUR-us · /səˈsʌrəs/ 🔊` — the header both the
+ * editor and the graded view show.
+ *
+ * Every part below the word is optional and independently so: rows generated
+ * before the pronunciation columns existed have neither, a generation can
+ * come back with one and not the other, and a browser without speech
+ * synthesis gets no button. None of those are error states, so none of them
+ * render as one — the line simply carries less.
+ */
+function wordHead(word) {
+  const speakable = Boolean(window.speechSynthesis);
+  const parts = [word.respelling, word.pronunciation].filter(Boolean);
+
+  return el("div", null,
+    el("div.big.gold", null, word.word, " ", el("span.faint", { text: word.pos })),
+    parts.length || speakable
+      ? el("div.row.pronounce", null,
+          parts.length ? el("span.dim", { text: parts.join(" · ") }) : null,
+          speakable
+            ? el("button.say", {
+                text: "🔊 say it",
+                title: `hear "${word.word}" read aloud`,
+                onclick: () => say(word.word),
+              })
+            : null,
+        )
+      : null,
+  );
+}
+
 export function openWordModal() {
   openModal("word of the day", (body) => draw(body));
 }
@@ -43,7 +94,7 @@ function draw(body) {
 function drawGrade(body, word) {
   const grade = word.grade;
   mount(body,
-    el("div.big.gold", { text: word.word }),
+    wordHead(word),
     el("div.dim", { text: word.definition }),
     el(`div.${grade.distinct ? "ok" : "bad"}.verdict`, { text: grade.verdict }),
     el("ul.clean", null,
@@ -103,7 +154,7 @@ function drawEditor(body, word) {
   });
 
   mount(body,
-    el("div.big.gold", null, word.word, " ", el("span.faint", { text: word.pos })),
+    wordHead(word),
     el("div.dim", { text: word.definition }),
     el("div.faint.gap", { text: `write ${SENTENCES} semantically distinct sentences:` }),
     ...inputs,
