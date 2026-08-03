@@ -43,7 +43,7 @@ exists and neither of these is evidence. A lapse is a day nobody did; an
 unlapse is the bookkeeping that cancels one.
 """
 
-_ATTEMPT_ONLY = frozenset({"a_date", "problem_id", "hints_revealed", "status", "score"})
+_ATTEMPT_ONLY = frozenset({"a_date", "problem_id", "hints_revealed", "status", "score", "minutes"})
 """Columns the archive join adds for the attempt side. Everything else in the
 row belongs to `math_problem` -- `id` included, which is why the attempt's own
 date is aliased rather than selected twice."""
@@ -275,12 +275,16 @@ class Repository:
         status: MathStatus,
         provenance: Provenance,
         score_for: Callable[[d.MathAttempt], float],
+        minutes: int | None = None,
+        multiplier_for: Callable[[d.MathProblem], float] | None = None,
     ) -> tuple[d.MathAttempt, d.RatingEvent]:
         """Close one open attempt and apply its elo update, atomically.
 
         `score_for` is a callback rather than a number because the score of a
         real finish depends on `hints_revealed`, which is only trustworthy
-        once read inside this transaction.
+        once read inside this transaction. `multiplier_for` is one for the
+        matching reason: the speed bonus is measured against the problem's
+        tier, and the problem is not known until the row has been read.
 
         The guard is the WHERE status = 'open': a double-submit from a second
         tab -- or a lapse racing the finish button at midnight -- updates zero
@@ -295,22 +299,25 @@ class Repository:
             problem = self.problem(attempt.problem_id)
             assert problem is not None
             score = score_for(attempt)
+            multiplier = multiplier_for(problem) if multiplier_for else 1.0
             row = self.conn.execute(
-                "UPDATE math_attempt SET status = ?, score = ? "
+                "UPDATE math_attempt SET status = ?, score = ?, minutes = ? "
                 "WHERE date = ? AND status = 'open' RETURNING *",
-                (status.value, score, _iso(date)),
+                (status.value, score, minutes, _iso(date)),
             ).fetchone()
             if row is None:
                 raise ValueError(f"math attempt on {date} was closed concurrently")
 
-            ev = self._rate_math(date, problem, score, provenance, area=None)
+            ev = self._rate_math(date, problem, score, provenance, area=None, multiplier=multiplier)
             # The same result, rated again inside its area. Second and inside
             # the same transaction: the pooled row is the one the panel and
             # the chart read, so it must not be able to exist without its
             # partner or vice versa. A problem carrying no area -- every one
             # generated before the column -- rates pooled only.
             if problem.area is not None:
-                self._rate_math(date, problem, score, provenance, area=problem.area)
+                self._rate_math(
+                    date, problem, score, provenance, area=problem.area, multiplier=multiplier
+                )
             return d.MathAttempt(**dict(row)), ev
 
     def _rate_math(
@@ -321,13 +328,22 @@ class Repository:
         provenance: Provenance,
         *,
         area: str | None,
+        multiplier: float = 1.0,
     ) -> d.RatingEvent:
         """One elo row against the problem's tier anchor. Caller holds the
-        transaction; `area=None` is the pooled rating."""
+        transaction; `area=None` is the pooled rating.
+
+        The K written to the row is the one actually applied, speed bonus
+        included -- so `rating_after - rating_before == k * (score -
+        expected)` stays checkable by hand, which is the whole reason the
+        column exists. Both rows for a result take the same multiplier: the
+        pooled and area ratings are two readings of one event, and a bonus that
+        applied to one but not the other would make them disagree about what
+        happened.
+        """
         n = self.event_count(Track.math, area)
         before = self.current_rating(Track.math, area)
-        k = scoring.k_factor(n)
-        after = scoring.elo_update(before, problem.anchor, score, n)
+        k, after = scoring.timed_elo(before, problem.anchor, score, n, multiplier)
         row = self.conn.execute(
             "INSERT INTO rating_event "
             "(track, date, ref, opponent, score, k, rating_before, rating_after, "
@@ -348,19 +364,46 @@ class Repository:
         return d.RatingEvent(**dict(row))
 
     def finish_math(
-        self, date: dt.date, outcome: MathOutcome
+        self,
+        date: dt.date,
+        outcome: MathOutcome,
+        minutes: int | None = None,
+        par_minutes: dict[str, int] | None = None,
     ) -> tuple[d.MathAttempt, d.RatingEvent]:
-        """Score, close the attempt, and apply the elo update together."""
+        """Score, close the attempt, and apply the elo update together.
+
+        `par_minutes` is the tier->reference-time table, passed in as a plain
+        dict rather than reached for through `Settings`: this module's rule is
+        that it is the only one that knows SQL, and the price of that is that
+        it is not allowed to know about config either.
+
+        A failure discards `minutes` before it is stored. Time is only read on
+        a solve, so keeping the number would leave a column on the row that
+        nothing consults and that reads, later, as though it once mattered.
+        """
         outcome = MathOutcome(outcome)
+        solved = outcome is MathOutcome.solved
+        pars = par_minutes or {}
         return self._close_math(
             date,
-            status=(MathStatus.solved if outcome is MathOutcome.solved else MathStatus.failed),
+            status=(MathStatus.solved if solved else MathStatus.failed),
             provenance=Provenance.measured,
             score_for=lambda attempt: scoring.math_score(outcome, attempt.hints_revealed),
+            minutes=minutes if solved else None,
+            multiplier_for=(
+                (lambda problem: scoring.time_multiplier(minutes, pars.get(problem.tier)))
+                if solved
+                else None
+            ),
         )
 
     def finish_math_late(
-        self, today: dt.date, target: dt.date, outcome: MathOutcome
+        self,
+        today: dt.date,
+        target: dt.date,
+        outcome: MathOutcome,
+        minutes: int | None = None,
+        par_minutes: dict[str, int] | None = None,
     ) -> tuple[d.MathAttempt, d.RatingEvent]:
         """Submit a lapsed day afterwards. Replaces the lapse; atomic.
 
@@ -402,13 +445,25 @@ class Repository:
             problem = self.problem(attempt.problem_id)
             assert problem is not None
 
+            solved = outcome is MathOutcome.solved
             score = scoring.late_math_score(outcome, attempt.hints_revealed)
+            # Speed still counts on a day submitted late. The deflation for
+            # lateness is already in `score`, and the two are answers to
+            # different questions -- when you did it, and how long it took --
+            # so charging the second one twice would be charging it for the
+            # first.
+            multiplier = (
+                scoring.time_multiplier(minutes, (par_minutes or {}).get(problem.tier))
+                if solved
+                else 1.0
+            )
             row = self.conn.execute(
-                "UPDATE math_attempt SET status = ?, score = ? "
+                "UPDATE math_attempt SET status = ?, score = ?, minutes = ? "
                 "WHERE date = ? AND status = 'lapsed' RETURNING *",
                 (
-                    (MathStatus.solved if outcome is MathOutcome.solved else MathStatus.failed),
+                    (MathStatus.solved if solved else MathStatus.failed),
                     score,
+                    minutes if solved else None,
                     _iso(target),
                 ),
             ).fetchone()
@@ -419,10 +474,19 @@ class Repository:
             # pooled row is what the panel and the chart read, so it must not
             # be able to exist without its partner or vice versa.
             self._unlapse(target, problem, area=None)
-            ev = self._rate_math(target, problem, score, Provenance.late, area=None)
+            ev = self._rate_math(
+                target, problem, score, Provenance.late, area=None, multiplier=multiplier
+            )
             if problem.area is not None:
                 self._unlapse(target, problem, area=problem.area)
-                self._rate_math(target, problem, score, Provenance.late, area=problem.area)
+                self._rate_math(
+                    target,
+                    problem,
+                    score,
+                    Provenance.late,
+                    area=problem.area,
+                    multiplier=multiplier,
+                )
             return d.MathAttempt(**dict(row)), ev
 
     def _unlapse(self, date: dt.date, problem: d.MathProblem, *, area: str | None) -> None:
@@ -489,7 +553,7 @@ class Repository:
         """
         rows = self.conn.execute(
             "SELECT a.date AS a_date, a.problem_id, a.hints_revealed, a.status, a.score, "
-            "p.* FROM math_attempt a JOIN math_problem p ON p.id = a.problem_id "
+            "a.minutes, p.* FROM math_attempt a JOIN math_problem p ON p.id = a.problem_id "
             "ORDER BY a.date DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -502,6 +566,7 @@ class Repository:
                 hints_revealed=data["hints_revealed"],
                 status=data["status"],
                 score=data["score"],
+                minutes=data["minutes"],
             )
             problem = d.MathProblem(**{k: v for k, v in data.items() if k not in _ATTEMPT_ONLY})
             out.append((attempt, problem))

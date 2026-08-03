@@ -66,15 +66,58 @@ PROBLEM_SYSTEM = (
 )
 
 
+SHOWCASE_WEEKDAY = 5
+"""Saturday, in `date.weekday()` terms (0 = Monday).
+
+The last day of the topic week -- the rotation turns over on Sunday -- so it
+falls where a capstone belongs rather than interrupting the ramp.
+"""
+
+
+def is_showcase(date: dt.date) -> bool:
+    """Is this a day for a famous problem rather than a calibrated one?"""
+    return date.weekday() == SHOWCASE_WEEKDAY
+
+
 def _problem_prompt(settings: Settings, rating: int, date: dt.date, seen: list[str]) -> str:
+    topic = settings.math.topic_for(date)
+    do_not_use = (
+        f"Must be from a real past competition. Do NOT use any of these "
+        f"already-seen problems: {json.dumps(seen[-SEEN_WINDOW:])}"
+    )
+
+    if is_showcase(date):
+        # Saturday asks a different question. Every other day the target is a
+        # 30-70% solve chance, which is the right target for *learning* and the
+        # wrong one for the thing this is for: the problems worth meeting are
+        # famous because of the idea in them, and how hard they happen to be is
+        # not something they can be selected on without losing most of them.
+        #
+        # The rating is deliberately absent from this prompt. Naming it would
+        # invite the model to reach for it, and "beautiful, at about 1500" is a
+        # much smaller set than "beautiful" -- usually an empty one.
+        #
+        # The tier is still reported honestly, so the result still rates: a
+        # famous olympiad problem anchored at 1900 is a cheap loss and a large
+        # win against a 1500 rating, which is the correct shape for a stretch.
+        return (
+            f"Topic of the week: {topic}. Today is Saturday, which is the showcase "
+            f"day: give me a CLASSIC, BEAUTIFUL problem on this topic — one of the "
+            f"famous ones, the kind with a named trick or a one-line solution that "
+            f"is remembered decades later. Ignore difficulty entirely and ignore how "
+            f"hard the rest of the week has been; pick on elegance and fame alone. "
+            f"Olympiad, Putnam and IMO shortlist problems are all fair game. Report "
+            f"the tier that honestly matches its difficulty — do not soften it to "
+            f"make the problem look approachable. {do_not_use}"
+        )
+
     return (
-        f"Topic of the week: {settings.math.topic_for(date)}. Today is weekday "
+        f"Topic of the week: {topic}. Today is weekday "
         f"{date.weekday()} (0=Mon: ramp difficulty through the week, but vary sub-skills "
-        f"to teach the topic broadly). My rating: {rating}. Tier anchors: "
+        f"to teach the topic broadly; Saturday is a separate showcase day and is not "
+        f"part of this ramp). My rating: {rating}. Tier anchors: "
         f"{json.dumps(settings.math.anchors)}. Pick a tier whose anchor gives me a "
-        f"30-70% solve chance, adjusted for weekday. Must be from a real past "
-        f"competition. Do NOT use any of these already-seen problems: "
-        f"{json.dumps(seen[-SEEN_WINDOW:])}"
+        f"30-70% solve chance, adjusted for weekday. {do_not_use}"
     )
 
 
@@ -218,6 +261,11 @@ def _from_batch(
     The ladder is ordered by the generator from easiest to hardest and each
     rung carries its own tier, so "closest to the rating" is a lookup against
     the configured anchors rather than anything the generator decided.
+
+    On a showcase day the rule inverts to "hardest rung". The overnight task is
+    told to make Saturday's ladder classics rather than a difficulty spread, so
+    picking the rung nearest the rating would take the tamest of them -- which
+    is precisely the selection the day exists to stop making.
     """
     path = settings.path("batches") / f"{date.isoformat()}.json"
     if not path.exists():
@@ -248,8 +296,13 @@ def _from_batch(
         # substitute the default tier and log the substitution.
         return abs(anchor - rating) if anchor is not None else 10_000
 
+    def hardest(p: Any) -> int:
+        return settings.math.anchors.get(p.tier, 0)
+
+    pick = max(usable, key=hardest) if is_showcase(date) else min(usable, key=distance)
+
     try:
-        return to_problem(min(usable, key=distance).model_dump(), settings, BATCHED, date)
+        return to_problem(pick.model_dump(), settings, BATCHED, date)
     except ContentError:
         log.exception("batch at %s did not validate; falling through to the pool", path)
         return None
@@ -408,14 +461,19 @@ def grade_sentences(
     Takes `date` only so the grading can be attributed to a day in the cost
     log -- it plays no part in the grading itself.
     """
+    n = len(sentences)
     raw = _json_generation(
         settings,
         kind="word-grade",
         date=date,
         system="You grade vocabulary practice. Respond ONLY JSON: "
-        '{"distinct":bool,"per_sentence":[{"ok":bool,"note":"short"} x5],'
+        f'{{"distinct":bool,"per_sentence":[{{"ok":bool,"note":"short"}} x{n}],'
         '"verdict":"one line"}',
-        user=f'Word: "{word}". Are these five sentences each correct usages AND semantically '
+        # Counted from the list rather than written into the string. The
+        # sentence count is a number that has already changed once, and the
+        # grader returning five verdicts for two sentences is the kind of
+        # mismatch that validates fine and reads as nonsense.
+        user=f'Word: "{word}". Are these {n} sentences each correct usages AND semantically '
         f"distinct from each other (different senses/contexts, not rewordings)?\n"
         + "\n".join(f"{i + 1}. {s}" for i, s in enumerate(sentences)),
     )

@@ -58,7 +58,7 @@ paying for problems nobody will see."""
 # --- context ---------------------------------------------------------------
 
 
-def suggested_tiers(settings: Settings, rating: int) -> list[str]:
+def suggested_tiers(settings: Settings, rating: int, *, showcase: bool = False) -> list[str]:
     """`LADDER` tiers bracketing the current rating, easiest first.
 
     The tier→difficulty policy stays in code. The generator is told which
@@ -66,10 +66,17 @@ def suggested_tiers(settings: Settings, rating: int) -> list[str]:
     out, for the same reason the live prompt constrains it to a tier name
     instead of a number: a model's idea of "1528-appropriate" drifts between
     versions, and the elo history has to stay comparable across years.
+
+    A showcase day gets the top of the table instead, and the rating plays no
+    part. Saturday is not selecting for difficulty at all -- it is selecting
+    for famous problems, which mostly live up there, and a window centred on
+    the rating would quietly exclude them.
     """
     by_anchor = sorted(settings.math.anchors, key=lambda t: settings.math.anchors[t])
     if len(by_anchor) <= LADDER:
         return by_anchor
+    if showcase:
+        return by_anchor[-LADDER:]
 
     # The rung the rating sits at, then a window centred on it, clamped to
     # the ends of the table.
@@ -80,20 +87,38 @@ def suggested_tiers(settings: Settings, rating: int) -> list[str]:
     return by_anchor[start : start + LADDER]
 
 
+SHOWCASE_BRIEF = (
+    "SHOWCASE DAY. Ignore the rating and ignore difficulty: every rung of today's "
+    "ladder should be a CLASSIC, BEAUTIFUL problem on the topic — famous ones, the "
+    "kind with a named trick or a one-line solution that is remembered decades "
+    "later. Pick on elegance and fame alone, and report each problem's honest tier "
+    "rather than softening it. The dashboard serves the hardest rung on this day, "
+    "so the ladder is a choice of classics, not a spread of difficulties."
+)
+"""What Saturday asks for instead of a calibrated ladder.
+
+Spelled out in the context payload rather than in the scheduled task's prompt,
+for the reason the prompt is static at all: the task says "run this and read the
+answer", so anything that depends on the date has to come back from the CLI.
+"""
+
+
 def context(settings: Settings, repo: Repository, date: dt.date) -> dict[str, Any]:
     """Everything the generator needs, as one JSON object."""
     rating = repo.current_rating("math")
     seen = sorted(repo.seen_sources())
+    showcase = content.is_showcase(date)
     return {
         "date": date.isoformat(),
         "weekday": date.strftime("%A"),
         "topic": settings.math.topic_for(date),
         "rating": rating,
         "anchors": settings.math.anchors,
-        "suggested_tiers": suggested_tiers(settings, rating),
+        "suggested_tiers": suggested_tiers(settings, rating, showcase=showcase),
         "output_path": str(batch_path(settings, date)),
         "do_not_use": seen[-content.SEEN_WINDOW :],
         "already_generated": batch_path(settings, date).exists(),
+        "showcase": SHOWCASE_BRIEF if showcase else None,
     }
 
 
@@ -107,16 +132,20 @@ def context_without_db(settings: Settings, date: dt.date, why: str) -> dict[str,
     constraint, at the cost of a rung).
     """
     seed = settings.math.anchors[settings.math.default_tier]
+    showcase = content.is_showcase(date)
     return {
         "date": date.isoformat(),
         "weekday": date.strftime("%A"),
         "topic": settings.math.topic_for(date),
         "rating": None,
         "anchors": settings.math.anchors,
-        "suggested_tiers": suggested_tiers(settings, seed),
+        "suggested_tiers": suggested_tiers(settings, seed, showcase=showcase),
         "output_path": str(batch_path(settings, date)),
         "do_not_use": [],
         "already_generated": batch_path(settings, date).exists(),
+        # Unaffected by the outage: the showcase depends on the calendar and
+        # config, both of which are still readable.
+        "showcase": SHOWCASE_BRIEF if showcase else None,
         "degraded": (
             f"could not read the database ({why}). Rating and the do-not-repeat list "
             f"are unavailable; the tier ladder is centred on the default tier instead. "

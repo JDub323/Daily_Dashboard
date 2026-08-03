@@ -132,6 +132,19 @@ class MathAttempt(Base):
     score: Score | None = None
     """NULL while open. Derived server-side from status + hints_revealed."""
 
+    minutes: int | None = Field(default=None, ge=1, le=1440)
+    """How long it took, self-reported and rounded to the minute.
+
+    Optional, and NULL on every attempt that predates the column. Timing
+    happens on a phone or a kitchen clock rather than in the dashboard -- there
+    is no start button anywhere, deliberately, because a timer running in a tab
+    is a timer that is wrong whenever you walk away from it.
+
+    Kept here rather than only in its effect: the effect is folded into the
+    rating_event's `k`, and reading a K of 36 back later tells you a bonus
+    applied but not what it was measured from. This is the input.
+    """
+
 
 # --- chess -----------------------------------------------------------------
 
@@ -163,10 +176,28 @@ class SentenceGrade(Base):
     note: str
 
 
+SENTENCES = 2
+"""How many practice sentences the word of the day asks for.
+
+Was five. Five distinct senses is a research task for most words and a
+fabrication exercise for the rest, and the fifth box is where the exercise
+stopped being about the word.
+
+The bound is *not* enforced on the stored models below, only on the request
+that writes them. Rows written when this was five are still in the table, and a
+model that insisted on exactly two would make every one of them unreadable --
+turning a copy edit into a migration, for a number that is allowed to change
+again.
+"""
+
+MAX_SENTENCES = 5
+"""The widest this has ever been, and so what a stored row may still contain."""
+
+
 class WordGrade(Base):
     distinct: bool
     verdict: str
-    per_sentence: list[SentenceGrade] = Field(min_length=5, max_length=5)
+    per_sentence: list[SentenceGrade] = Field(min_length=1, max_length=MAX_SENTENCES)
 
 
 class WordOfDay(Base):
@@ -174,7 +205,7 @@ class WordOfDay(Base):
     word: str
     pos: str
     definition: str
-    sentences: list[str] = Field(default_factory=list, max_length=5)
+    sentences: list[str] = Field(default_factory=list, max_length=MAX_SENTENCES)
     grade: WordGrade | None = None
 
 

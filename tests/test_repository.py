@@ -12,6 +12,7 @@ import datetime as dt
 import pytest
 
 from dashboard import scoring
+from dashboard.db import Database, Repository
 from dashboard.db.schema import SCHEMA_VERSION, migrate
 from dashboard.models import domain as d
 from dashboard.models.common import (
@@ -444,3 +445,79 @@ def test_perfect_days_are_only_the_complete_ones(repo):
     repo.set_completion(TODAY, 8, 8)
     repo.set_completion(TODAY - dt.timedelta(days=1), 7, 8)
     assert repo.perfect_days() == [TODAY]
+
+
+# --- the speed bonus, end to end -------------------------------------------
+
+PARS = {"putnam-early": 40}
+
+
+def test_the_minutes_are_stored_on_the_attempt(repo, problem):
+    repo.open_math_attempt(TODAY, problem.id)
+    attempt, _ = repo.finish_math(TODAY, MathOutcome.solved, 20, PARS)
+    assert attempt.minutes == 20
+    assert repo.math_attempt(TODAY).minutes == 20
+
+
+def test_a_failure_does_not_keep_a_time(repo, problem):
+    """Time is only read on a solve, so storing it on a failure would leave a
+    number on the row that nothing consults and that reads as though it once
+    mattered."""
+    repo.open_math_attempt(TODAY, problem.id)
+    attempt, event = repo.finish_math(TODAY, MathOutcome.failed, 5, PARS)
+    assert attempt.minutes is None
+    assert event.k == scoring.k_factor(0)
+
+
+def test_a_quick_solve_beats_a_slow_one_on_the_same_problem(repo, problem, settings):
+    """Two independent databases so the two solves start from the same rating.
+    Same problem, same hints, same anchor -- only the clock differs."""
+    repo.open_math_attempt(TODAY, problem.id)
+    _, quick = repo.finish_math(TODAY, MathOutcome.solved, 20, PARS)
+
+    slow_db = Database(settings.path("db").parent / "slow.db")
+    slow_repo = Repository(slow_db.conn)
+    slow_problem = slow_repo.add_problem(problem.model_copy(update={"id": None}))
+    slow_repo.open_math_attempt(TODAY, slow_problem.id)
+    _, slow = slow_repo.finish_math(TODAY, MathOutcome.solved, 180, PARS)
+    slow_db.close()
+
+    assert quick.rating_before == slow.rating_before
+    assert quick.rating_after > slow.rating_after
+    assert quick.k > slow.k
+
+
+def test_the_pooled_and_area_rows_take_the_same_multiplier(repo, settings):
+    """Two readings of one event. A bonus that applied to one but not the
+    other would leave them disagreeing about what happened."""
+    problem = repo.add_problem(
+        d.MathProblem(
+            source="Putnam 2001 A1",
+            tier="putnam-early",
+            anchor=1750,
+            statement="s",
+            answer="a",
+            hints=["1", "2", "3"],
+            model="test",
+            generated_at=dt.datetime(2026, 7, 26, 9, 0),
+            topic="generating functions",
+            area="combinatorics",
+        )
+    )
+    repo.open_math_attempt(TODAY, problem.id)
+    repo.finish_math(TODAY, MathOutcome.solved, 20, PARS)
+
+    rows = repo.conn.execute(
+        "SELECT area, k FROM rating_event WHERE track = 'math' ORDER BY id"
+    ).fetchall()
+    assert [r["area"] for r in rows] == [None, "combinatorics"]
+    assert rows[0]["k"] == rows[1]["k"] > scoring.k_factor(0)
+
+
+def test_an_untimed_solve_scores_exactly_what_it_always_did(repo, problem):
+    """The compatibility guarantee: this feature must be invisible until you
+    use it."""
+    repo.open_math_attempt(TODAY, problem.id)
+    _, event = repo.finish_math(TODAY, MathOutcome.solved, None, PARS)
+    assert event.k == scoring.k_factor(0)
+    assert event.rating_after == scoring.elo_update(1500, 1750, 1.0, 0)

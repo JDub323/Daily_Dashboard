@@ -19,6 +19,7 @@ nothing left to do.
 from __future__ import annotations
 
 import datetime as dt
+from typing import Annotated
 
 from pydantic import Field, model_validator
 
@@ -32,6 +33,8 @@ from .common import (
     Url,
 )
 from .domain import (
+    MAX_SENTENCES,
+    SENTENCES,
     DayCompletion,
     MathProblem,
     Paper,
@@ -59,10 +62,19 @@ class MathHintRequest(DateBody):
     pass
 
 
+Minutes = Annotated[int | None, Field(default=None, ge=1, le=1440)]
+"""Self-reported solve time, to the minute. See `domain.MathAttempt.minutes`."""
+
+
 class MathFinishRequest(DateBody):
     outcome: MathOutcome
     """The client reports what happened; the server derives the score from
     hints_revealed and applies the elo update in one transaction."""
+
+    minutes: Minutes = None
+    """Optional. Read only on a `solved` outcome -- a failure scores zero
+    whether it took three minutes or two hours, so the server does not store a
+    time it would then have to explain having ignored."""
 
 
 class MathLateRequest(DateBody):
@@ -72,6 +84,7 @@ class MathLateRequest(DateBody):
 
     target: dt.date
     outcome: MathOutcome
+    minutes: Minutes = None
 
 
 class ChessNewRequest(DateBody):
@@ -87,16 +100,21 @@ class WordTodayRequest(DateBody):
 
 
 class WordSentencesRequest(DateBody):
-    """Autosave of the five boxes, without grading."""
+    """Autosave of the boxes, without grading.
 
-    sentences: list[str] = Field(max_length=5)
+    Bounded by `MAX_SENTENCES` rather than by `SENTENCES`: this is the autosave
+    a tab left open from before the count changed will still be firing, and
+    rejecting it would lose typing to a number that is none of its business.
+    """
+
+    sentences: list[str] = Field(max_length=MAX_SENTENCES)
 
 
 class WordCheckRequest(DateBody):
     word: str = Field(min_length=1)
-    sentences: list[str] = Field(min_length=5, max_length=5)
-    """The "need all five" rule moves out of a client-side `if` and into the
-    contract. Previously a short list was a 500."""
+    sentences: list[str] = Field(min_length=SENTENCES, max_length=SENTENCES)
+    """The "need all of them" rule lives in the contract rather than in a
+    client-side `if`. Previously a short list was a 500."""
 
 
 class CalendarAddRequest(Base):
@@ -229,6 +247,20 @@ class MathPanel(Base):
     previously the whole hint list shipped to the client and was merely not
     rendered."""
 
+    minutes: int | None = None
+    """What was submitted, once the day is closed."""
+
+    par_minutes: int | None = None
+    """The reference time for this problem's tier, so the panel can price the
+    minutes box as you type it.
+
+    Sent rather than derived in the browser for the same reason
+    `late_score_if_solved` is: the curve lives in one place. Offering a bonus
+    without saying what the number in the box is worth is asking for a
+    self-report with the price hidden, which is the one thing that makes a
+    self-report worth less than nothing.
+    """
+
 
 class MathArchiveEntry(Base):
     """One past day, for the archive.
@@ -246,6 +278,8 @@ class MathArchiveEntry(Base):
     status: str
     score: Score | None = None
     hints_revealed: int = 0
+    minutes: int | None = None
+    par_minutes: int | None = None
     delta: int | None = None
     """Net pooled rating change on that date, summed across its rows."""
 

@@ -3,7 +3,9 @@ import { el, mount } from "../dom.js";
 import { put, store } from "../store.js";
 import { openModal } from "../ui.js";
 
-const SENTENCES = 5;
+const SENTENCES = 2;
+/** Must match `domain.SENTENCES` — the server's WordCheckRequest requires
+ * exactly this many, so a mismatch here is a 422 rather than a short list. */
 
 export function openWordModal() {
   openModal("word of the day", (body) => draw(body));
@@ -84,7 +86,7 @@ function drawEditor(body, word) {
     onclick: async () => {
       const sentences = values();
       if (sentences.some((s) => !s)) {
-        message.textContent = "need all five";
+        message.textContent = `need all ${SENTENCES}`;
         return;
       }
       check.disabled = true;
@@ -103,7 +105,7 @@ function drawEditor(body, word) {
   mount(body,
     el("div.big.gold", null, word.word, " ", el("span.faint", { text: word.pos })),
     el("div.dim", { text: word.definition }),
-    el("div.faint.gap", { text: "write five semantically distinct sentences:" }),
+    el("div.faint.gap", { text: `write ${SENTENCES} semantically distinct sentences:` }),
     ...inputs,
     el("div.row", null, check, message),
   );

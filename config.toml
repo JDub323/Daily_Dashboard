@@ -132,6 +132,29 @@ amc = 1100
 "olympiad-hard" = 1900
 "putnam-late" = 2050
 
+# Reference time per tier, in minutes. Optional to submit; when you do give a
+# time, it scales how far the result moves your rating.
+#
+# The pinned point is 1.5x, not 1x: taking 30 minutes on a 20-minute
+# aime-late problem is worth exactly what an untimed solve is worth. Faster
+# than that pays, up to 1.5x at about 0.76x the reference time; slower decays
+# smoothly to a floor of 0.66x, reached at 3x. Only a result that *gains*
+# rating is scaled -- see scoring.timed_elo.
+#
+# So these are not "how long it should take you". They are the scale the
+# curve is measured against, and the honest way to set one is to put it where
+# you would call a solve unremarkable. Edit freely: unlike the elo constants
+# in scoring.py this reinterprets nothing, because the K actually applied is
+# frozen onto every rating_event as it is written.
+[math.par_minutes]
+amc = 10
+"aime-early" = 15
+"aime-late" = 20
+"olympiad-easy" = 30
+"putnam-early" = 40
+"olympiad-hard" = 45
+"putnam-late" = 60
+
 # One theorem a day, sampled from the deck you curate. The weight of a card is
 # (days since it last appeared - cooldown_days) ** recency_exponent, and zero
 # through the cooldown -- so yesterday's theorem cannot be today's.

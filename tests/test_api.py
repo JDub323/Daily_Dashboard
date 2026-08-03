@@ -246,13 +246,21 @@ def test_word_today_is_paid_for_once(client, monkeypatch, repo):
     assert len(calls) == 1  # the second call read the row instead of generating
 
 
-def test_the_need_all_five_rule_lives_in_the_contract(client):
+def test_the_need_all_of_them_rule_lives_in_the_contract(client):
     """Previously a short list was a 500 from a client-side `if` being
-    skipped."""
-    response = client.post(
-        "/api/word/check", json={"date": DATE, "word": "x", "sentences": ["a", "b"]}
-    )
-    assert response.status_code == 422
+    skipped.
+
+    Written against `domain.SENTENCES` rather than a literal, because the
+    count has changed once (five to two) and this test existing to pin the
+    *rule* is the reason it should not also pin the number.
+    """
+    short = ["a"] * (d.SENTENCES - 1)
+    long = ["a"] * (d.SENTENCES + 1)
+    for sentences in (short, long):
+        response = client.post(
+            "/api/word/check", json={"date": DATE, "word": "x", "sentences": sentences}
+        )
+        assert response.status_code == 422, sentences
 
 
 def test_sentences_autosave_without_grading(client, repo):

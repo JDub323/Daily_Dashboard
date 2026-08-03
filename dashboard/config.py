@@ -116,12 +116,45 @@ class MathSettings(Base):
     Six areas see roughly four times the traffic each.
     """
 
+    par_minutes: dict[str, int] = Field(default_factory=dict)
+    """tier -> the reference time a solve is measured against, in minutes.
+
+    Keyed by tier for the same reason `anchors` is: difficulty is already
+    expressed as a tier, and a second scale would be a second thing to keep in
+    step. Empty turns the time bonus off entirely -- `time_multiplier` returns
+    1.0 for a missing reference, so every solve scores exactly as it did
+    before the feature existed.
+    """
+
     @field_validator("anchors")
     @classmethod
     def _non_empty(cls, v: dict[str, int]) -> dict[str, int]:
         if not v:
             raise ValueError("[math.anchors] must define at least one tier")
         return v
+
+    @model_validator(mode="after")
+    def _par_minutes_are_real_tiers(self) -> MathSettings:
+        """A par for a tier that does not exist is silently dead config.
+
+        Checked in this direction only. Every key must name a tier, but not
+        every tier needs a key: a new tier added to `[math.anchors]` should
+        start out untimed rather than take the whole config down at startup,
+        and an untimed tier is a supported state, not a broken one.
+        """
+        unknown = [t for t in self.par_minutes if t not in self.anchors]
+        if unknown:
+            raise ValueError(
+                f"[math.par_minutes] names {unknown} — not tier(s) in [math.anchors] "
+                f"({sorted(self.anchors)})"
+            )
+        if any(m <= 0 for m in self.par_minutes.values()):
+            raise ValueError("[math.par_minutes] values must be positive")
+        return self
+
+    def par_for(self, tier: str) -> int | None:
+        """The reference time for a tier, or None if it has no configured one."""
+        return self.par_minutes.get(tier)
 
     @model_validator(mode="after")
     def _rotation_is_anchored_to_a_sunday(self) -> MathSettings:

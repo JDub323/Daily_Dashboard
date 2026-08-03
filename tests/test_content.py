@@ -12,6 +12,7 @@ are about what got written, not what the model said.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 import pytest
@@ -285,3 +286,85 @@ def test_the_hand_curated_pool_costs_nothing_and_says_so(settings, repo, monkeyp
     problem = content.next_problem(settings, repo, TODAY)
     assert problem.model == content.HAND_CURATED
     assert lines(settings) == []
+
+
+# --- the Saturday showcase -------------------------------------------------
+
+SATURDAY = dt.date(2026, 8, 8)
+WEDNESDAY = dt.date(2026, 8, 5)
+
+
+def test_saturday_is_the_showcase_day_and_nothing_else_is():
+    assert content.is_showcase(SATURDAY)
+    assert not any(content.is_showcase(SATURDAY + dt.timedelta(days=n)) for n in range(1, 7))
+
+
+def test_the_showcase_prompt_asks_for_fame_not_calibration(settings):
+    prompt = content._problem_prompt(settings, 1528, SATURDAY, [])
+    assert "CLASSIC, BEAUTIFUL" in prompt
+    assert "Ignore difficulty" in prompt
+    # The rating is deliberately absent: "beautiful, at about 1528" is a much
+    # smaller set than "beautiful", and usually an empty one.
+    assert "1528" not in prompt
+    assert "30-70%" not in prompt
+
+
+def test_a_weekday_prompt_still_calibrates_to_the_rating(settings):
+    prompt = content._problem_prompt(settings, 1528, WEDNESDAY, [])
+    assert "1528" in prompt
+    assert "30-70%" in prompt
+    assert "CLASSIC" not in prompt
+
+
+def test_the_showcase_still_names_the_week_topic(settings):
+    """ "Classic" is a filter on which problem, not a licence to leave the
+    syllabus -- the day is the capstone of the topic week, not an escape from
+    it."""
+    topic = settings.math.topic_for(SATURDAY)
+    assert topic in content._problem_prompt(settings, 1528, SATURDAY, [])
+
+
+def test_both_prompts_carry_the_do_not_repeat_list(settings):
+    for date in (SATURDAY, WEDNESDAY):
+        assert "Putnam 1998 B3" in content._problem_prompt(settings, 1528, date, ["Putnam 1998 B3"])
+
+
+def _batch_file(settings, date, rungs):
+    path = settings.path("batches")
+    path.mkdir(parents=True, exist_ok=True)
+    (path / f"{date.isoformat()}.json").write_text(
+        json.dumps(
+            {
+                "date": date.isoformat(),
+                "problems": [
+                    {
+                        "source": f"Source {tier}",
+                        "tier": tier,
+                        "statement": "s",
+                        "answer": "a",
+                        "hints": ["1", "2", "3"],
+                        "verified_url": "https://artofproblemsolving.com/x",
+                    }
+                    for tier in rungs
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_the_showcase_serves_the_hardest_rung_not_the_nearest(settings):
+    """Saturday's ladder is a choice of classics rather than a difficulty
+    spread, so picking the rung nearest the rating would take the tamest of
+    them -- exactly the selection the day exists to stop making."""
+    rungs = ["aime-late", "olympiad-easy", "putnam-late"]
+    _batch_file(settings, SATURDAY, rungs)
+    picked = content._from_batch(settings, SATURDAY, set(), 1500)
+    assert picked.tier == "putnam-late"
+
+
+def test_a_weekday_still_serves_the_rung_nearest_the_rating(settings):
+    rungs = ["aime-late", "olympiad-easy", "putnam-late"]
+    _batch_file(settings, WEDNESDAY, rungs)
+    picked = content._from_batch(settings, WEDNESDAY, set(), 1500)
+    assert picked.tier == "aime-late"

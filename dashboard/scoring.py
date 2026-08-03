@@ -62,7 +62,97 @@ def expected_score(rating: int, opponent: int) -> float:
 
 def elo_update(rating: int, opponent: int, score: float, n: int) -> int:
     """New rating after one result. `n` is the count of prior measured events."""
-    return _round_half_up(rating + k_factor(n) * (score - expected_score(rating, opponent)))
+    return elo_update_with_k(rating, opponent, score, k_factor(n))
+
+
+def elo_update_with_k(rating: int, opponent: int, score: float, k: int) -> int:
+    """The same update with K supplied rather than derived from `n`.
+
+    Exists because the time bonus scales K, and the scaled value is what has
+    to be written to the row: `delta == k * (score - expected)` is the property
+    that makes a rating_event re-checkable years later, and it stops being true
+    the moment the K in the column is not the K that was applied.
+    """
+    return _round_half_up(rating + k * (score - expected_score(rating, opponent)))
+
+
+# --- how long it took ------------------------------------------------------
+
+TIME_NEUTRAL = 1.5
+"""Ratio of time-taken to reference-time that neither adds nor subtracts.
+
+Not 1.0. The reference times in `[math.par_minutes]` are what the tier is
+nominally worth, and taking half again as long as that is a perfectly ordinary
+solve -- so that is where the multiplier is pinned at exactly 1x, and the
+numbers below are all measured from it.
+"""
+
+TIME_FLOOR = 0.66
+TIME_FLOOR_AT = 3.0
+"""The decline bottoms out at 0.66x, and not until three times the reference
+time. Between neutral and there it falls off smoothly rather than in steps, so
+there is no cliff to notice and no threshold to sit just inside of."""
+
+TIME_CAP = 1.5
+"""Roughly the reciprocal of the floor: the fast half of the curve can give
+back about as much as the slow half can take. Reached at ~0.76x the reference
+time, past which shaving minutes stops paying -- there is a difference between
+solving something quickly and having seen it before, and this is where the
+curve declines to guess which one happened."""
+
+TIME_EXPONENT = math.log(TIME_FLOOR) / math.log(TIME_NEUTRAL / TIME_FLOOR_AT)
+"""Derived, not chosen (~0.5995).
+
+The three numbers above are the ones with opinions in them; this is whatever
+exponent makes the curve pass through both of the points they name. Writing it
+as a literal would let someone edit `TIME_FLOOR` and silently move where the
+floor is actually reached.
+"""
+
+
+def time_multiplier(minutes: int | None, par_minutes: int | None) -> float:
+    """How much a solve is worth for having taken `minutes`.
+
+    `(TIME_NEUTRAL / ratio) ** TIME_EXPONENT`, clamped to [floor, cap]. A
+    power law rather than a line because the meaningful quantity is the *ratio*
+    -- twenty minutes over on a ten-minute problem is a different event from
+    twenty minutes over on an hour-long one, and only a ratio says so.
+
+    1.0 when either number is missing. An untimed solve is worth exactly what
+    it was worth before this existed, which is what makes the input optional in
+    practice rather than merely in the schema: forgetting to start a timer
+    costs nothing, and there is never a reason to invent a number.
+    """
+    if not minutes or not par_minutes:
+        return 1.0
+    ratio = minutes / par_minutes
+    return round(min(TIME_CAP, max(TIME_FLOOR, (TIME_NEUTRAL / ratio) ** TIME_EXPONENT)), 4)
+
+
+def timed_elo(
+    rating: int, opponent: int, score: float, n: int, multiplier: float = 1.0
+) -> tuple[int, int]:
+    """`(K applied, new rating)` for one result, with the speed bonus folded in.
+
+    The multiplier scales K, so it scales the rating change directly: solving
+    at half the reference time moves you 1.5x as far as the same solve
+    untimed, which is what "1x bonus at 1.5x time" means once you follow it
+    through to the elo.
+
+    It is applied *only when the result gains rating*, and that asymmetry is
+    load-bearing. K is symmetric -- it scales the move, not the direction -- so
+    an unguarded multiplier would make a fast three-hint solve of an easy
+    problem, which is already a net loss because 0.1 is below what you were
+    expected to score, lose you half again as much for being fast. Speed can
+    amplify what you earned; it cannot deepen a hole.
+
+    A slow solve that still gains is shrunk, which is the other half of the
+    same rule and the one the floor exists for.
+    """
+    k = k_factor(n)
+    if multiplier != 1.0 and score > expected_score(rating, opponent):
+        k = max(1, _round_half_up(k * multiplier))
+    return k, elo_update_with_k(rating, opponent, score, k)
 
 
 # --- outcome -> score ------------------------------------------------------

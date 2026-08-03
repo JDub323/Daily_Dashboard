@@ -83,6 +83,8 @@ def math_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.MathPanel
         hints_revealed=attempt.hints_revealed,
         status=attempt.status.value,
         score=attempt.score,
+        minutes=attempt.minutes,
+        par_minutes=cfg.math.par_for(problem.tier),
         # Only what has actually been revealed. The old client received all
         # three hints and merely declined to render them.
         hints_visible=problem.hints[: attempt.hints_revealed],
@@ -95,12 +97,15 @@ what "have I seen this before" reaches back for in practice — and the whole
 statement of each ships, so the payload is the reason there is a limit."""
 
 
-def math_archive(repo: Repository, today: dt.date) -> api.MathArchiveResponse:
+def math_archive(cfg: Settings, repo: Repository, today: dt.date) -> api.MathArchiveResponse:
     """Every past problem, newest first, with what it did to the rating.
 
     Read-only like everything here. Eligibility is *computed*, not stored: a
     day drops out of the window by the calendar moving, so a stored flag would
     be a fact that quietly stops being true.
+
+    `cfg` is here only for the reference times: the late-submission box takes a
+    solve time like the live panel does, and it has to be able to price it.
     """
     history = repo.math_history(ARCHIVE_LIMIT)
     deltas = repo.rating_deltas([attempt.date for attempt, _ in history])
@@ -113,6 +118,8 @@ def math_archive(repo: Repository, today: dt.date) -> api.MathArchiveResponse:
                 status=attempt.status.value,
                 score=attempt.score,
                 hints_revealed=attempt.hints_revealed,
+                minutes=attempt.minutes,
+                par_minutes=cfg.math.par_for(problem.tier),
                 delta=deltas.get(attempt.date),
                 late_eligible=attempt.date in eligible,
                 late_score_if_solved=(

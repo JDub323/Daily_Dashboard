@@ -248,3 +248,76 @@ def test_the_streak_reads_today_from_the_argument_not_the_clock():
     """`today` is passed in because the browser owns it. Computing it from the
     server's timezone is how a streak silently broke near midnight."""
     assert scoring.streak(days(0, 1), TODAY - dt.timedelta(days=1)) == 1
+
+
+# --- the speed bonus -------------------------------------------------------
+
+
+def test_the_neutral_point_is_one_and_a_half_times_the_reference():
+    """The one number that was chosen rather than derived: 1.5x pays exactly
+    what an untimed solve pays."""
+    assert scoring.time_multiplier(30, 20) == 1.0
+    assert scoring.time_multiplier(15, 10) == 1.0
+    assert scoring.time_multiplier(90, 60) == 1.0
+
+
+def test_the_floor_is_reached_at_three_times_the_reference():
+    """0.66 at 3x, and not before -- the decline is progressive, so 2x must
+    still be worth meaningfully more than the floor."""
+    assert scoring.time_multiplier(60, 20) == scoring.TIME_FLOOR
+    assert scoring.time_multiplier(40, 20) > scoring.TIME_FLOOR + 0.1
+
+
+def test_the_curve_never_leaves_its_bounds():
+    for minutes in range(1, 600):
+        m = scoring.time_multiplier(minutes, 20)
+        assert scoring.TIME_FLOOR <= m <= scoring.TIME_CAP
+
+
+def test_faster_is_always_worth_at_least_as_much_as_slower():
+    values = [scoring.time_multiplier(m, 20) for m in range(1, 400)]
+    assert values == sorted(values, reverse=True)
+
+
+def test_a_missing_time_or_reference_is_exactly_neutral():
+    """The feature is opt-in per attempt. Forgetting the timer must cost
+    nothing, and an unconfigured tier must behave as it did before."""
+    assert scoring.time_multiplier(None, 20) == 1.0
+    assert scoring.time_multiplier(12, None) == 1.0
+    assert scoring.time_multiplier(0, 20) == 1.0
+
+
+def test_the_bonus_scales_the_rating_gain():
+    """A fast solve moves you further than the same solve untimed."""
+    _, plain = scoring.timed_elo(1500, 1900, 1.0, 8)
+    _, fast = scoring.timed_elo(1500, 1900, 1.0, 8, scoring.TIME_CAP)
+    _, slow = scoring.timed_elo(1500, 1900, 1.0, 8, scoring.TIME_FLOOR)
+    assert fast > plain > slow > 1500
+
+
+def test_the_k_written_to_the_row_is_the_k_that_was_applied():
+    """`delta == k * (score - expected)` is what makes a rating_event
+    re-checkable by hand years later."""
+    k, after = scoring.timed_elo(1500, 1900, 1.0, 8, 1.5)
+    expected = scoring.expected_score(1500, 1900)
+    assert after == 1500 + scoring._round_half_up(k * (1.0 - expected))
+    assert k == scoring.k_factor(8) * 1.5
+
+
+def test_speed_never_deepens_a_loss():
+    """The guard. K is symmetric, so an unguarded multiplier would make a fast
+    three-hint solve of an easy problem -- already a net loss, because 0.1 is
+    below what a 1500 is expected to score against an 1100 -- lose half again
+    as much for having been quick."""
+    base_k, base = scoring.timed_elo(1500, 1100, 0.1, 8)
+    fast_k, fast = scoring.timed_elo(1500, 1100, 0.1, 8, scoring.TIME_CAP)
+    assert base < 1500  # the result really is a loss
+    assert (fast_k, fast) == (base_k, base)
+
+
+def test_a_slow_solve_that_still_gains_is_shrunk_not_reversed():
+    """The other half of the same rule: the floor takes a bite out of a gain,
+    it does not turn one into a loss."""
+    _, slow = scoring.timed_elo(1500, 1900, 1.0, 8, scoring.TIME_FLOOR)
+    _, plain = scoring.timed_elo(1500, 1900, 1.0, 8)
+    assert 1500 < slow < plain

@@ -2,6 +2,7 @@ import * as api from "../api.js";
 import { el, link, mount } from "../dom.js";
 import { openMathArchive } from "../modals/math.js";
 import { put, store } from "../store.js";
+import { minutesBox, priceLabel } from "../timebonus.js";
 import { typeset } from "../ui.js";
 
 /**
@@ -137,6 +138,9 @@ export default {
       const answer = answerLine(problem);
       mount(node, head, areas,
         el("div.ok", null, `done for today ✓ (${problem.source}) `, lastDelta(math.summary)),
+        math.minutes
+          ? el("div.faint.small", { text: `${math.minutes} min · ${priceLabel(math.minutes, math.par_minutes)}` })
+          : null,
         answer,
         archiveLink(),
       );
@@ -152,10 +156,17 @@ export default {
     );
     const statement = el("div.statement", { text: problem.statement });
     const answerSlot = el("div");
+    const timer = minutesBox(math.par_minutes);
 
     const finish = async (outcome, buttons) => {
       buttons.forEach((b) => (b.disabled = true));
-      const panel = put("math", await api.post("/api/math/finish", { outcome }));
+      // Sent on a failure too, and dropped server-side. The client does not
+      // get to decide which outcomes time applies to — that rule lives in one
+      // place, and it is not this one.
+      const panel = put("math", await api.post("/api/math/finish", {
+        outcome,
+        minutes: timer.value(),
+      }));
       // The statement stays on screen — you want the answer next to the
       // problem you just worked on — so the header is swapped in place rather
       // than re-rendering the panel into its "done for today" form.
@@ -169,6 +180,14 @@ export default {
           el("span.faint", { text: ` → ${panel.summary.rating}` })),
       );
       typeset(answerSlot);
+      // The box has done its job and the number is now on the record, so it
+      // stops being editable — re-typing it would suggest a resubmit, and the
+      // attempt is closed.
+      timer.node?.replaceWith(
+        panel.minutes
+          ? el("div.faint.small", { text: `${panel.minutes} min · ${priceLabel(panel.minutes, panel.par_minutes)}` })
+          : el("span"),
+      );
     };
 
     const hintButton = el("button", { text: `hint ${math.hints_revealed}/3` });
@@ -204,6 +223,7 @@ export default {
       ),
       statement,
       revealed,
+      timer.node,
       el("div.row", null, hintButton, revealAnswer, solved, failed),
       answerSlot,
       archiveLink(),

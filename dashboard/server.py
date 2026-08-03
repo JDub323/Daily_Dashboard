@@ -302,18 +302,20 @@ def _register(app: FastAPI) -> None:
     @app.post("/api/math/finish")
     def math_finish(cfg: Cfg, repo: Repo, body: api.MathFinishRequest) -> api.MathPanel:
         # Scoring and the elo update happen in one transaction inside the
-        # repository. The browser no longer does the arithmetic.
-        repo.finish_math(body.date, body.outcome)
+        # repository. The browser no longer does the arithmetic -- including
+        # the speed bonus, which is why the minutes cross the wire raw and the
+        # multiplier is never sent by the client.
+        repo.finish_math(body.date, body.outcome, body.minutes, cfg.math.par_minutes)
         return state.math_panel(cfg, repo, body.date)
 
     @app.get("/api/math/archive")
-    def math_archive(repo: Repo, date: Today) -> api.MathArchiveResponse:
+    def math_archive(cfg: Cfg, repo: Repo, date: Today) -> api.MathArchiveResponse:
         """Past problems, and which of them can still be submitted.
 
         Dated for the eligibility window, which is counted in days from today
         -- and only the browser knows which day that is.
         """
-        return state.math_archive(repo, date)
+        return state.math_archive(cfg, repo, date)
 
     @app.post("/api/math/late")
     def math_late(cfg: Cfg, repo: Repo, body: api.MathLateRequest) -> api.MathLateResponse:
@@ -323,10 +325,12 @@ def _register(app: FastAPI) -> None:
         submitted -- all three are `ValueError` from the repository, which is
         the conflict the client should be told about rather than a fault.
         """
-        repo.finish_math_late(body.date, body.target, body.outcome)
+        repo.finish_math_late(
+            body.date, body.target, body.outcome, body.minutes, cfg.math.par_minutes
+        )
         return api.MathLateResponse(
             panel=state.math_panel(cfg, repo, body.date),
-            archive=state.math_archive(repo, body.date),
+            archive=state.math_archive(cfg, repo, body.date),
         )
 
     # -- chess -------------------------------------------------------------

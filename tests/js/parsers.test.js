@@ -105,6 +105,52 @@ describe("parsePokedoku", () => {
   it("returns null without the game name", () => {
     assert.equal(parsePokedoku("✅✅❌\n✅✅✅\n❌✅✅"), null);
   });
+
+  // --- the é, and the two numbers that were one number ---------------------
+
+  it("matches the branding, which spells it PokéDoku", () => {
+    // `/pokedoku/i` does not match "PokéDoku", so a paste of the real share
+    // text parsed as nothing at all.
+    assert.notEqual(parsePokedoku("PokéDoku\n✅✅❌"), null);
+    assert.notEqual(parsePokedoku("pokédoku\n✅✅❌"), null);
+  });
+
+  it("reads the correct count from X/9 rather than counting tiles", () => {
+    const share = "PokéDoku\nScore: 8/9\nUniqueness: 137\n✅✅✅\n✅✅✅\n✅✅❌";
+    assert.equal(parsePokedoku(share).correct, 8);
+  });
+
+  it("does not mistake the 8 in 'Score: 8/9' for the uniqueness score", () => {
+    // This is what put correct == score on every stored row: the old
+    // `/score[:\s]+(\d+)/i` captured the numerator and the real uniqueness
+    // rating was never recorded at all.
+    const share = "PokéDoku\nScore: 8/9\nUniqueness: 137\n✅✅✅";
+    const result = parsePokedoku(share);
+    assert.equal(result.correct, 8);
+    assert.equal(result.score, 137);
+  });
+
+  it("leaves the score null rather than storing the correct count twice", () => {
+    assert.equal(parsePokedoku("PokéDoku\nScore: 8/9\n✅✅❌").score, null);
+  });
+
+  it("keeps a bare 'Score: 41' as the uniqueness score", () => {
+    // The older share format had no fraction, and it still parses.
+    assert.equal(parsePokedoku("pokedoku\n✅✅❌\nScore: 41").score, 41);
+  });
+
+  it("parses a grid of tiles it has never seen before", () => {
+    // The alphabet was three glyphs wide, so any other tile silently produced
+    // `grid: []` -- which is exactly what every logged row contains.
+    assert.deepEqual(parsePokedoku("pokedoku\n🟩🟥🟩").grid, ["🟩🟥🟩"]);
+    assert.deepEqual(parsePokedoku("pokedoku\n⬜⬜⬛").grid, ["⬜⬜⬛"]);
+  });
+
+  it("counts a variation-selector tile as one tile", () => {
+    // "✔️" is two code points; measuring it as two makes a three-tile row
+    // look four wide and drops the row.
+    assert.equal(parsePokedoku("pokedoku\n✔️✔️❌").grid.length, 1);
+  });
 });
 
 describe("parseShare", () => {

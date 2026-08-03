@@ -19,6 +19,7 @@ import * as api from "../api.js";
 import { el, link, mount } from "../dom.js";
 import { rerender } from "../panel.js";
 import { put } from "../store.js";
+import { minutesBox, priceLabel } from "../timebonus.js";
 import { openModal, typeset } from "../ui.js";
 
 let cache = null;
@@ -101,6 +102,7 @@ function archiveEntry(body, entry) {
       entry.problem.area ? `${entry.problem.area} · ` : null,
       `${entry.hints_revealed}/3 hints`,
       entry.score != null ? ` · scored ${entry.score}` : null,
+      entry.minutes ? ` · ${entry.minutes} min ${priceLabel(entry.minutes, entry.par_minutes)}` : null,
     ),
     slot,
   );
@@ -144,12 +146,20 @@ function lateBox(body, entry) {
       + (revealed ? ` (${revealed} hint${revealed === 1 ? "" : "s"} already taken)` : ""),
   });
   const answer = el("div");
+  // Speed still counts on a day done late. The two questions — when you did it
+  // and how long it took — are priced separately on purpose, so a day caught up
+  // on is not charged for lateness twice.
+  const timer = minutesBox(entry.par_minutes);
 
   const submit = async (outcome, buttons) => {
     buttons.forEach((b) => (b.disabled = true));
     message.textContent = "submitting…";
     try {
-      const result = await api.post("/api/math/late", { target: entry.date, outcome });
+      const result = await api.post("/api/math/late", {
+        target: entry.date,
+        outcome,
+        minutes: timer.value(),
+      });
       // `put` refreshes the store and, through the subscription, the elo
       // chart. The math panel is *not* on that list — it updates its own
       // header in place when you finish today's problem, precisely so the
@@ -181,6 +191,7 @@ function lateBox(body, entry) {
 
   return el("div", null,
     message,
+    timer.node,
     el("div.row", null, solved, failed, reveal),
     answer,
   );

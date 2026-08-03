@@ -469,6 +469,26 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX rating_event_date ON rating_event (track, date);
         """,
     ),
+    (
+        7,
+        """
+        -- How long the problem took, self-reported in whole minutes.
+        --
+        -- ADD COLUMN rather than the 12-step rebuild, on migration 4's
+        -- reasoning: nullable, no default, nothing to backfill. NULL is not
+        -- "zero minutes" but "no time was given", which is every attempt made
+        -- before today and every one made without a timer since -- and
+        -- `time_multiplier` returns 1.0 for it, so an untimed solve scores
+        -- exactly what it scored before this column existed.
+        --
+        -- SQLite accepts a CHECK on an added column (verified, not assumed).
+        -- The upper bound is a day: this is a number typed into a box, and
+        -- the failure mode worth catching is a stray digit turning a 30 into
+        -- a 300 and quietly floor-ing a solve that deserved a bonus.
+        ALTER TABLE math_attempt ADD COLUMN minutes INTEGER
+            CHECK (minutes IS NULL OR minutes BETWEEN 1 AND 1440);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)
