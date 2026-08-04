@@ -11,6 +11,21 @@ What is left is `call()`, which always streams over the wire. Streaming is not
 a feature here, it is what keeps the socket warm through a multi-minute
 web-search run; callers who only want the text call `text()` and ignore the
 metrics. `json_call()` adds the extraction and LaTeX repair on top.
+
+On timeouts, which are subtler here than they look. `urlopen(timeout=X)` sets
+the *socket* timeout, and a socket timeout applies per blocking operation --
+so X is the longest permitted gap between two reads, not a budget for the
+whole call. That is the right shape for a stream (the API sends `ping` events
+precisely so intermediaries see traffic), but it means the value has to be
+read as "how long may this connection go completely silent before we call it
+dead", and 300s was answering a different question. A stalled request hung for
+five minutes before saying so.
+
+The same fact bites twice: the timeout governs the reads in the streaming loop
+as well as the one inside `urlopen`, and that loop used to sit outside the
+`except OSError`. A stall after the headers therefore escaped as a bare
+`TimeoutError`, missed the `LlmError` handler, and surfaced as a 500 with no
+indication that the network was at fault.
 """
 
 from __future__ import annotations
@@ -40,6 +55,25 @@ API_VERSION = "2023-06-01"
 
 class LlmError(RuntimeError):
     """Anything that stops a generation producing usable text."""
+
+
+class LlmTransportError(LlmError):
+    """The API could not be reached, or stopped answering mid-stream.
+
+    `spent` is the whole point of the type: it says whether the attempt got
+    far enough to have been billed. A connection that timed out before any
+    content arrived cost nothing and can simply be tried again; one that died
+    after three web searches and half a problem statement has already been
+    paid for, and retrying it would buy the same tokens twice and risk
+    stitching two partial generations together.
+
+    So it is not "is this error transient" that decides a retry -- a stall is
+    equally transient in both cases -- but "did this attempt produce anything".
+    """
+
+    def __init__(self, message: str, *, spent: bool) -> None:
+        super().__init__(message)
+        self.spent = spent
 
 
 class Metrics(Base):
@@ -127,6 +161,7 @@ def call(
     *,
     tools: list[dict[str, Any]] | None = None,
     max_tokens: int | None = None,
+    timeout: int | None = None,
     on_status: StatusFn = None,
     metrics: Metrics | None = None,
 ) -> tuple[str, Metrics]:
@@ -138,8 +173,14 @@ def call(
     Pass `metrics` to keep the accounting when this raises. A generation that
     fails on its third continuation has still been paid for, and a caller that
     only reads the return value logs that spend as zero.
+
+    The silence budget is picked from whether there are `tools`, rather than
+    being a per-caller argument, because search is the thing that makes a call
+    slow and every caller would otherwise have to remember which kind it was.
+    A prompt added later gets the right budget by construction.
     """
     key = _api_key()
+    budget = timeout or (settings.timeout_seconds if tools else settings.quick_timeout_seconds)
 
     def status(s: str) -> None:
         if on_status:
@@ -159,7 +200,7 @@ def call(
         if tools:
             payload["tools"] = tools
 
-        blocks, stop_reason = _stream_once(settings, key, payload, m, status)
+        blocks, stop_reason = _with_retries(settings, key, payload, m, status, budget)
 
         if stop_reason == "pause_turn":
             m.pause_continuations += 1
@@ -178,14 +219,65 @@ def call(
     raise LlmError("LLM kept pausing (too many web searches?)")
 
 
-def _stream_once(
+def _with_retries(
     settings: LlmSettings,
     key: str,
     payload: dict[str, Any],
     m: Metrics,
     status: Callable[[str], None],
+    budget: int,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """`_stream_once`, retried while the failure cost nothing.
+
+    Grading two sentences is a few seconds of work, and losing a morning's
+    word to one dropped connection is the kind of failure a person retries by
+    hand and a program should retry itself. The guard is `spent` rather than a
+    list of blessed exception types: retrying is safe exactly when the attempt
+    produced no tokens, whatever went wrong.
+
+    Retries are separate from `max_pause_continuations` on purpose. A pause is
+    the API working; this is the API not answering, and letting a flaky socket
+    eat the continuation budget would turn a network blip into "LLM kept
+    pausing", which sends you looking in the wrong place.
+
+    Sleeping here is fine: every handler in this app is a sync `def` and runs
+    on the threadpool, so this blocks one worker rather than the event loop.
+    """
+    delay = settings.retry_backoff_seconds
+
+    for attempt in range(settings.max_retries + 1):
+        try:
+            return _stream_once(key, payload, m, status, budget)
+        except LlmTransportError as e:
+            if e.spent or attempt == settings.max_retries:
+                raise
+            log.warning(
+                "%s — retrying in %.1fs (attempt %d of %d)",
+                e,
+                delay,
+                attempt + 1,
+                settings.max_retries,
+            )
+            status("the API did not answer — retrying…")
+            time.sleep(delay)
+            delay *= 2
+
+    raise AssertionError("unreachable: the loop either returns or raises")
+
+
+def _stream_once(
+    key: str,
+    payload: dict[str, Any],
+    m: Metrics,
+    status: Callable[[str], None],
+    budget: int,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """One SSE request. Accumulates content blocks and usage into `m`.
+
+    Takes the silence budget rather than the settings it came from: which of
+    the two budgets applies is `call`'s decision, made once from the presence
+    of tools, and passing the whole settings object here would let it be made
+    a second time and differently.
 
     Usage for *this* request is gathered separately and folded into `m` at the
     end, because the two reports of it have to be reconciled (`Metrics.absorb`)
@@ -206,13 +298,23 @@ def _stream_once(
     used = Metrics()
 
     try:
-        resp = urllib.request.urlopen(request, timeout=settings.timeout_seconds)
+        resp = urllib.request.urlopen(request, timeout=budget)
     except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", "replace")[:500]
+        # HTTPError *is* the response, file object and all. Read the detail for
+        # the log, then close it rather than leaving it to the collector -- it
+        # is a live socket until something does.
+        with e:
+            detail = e.read().decode("utf-8", "replace")[:500]
         log.error("Anthropic API %s: %s", e.code, detail)
+        # 429 and 5xx are the API saying "not now" rather than "not ever", and
+        # nothing was streamed, so they are worth another go. A 400 or a 401 is
+        # a bug or a bad key and will fail identically however many times it is
+        # sent.
+        if e.code == 429 or e.code >= 500:
+            raise LlmTransportError(f"Anthropic API returned {e.code}", spent=False) from e
         raise LlmError(f"Anthropic API returned {e.code}") from e
     except OSError as e:
-        raise LlmError(f"could not reach the Anthropic API: {e}") from e
+        raise LlmTransportError(f"could not reach the Anthropic API: {e}", spent=False) from e
 
     try:
         with resp:
@@ -293,6 +395,16 @@ def _stream_once(
                 elif t == "error":
                     err = ev.get("error", {})
                     raise LlmError(f"stream error: {err.get('type')}: {err.get('message')}")
+    except OSError as e:
+        # The socket timeout governs these reads too, so a stream that goes
+        # quiet lands here rather than at the `urlopen` above. Reported as
+        # transport so the caller can decide about a retry -- but `spent` is
+        # true the moment anything arrived, because those tokens are billed
+        # whether or not we got to the end of them.
+        raise LlmTransportError(
+            f"the Anthropic API stopped responding mid-stream: {e}",
+            spent=bool(blocks or cur or used.input_tokens or used.output_tokens),
+        ) from e
     finally:
         # A stream that dies halfway has still spent every token it read. Fold
         # the partial tally in on the way out so the failure is logged with its

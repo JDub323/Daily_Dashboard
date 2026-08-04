@@ -795,6 +795,26 @@ def test_an_llm_failure_is_a_502(client, monkeypatch):
     assert "ANTHROPIC_API_KEY" in response.json()["error"]
 
 
+def test_a_stalled_api_connection_is_a_502_naming_the_network(client, monkeypatch):
+    """The reported word-grading failure. A transport error is still an
+    `LlmError`, so it resolves to that handler by MRO rather than falling
+    through to the catch-all and becoming an anonymous 500 -- the panel has to
+    say the network was at fault, because that is the part you can act on."""
+    from dashboard.llm import LlmTransportError
+
+    def boom(*a, **k):
+        raise LlmTransportError(
+            "could not reach the Anthropic API: The read operation timed out", spent=False
+        )
+
+    monkeypatch.setattr(content, "grade_sentences", boom)
+    response = client.post(
+        "/api/word/check", json={"date": DATE, "word": "petrichor", "sentences": ["a", "b"]}
+    )
+    assert response.status_code == 502
+    assert "could not reach the Anthropic API" in response.json()["error"]
+
+
 def test_an_unexpected_error_does_not_leak_internals(client, monkeypatch):
     def boom(*a, **k):
         raise TypeError("something about a NoneType")

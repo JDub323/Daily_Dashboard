@@ -68,6 +68,36 @@ class LlmSettings(Base):
     model: str
     max_tokens: int = Field(default=16000, gt=0)
     timeout_seconds: int = Field(default=300, gt=0)
+    """Silence budget for a call that can run web searches.
+
+    Not a budget for the whole call: it is handed to `urlopen`, which makes it
+    the socket timeout, which applies per blocking read. The metrics log proves
+    the difference -- a math generation with four searches took 847s wall and
+    completed fine under this "300 second timeout", because it never went 300s
+    without sending anything.
+
+    Left generous deliberately. A search-backed generation is the expensive
+    call, the gaps while the server runs a search are the longest in the app,
+    and tripping this one early throws away real money.
+    """
+
+    quick_timeout_seconds: int = Field(default=60, gt=0)
+    """The same budget for a call with no tools, which cannot be slow.
+
+    Word grading, the word itself, theorem cards and topic links have never
+    taken more than 12.2s across every line in metrics.jsonl. Sharing the
+    search-sized 300s meant a grading that stalled sat there for five minutes
+    before admitting it -- which is the failure this exists to stop. 60s is
+    roughly five times the slowest one ever observed.
+    """
+
+    max_retries: int = Field(default=2, ge=0)
+    """Extra attempts after a transport failure that cost nothing. See
+    `llm._with_retries` for why "cost nothing" is the condition."""
+
+    retry_backoff_seconds: float = Field(default=1.0, gt=0)
+    """First backoff; doubles per attempt."""
+
     max_pause_continuations: int = Field(default=6, ge=1)
     web_search_max_uses: int = Field(default=4, ge=0)
     web_search_cost_usd: float = Field(default=0.01, ge=0)

@@ -205,7 +205,7 @@ def stream(monkeypatch, *events: dict, into: llm.Metrics | None = None):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     monkeypatch.setattr(llm.urllib.request, "urlopen", lambda *a, **kw: sse(*events))
     m = into if into is not None else llm.Metrics()
-    blocks, stop_reason = llm._stream_once(settings(), "k", {}, m, lambda _s: None)
+    blocks, stop_reason = llm._stream_once("k", {}, m, lambda _s: None, 60)
     return m, blocks, stop_reason
 
 
@@ -330,3 +330,159 @@ def test_cost_of_a_failed_call_is_recorded_not_left_unknown():
         error="never reached the API",
     )
     assert unmeasured.est_cost_usd is None
+
+
+# --- timeouts and retries --------------------------------------------------
+#
+# The reported failure was "could not reach the Anthropic API: The read
+# operation timed out" on a word grading -- a call that should take seconds.
+# Two defects behind it: the timeout was read as a budget for the whole call
+# when `urlopen` makes it a *per-read* socket timeout (so a dead connection
+# hung for the full 300s), and nothing retried.
+
+
+class Stall(io.BytesIO):
+    """An SSE body that yields `before` and then times out, the way a socket
+    whose peer stopped talking does."""
+
+    def __init__(self, *before: dict):
+        super().__init__("".join(f"data: {json.dumps(e)}\n\n" for e in before).encode())
+
+    def __next__(self):
+        line = self.readline()
+        if line:
+            return line
+        raise TimeoutError("timed out")
+
+
+def responder(monkeypatch, *bodies):
+    """Serve one canned response per call, so a retry sees the next one.
+    Returns a list the attempts are appended to."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    attempts = []
+
+    def fake(*_a, **_kw):
+        body = bodies[min(len(attempts), len(bodies) - 1)]
+        attempts.append(body)
+        if isinstance(body, Exception):
+            raise body
+        return body
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(llm.time, "sleep", lambda _s: None)
+    return attempts
+
+
+DONE = (
+    {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+    {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "ok"}},
+    {"type": "content_block_stop", "index": 0},
+    {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2}},
+)
+
+
+def test_a_timeout_before_anything_streamed_is_retried_not_surfaced(monkeypatch):
+    """The reported bug. Nothing was billed, so trying again is free and is
+    what a person would do by hand."""
+    attempts = responder(monkeypatch, TimeoutError("The read operation timed out"), sse(*DONE))
+    text, _ = llm.call(settings(), "sys", "user")
+    assert text == "ok"
+    assert len(attempts) == 2
+
+
+def test_a_retry_is_not_charged_against_the_pause_budget(monkeypatch):
+    """A flaky socket must not report itself as 'LLM kept pausing', which
+    sends you looking at web search instead of the network."""
+    responder(monkeypatch, TimeoutError("timed out"), sse(*DONE))
+    text, _ = llm.call(settings(max_pause_continuations=1), "sys", "user")
+    assert text == "ok"
+
+
+def test_retries_are_bounded_and_end_as_a_clean_llm_error(monkeypatch):
+    attempts = responder(monkeypatch, TimeoutError("The read operation timed out"))
+    with pytest.raises(llm.LlmError, match="could not reach the Anthropic API"):
+        llm.call(settings(max_retries=2), "sys", "user")
+    assert len(attempts) == 3  # the first go, plus two retries
+
+
+def test_a_stall_after_content_arrived_is_not_retried(monkeypatch):
+    """Those tokens are billed. Retrying would buy them twice and risk
+    stitching two half-generations together."""
+    attempts = responder(
+        monkeypatch,
+        Stall(
+            {"type": "message_start", "message": {"usage": {"input_tokens": 900}}},
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        sse(*DONE),
+    )
+    with pytest.raises(llm.LlmTransportError) as caught:
+        llm.call(settings(), "sys", "user")
+    assert caught.value.spent is True
+    assert len(attempts) == 1
+
+
+def test_a_mid_stream_stall_is_an_llm_error_not_a_bare_timeout(monkeypatch):
+    """The socket timeout governs the streaming reads too, and that loop used
+    to sit outside the `except OSError` -- so this escaped as a raw
+    TimeoutError, missed the LlmError handler and became a 500."""
+    responder(monkeypatch, Stall())
+    with pytest.raises(llm.LlmError, match="stopped responding mid-stream"):
+        llm.call(settings(max_retries=0), "sys", "user")
+
+
+def test_what_a_stalled_generation_spent_is_still_recorded(monkeypatch):
+    """A stream that dies halfway has still paid for everything it read."""
+    responder(
+        monkeypatch,
+        Stall({"type": "message_start", "message": {"usage": {"input_tokens": 4_200}}}),
+    )
+    m = llm.Metrics()
+    with pytest.raises(llm.LlmError):
+        llm.call(settings(max_retries=0), "sys", "user", metrics=m)
+    assert m.input_tokens == 4_200
+
+
+def test_a_rate_limit_is_retried_but_a_bad_request_is_not(monkeypatch):
+    def http(code):
+        return llm.urllib.error.HTTPError("u", code, "m", {}, io.BytesIO(b"{}"))
+
+    attempts = responder(monkeypatch, http(429), sse(*DONE))
+    text, _ = llm.call(settings(), "sys", "user")
+    assert text == "ok"
+    assert len(attempts) == 2
+
+    attempts = responder(monkeypatch, http(400))
+    with pytest.raises(llm.LlmError, match="400"):
+        llm.call(settings(), "sys", "user")
+    assert len(attempts) == 1  # a malformed request fails identically every time
+
+
+def test_a_toolless_call_gets_the_short_silence_budget(monkeypatch):
+    """The reported bug in one line. Word grading has never taken over 12.2s,
+    and it was sharing the 300s budget sized for a four-search math
+    generation — so a stall sat there for five minutes."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    seen = {}
+
+    def fake(_request, timeout=None):
+        seen["timeout"] = timeout
+        return sse(*DONE)
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake)
+    cfg = settings(timeout_seconds=300, quick_timeout_seconds=60)
+
+    llm.call(cfg, "sys", "grade these")
+    assert seen["timeout"] == 60
+
+    # Search is what makes a call slow, so the presence of tools — not the
+    # caller's memory — is what buys the long budget.
+    llm.call(cfg, "sys", "find a problem", tools=llm.web_search_tool(4))
+    assert seen["timeout"] == 300
+
+    llm.call(cfg, "sys", "u", timeout=5)
+    assert seen["timeout"] == 5

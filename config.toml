@@ -23,7 +23,17 @@ static = "web"        # index.html, style.css, app/*.js, data/, vendor/katex
 [llm]
 model = "claude-sonnet-5"
 max_tokens = 16000
+# How long a connection may go *silent* — a per-read limit, not a budget for
+# the whole call, since it becomes the socket timeout. A math generation with
+# four searches has run 847s wall and finished comfortably inside the 300.
 timeout_seconds = 300
+# The same, for calls with no tools. Nothing toolless in metrics.jsonl has ever
+# taken over 12.2s, and sharing the search-sized budget above is what left a
+# stalled word grading hanging for five minutes.
+quick_timeout_seconds = 60
+# Retried only when the failed attempt was never billed — see llm._with_retries.
+max_retries = 2
+retry_backoff_seconds = 1.0
 max_pause_continuations = 6
 web_search_max_uses = 4
 web_search_cost_usd = 0.01
