@@ -35,12 +35,15 @@ from .connection import transaction
 
 SEEDS = {Track.math: scoring.MATH_SEED, Track.chess: scoring.CHESS_SEED}
 
-NOT_ATTEMPTS = (Provenance.lapsed, Provenance.unlapsed)
-"""Rows that move the rating without anybody having attempted anything.
+NOT_ATTEMPTS = (Provenance.lapsed, Provenance.unlapsed, Provenance.theorem)
+"""Rows that move the rating without anybody having attempted a *problem*.
 
 Excluded from the K-factor's `n`, because `n` measures how much evidence
-exists and neither of these is evidence. A lapse is a day nobody did; an
-unlapse is the bookkeeping that cancels one.
+exists about problem solving. A lapse is a day nobody did; an unlapse is the
+bookkeeping that cancels one; a theorem recall is evidence about something
+else. Left in, a daily recall would take K from 43 to its floor of 24 in about
+two months and keep it there -- so the rating would stop responding to the
+problems, which are the only thing it is meant to measure.
 """
 
 _ATTEMPT_ONLY = frozenset({"a_date", "problem_id", "hints_revealed", "status", "score", "minutes"})
@@ -901,14 +904,96 @@ class Repository:
         assert drawn is not None  # just inserted, or already there
         return drawn
 
-    def record_recall(self, on: dt.date, recalled: bool) -> d.TheoremDraw:
+    def record_recall(
+        self,
+        on: dt.date,
+        *,
+        explanation: str,
+        application: str,
+        grade: d.TheoremGrade,
+        area: str | None,
+    ) -> tuple[d.TheoremDraw, d.RatingEvent]:
+        """Store a written recall and rate it, in one transaction.
+
+        `WHERE ... AND explained IS NULL` is the double-submit guard, and it is
+        the guard rather than a check-then-write: two tabs posting the same
+        recall would otherwise each write a rating_event and the day would move
+        the rating twice. Zero rows matched means somebody got there first.
+
+        Rated against an opponent equal to the current rating, which is what
+        makes the delta +/-3 -- see `scoring.THEOREM_K`.
+
+        One row, against the area, where a math result writes two (pooled and
+        area, "two readings of one event"). Deliberately not two here. Because
+        the opponent is your own rating there is no equilibrium to pull the
+        number back -- a run of good recalls walks it up +3 a day and nothing
+        argues -- and a pooled row would apply that walk *every single day*, to
+        the one figure that is supposed to mean "how well do you solve
+        competition problems". Against an area it moves only on the days that
+        area's theorem comes round, which is roughly weekly, and it moves the
+        number that is actually asking the related question: how well do you
+        know this topic.
+        """
+        with transaction(self.conn):
+            row = self.conn.execute(
+                "UPDATE theorem_draw SET recalled = ?, explanation = ?, application = ?, "
+                "explained = ?, applied = ?, note = ? "
+                "WHERE date = ? AND explained IS NULL RETURNING *",
+                (
+                    int(grade.explained),
+                    explanation,
+                    application,
+                    int(grade.explained),
+                    int(grade.applied),
+                    grade.note,
+                    _iso(on),
+                ),
+            ).fetchone()
+            if row is None:
+                if self.draw(on) is None:
+                    raise LookupError(f"no theorem drawn on {_iso(on)}")
+                raise ValueError(f"the theorem drawn on {_iso(on)} was already graded")
+
+            draw = d.TheoremDraw(**dict(row))
+            card = self.card(draw.card_id)
+            assert card is not None  # a draw references a card by foreign key
+
+            score = scoring.theorem_score(grade.explained, grade.applied)
+            before = self.current_rating(Track.math, area)
+            after = scoring.elo_update_with_k(before, before, score, scoring.THEOREM_K)
+            event = self.conn.execute(
+                "INSERT INTO rating_event "
+                "(track, date, ref, opponent, score, k, rating_before, rating_after, "
+                "provenance, area) "
+                "VALUES ('math', ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+                (
+                    _iso(on),
+                    card.name,
+                    before,
+                    score,
+                    scoring.THEOREM_K,
+                    before,
+                    after,
+                    Provenance.theorem.value,
+                    area,
+                ),
+            ).fetchone()
+            return draw, d.RatingEvent(**dict(event))
+
+    def theorem_delta(self, on: dt.date) -> int | None:
+        """What that day's recall did to the rating, or None if it did not.
+
+        Read back off the event rather than recomputed from the grade: the row
+        is what happened, and a second calculation of it here would be a second
+        place for the +/-3 to be decided.
+        """
         row = self.conn.execute(
-            "UPDATE theorem_draw SET recalled = ? WHERE date = ? RETURNING *",
-            (int(recalled), _iso(on)),
+            "SELECT rating_after - rating_before FROM rating_event "
+            "WHERE track = 'math' AND date = ? AND provenance = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (_iso(on), Provenance.theorem.value),
         ).fetchone()
-        if row is None:
-            raise LookupError(f"no theorem drawn on {_iso(on)}")
-        return d.TheoremDraw(**dict(row))
+        return row[0] if row else None
 
     def recall_counts(self) -> dict[int, tuple[int, int]]:
         """`card_id -> (times seen, times recalled)` across all history.

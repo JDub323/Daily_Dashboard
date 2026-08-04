@@ -408,8 +408,12 @@ def _json_generation(
     metrics = llm.Metrics()  # owned here, so a failure is still logged with its cost
     error: str | None = None
     ok = False
+    # Resolved once and used for both the call and the log line: pricing is
+    # per model, so a record naming a different one from the request would
+    # cost out the wrong rate.
+    model = settings.llm.model_for(kind)
     try:
-        raw = llm.json_call(settings.llm, system, user, metrics=metrics)
+        raw = llm.json_call(settings.llm, system, user, model=model, metrics=metrics)
         ok = True
         return raw
     except Exception as e:
@@ -422,7 +426,7 @@ def _json_generation(
             llm.record(
                 kind=kind,
                 date=date,
-                model=settings.llm.model,
+                model=model,
                 started=started,
                 settings=settings.llm,
                 metrics=metrics,
@@ -493,6 +497,63 @@ def grade_sentences(
         return d.WordGrade(**raw)
     except TypeError as e:
         raise ContentError("the grader did not return the expected shape") from e
+
+
+def grade_theorem(
+    settings: Settings,
+    date: dt.date,
+    card: d.TheoremCard,
+    explanation: str,
+    application: str,
+) -> d.TheoremGrade:
+    """Grade a written recall against the statement already on file.
+
+    The grader is told what the theorem actually says, so this is a comparison
+    rather than a recollection of its own -- which is why it can run on a small
+    model.
+
+    The bar is deliberately stated as "in your own words". Recall of a theorem
+    is knowing what it claims, not reproducing its typography, and a grader
+    that wanted LaTeX would be marking the wrong thing: "the dot product's
+    magnitude is at most the product of the magnitudes" *is* Cauchy-Schwarz.
+    The failure it should catch is a statement that is wrong or so vague it
+    would not identify the theorem -- missing hypotheses, a flipped
+    inequality, "it's about inner products".
+
+    The application half is graded on whether the problem is one the theorem
+    genuinely bears on, named or not. "The polynomial that agreed with a
+    rational function on [0,1]" earns it; "an olympiad problem" does not.
+    """
+    areas = settings.math.area_names
+    raw = _json_generation(
+        settings,
+        kind="theorem-grade",
+        date=date,
+        system=(
+            "You grade a recalled theorem against its real statement. Be generous about "
+            "wording, phrasing and notation -- plain English is expected and LaTeX is not "
+            "wanted -- and strict about content: wrong direction, dropped hypotheses, or "
+            "so vague it could be any theorem all fail. Respond ONLY with JSON: "
+            '{"explained":bool,"applied":bool,"area":one of the listed areas,'
+            '"note":"one line, name what was missing or confirm what was right"}'
+        ),
+        user=(
+            f"Theorem: {card.name}\n"
+            f"Its actual statement: {card.statement}\n\n"
+            f"They explained it as:\n{explanation}\n\n"
+            f"They said they needed it for:\n{application}\n\n"
+            "`explained`: does their explanation state what this theorem actually claims?\n"
+            "`applied`: is that a problem this theorem genuinely applies to? They do not "
+            "have to name it -- a recognisable description of the situation counts. A "
+            "generic answer with no specifics does not.\n"
+            f"`area`: which of these the theorem belongs to -- {', '.join(areas)}. "
+            "Pick the single best fit."
+        ),
+    )
+    try:
+        return d.TheoremGrade(**raw)
+    except TypeError as e:
+        raise ContentError("the theorem grader did not return the expected shape") from e
 
 
 # --- theorem cards ---------------------------------------------------------

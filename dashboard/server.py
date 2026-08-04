@@ -441,8 +441,44 @@ def _register(app: FastAPI) -> None:
         return state.theorems_panel(repo, body.date)
 
     @app.post("/api/theorem/recall")
-    def theorem_recall(repo: Repo, body: api.TheoremRecallRequest) -> api.TheoremsPanel:
-        repo.record_recall(body.date, body.recalled)
+    def theorem_recall(cfg: Cfg, repo: Repo, body: api.TheoremRecallRequest) -> api.TheoremsPanel:
+        """Grade a written recall, and let it move the area rating.
+
+        The grading happens before the transaction rather than inside it: it is
+        a network call of a few seconds, and holding SQLite's write lock across
+        one would block every other write in the app for its duration. The
+        double-submit guard is in the UPDATE's WHERE clause, so the worst a
+        concurrent second post can do is pay for a grading whose result is then
+        rejected -- which costs a fraction of a cent and cannot corrupt
+        anything.
+        """
+        drawn = repo.draw(body.date)
+        if drawn is None:
+            raise LookupError(f"no theorem drawn on {body.date}")
+        if drawn.explained is not None:
+            raise ValueError(f"the theorem drawn on {body.date} was already graded")
+
+        card = repo.card(drawn.card_id)
+        if card is None:
+            raise LookupError(f"theorem card {drawn.card_id} is missing")
+
+        grade = content.grade_theorem(cfg, body.date, card, body.explanation, body.application)
+
+        # The grader is asked which area the theorem belongs to, but its answer
+        # is checked rather than trusted -- it is a string from a model, and an
+        # invented area would open a rating bucket nothing else ever writes to.
+        # Falling back to matching the card's own topic, then to pooled.
+        area = grade.area if grade.area in cfg.math.area_names else None
+        if area is None:
+            area = cfg.math.area_for_topic(card.topic)
+
+        repo.record_recall(
+            body.date,
+            explanation=body.explanation,
+            application=body.application,
+            grade=grade,
+            area=area,
+        )
         return state.theorems_panel(repo, body.date)
 
     @app.post("/api/theorem/archive")

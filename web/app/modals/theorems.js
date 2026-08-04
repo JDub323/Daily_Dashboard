@@ -100,7 +100,12 @@ function drawArchive(body) {
 /** One row: meta always visible, statement behind a disclosure. */
 function archiveEntry(body, entry) {
   const card = entry.card;
-  const statement = el("div.statement", { text: card.statement });
+  // Today's card arrives with an empty statement until the recall is graded —
+  // the server withholds it rather than trusting this list not to show it. Say
+  // so, or the one blank card reads as a broken row.
+  const statement = card.statement
+    ? el("div.statement", { text: card.statement })
+    : el("div.faint.statement", { text: "today's card — answer the recall to see it" });
 
   // Lives in the details body, not the summary, so it needs no guard against
   // toggling the disclosure -- only a summary click does that. Retiring

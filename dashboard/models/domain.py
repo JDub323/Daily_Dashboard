@@ -273,8 +273,30 @@ class TheoremCard(Base):
     archived: bool = False
 
 
+class TheoremGrade(Base):
+    """What the grader made of a written recall."""
+
+    explained: bool
+    applied: bool
+    note: str
+    """One line back to you -- what was missing, or what was right. The half
+    that failed is worth naming, since "0" on its own teaches nothing."""
+
+    area: str | None = None
+    """Which rating bucket this theorem belongs to, chosen by the grader from
+    the known list.
+
+    Asked for rather than parsed out of the card's `topic`, because a card's
+    topic is whatever the generation that wrote it felt like saying -- one in
+    the deck reads "Combinatorics / Generating Functions (Complex Analysis
+    applications in competition mathematics)". The grader is already reading
+    the statement and the list is six words long, so this costs nothing and is
+    right far more often than string matching. Validated against the real list
+    on the way in; an unrecognised answer falls back to matching."""
+
+
 class TheoremDraw(Base):
-    """The day's theorem, and whether you say you remembered it.
+    """The day's theorem, what you wrote about it, and how it graded.
 
     Append-only and keyed by date, so it is both the record and the schedule:
     `days since last appeared` is a query over this table, not a stored
@@ -285,9 +307,29 @@ class TheoremDraw(Base):
     card_id: int
 
     recalled: bool | None = None
-    """NULL until the self-check. Deliberately not defaulted to False -- "you
+    """NULL until it is graded. Deliberately not defaulted to False -- "you
     have not answered yet" and "you missed it" are different days, and only
-    the second one is a data point."""
+    the second one is a data point.
+
+    Set from `explained` rather than from the pair, so it goes on meaning what
+    it has always meant: did you know the theorem. The archive's "recalled 3x"
+    therefore still counts the same thing it counted before the answer became
+    two-part, and the application half is kept separately rather than folded
+    into a number whose history would then be measuring two different things.
+    """
+
+    explanation: str | None = None
+    """The theorem in your own words. NULL on every draw before migration 9,
+    and on a draw not yet answered."""
+
+    application: str | None = None
+    """A problem you needed it for. Not required to name it -- "the polynomial
+    that agreed with a rational function on [0,1]" is the point, not a
+    citation."""
+
+    explained: bool | None = None
+    applied: bool | None = None
+    note: str | None = None
 
 
 # --- papers ----------------------------------------------------------------

@@ -19,6 +19,7 @@ from . import scoring
 from .config import Settings
 from .db.repository import Repository
 from .models import api
+from .models import domain as d
 from .models.common import Game, HealthMetric, MathOutcome, Track
 
 HISTORY_LIMIT = 40
@@ -178,18 +179,50 @@ def theorems_panel(repo: Repository, today: dt.date) -> api.TheoremsPanel:
     drawn = repo.draw(today)
     last = repo.last_drawn()
     counts = repo.recall_counts()
+    graded = drawn is not None and drawn.explained is not None
+
+    # [Invariant] Today's statement does not cross the wire until the recall
+    # has been graded. The old panel shipped it with the draw and left the
+    # client to keep it hidden behind a reveal button, which meant the answer
+    # was in the page the whole time you were being asked to recall it -- the
+    # same mistake `MathPanel.hints_visible` exists to avoid.
+    #
+    # Applied to the deck as well as to `today`, and that is the half that is
+    # easy to miss: the deck ships every card in full to feed the archive, so
+    # withholding it from one field and sending it in the other would leave
+    # the answer one click away and the invariant only apparently true.
+    # Blanked rather than omitted so the payload's shape does not change with
+    # the day's state; the archive says why the one card is empty.
+    def shown(card: d.TheoremCard) -> d.TheoremCard:
+        hidden = drawn is not None and not graded and card.id == drawn.card_id
+        return card.model_copy(update={"statement": ""}) if hidden else card
+
     deck = [
         api.TheoremDeckEntry(
-            card=card,
+            card=shown(card),
             days_since=(today - last[card.id]).days if card.id in last else None,
             seen=counts.get(card.id, (0, 0))[0],
             recalled=counts.get(card.id, (0, 0))[1],
         )
         for card in repo.deck(include_archived=True)
     ]
+    card = shown(repo.card(drawn.card_id)) if drawn else None
+
+    written = None
+    if drawn is not None and graded:
+        written = api.TheoremWritten(
+            explanation=drawn.explanation or "",
+            application=drawn.application or "",
+            explained=bool(drawn.explained),
+            applied=bool(drawn.applied),
+            note=drawn.note or "",
+        )
+
     return api.TheoremsPanel(
-        today=repo.card(drawn.card_id) if drawn else None,
+        today=card,
         recalled=drawn.recalled if drawn else None,
+        written=written,
+        delta=repo.theorem_delta(drawn.date) if graded and drawn else None,
         deck=deck,
         deck_size=repo.deck_size(),
     )

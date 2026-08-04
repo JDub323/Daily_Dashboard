@@ -154,7 +154,22 @@ class TheoremAddRequest(DateBody):
 
 
 class TheoremRecallRequest(DateBody):
-    recalled: bool
+    """The written recall: the theorem, and somewhere you needed it.
+
+    Bounded generously at both ends. The floor stops an empty box being posted
+    as an answer and graded as a miss; the ceiling is a sanity limit, not a
+    target -- the worked example for Cauchy-Schwarz is "the dot product's
+    magnitude is at most the product of the magnitudes", and a good answer to
+    either half is usually one sentence.
+
+    `application` is required. Half the rating rides on it and a blank is a
+    legitimate answer to give -- but it has to be given by submitting an
+    admission, not by leaving the field empty, because those two want
+    different things back from the grader.
+    """
+
+    explanation: str = Field(min_length=3, max_length=2000)
+    application: str = Field(min_length=3, max_length=2000)
 
 
 class TheoremArchiveRequest(DateBody):
@@ -339,6 +354,16 @@ class PapersPanel(Base):
     cleared_count: int = 0
 
 
+class TheoremWritten(Base):
+    """A graded recall, as the panel shows it back."""
+
+    explanation: str
+    application: str
+    explained: bool
+    applied: bool
+    note: str
+
+
 class TheoremDeckEntry(Base):
     """A card plus the two numbers that explain its odds."""
 
@@ -353,10 +378,24 @@ class TheoremDeckEntry(Base):
 class TheoremsPanel(Base):
     today: TheoremCard | None = None
     """Null until the day's draw happens, which is a GET of its own rather
-    than part of the boot payload -- see `theorem_today` in the server."""
+    than part of the boot payload -- see `theorem_today` in the server.
+
+    [Invariant] `today.statement` is blanked until the day is graded. The
+    panel used to receive the statement with the draw and merely decline to
+    render it behind a reveal button, which made "have you recalled this" a
+    question the client was trusted to ask honestly of a value it was already
+    holding. Nothing renders it early now because nothing is sent it early --
+    the same rule `MathPanel.hints_visible` follows.
+    """
 
     recalled: bool | None = None
-    """Today's self-check: null unanswered, else what you said."""
+    """Did you know the theorem: null until graded, else the `explained` half."""
+
+    written: TheoremWritten | None = None
+    """What you wrote and how it graded. Null until submitted."""
+
+    delta: int | None = None
+    """What the grade did to the area rating -- +3, 0 or -3."""
 
     deck: list[TheoremDeckEntry] = Field(default_factory=list)
     deck_size: int = 0

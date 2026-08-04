@@ -161,6 +161,7 @@ def call(
     *,
     tools: list[dict[str, Any]] | None = None,
     max_tokens: int | None = None,
+    model: str | None = None,
     timeout: int | None = None,
     on_status: StatusFn = None,
     metrics: Metrics | None = None,
@@ -191,7 +192,7 @@ def call(
 
     for _ in range(settings.max_pause_continuations):
         payload: dict[str, Any] = {
-            "model": settings.model,
+            "model": model or settings.model,
             "max_tokens": max_tokens or settings.max_tokens,
             "stream": True,
             "system": system,

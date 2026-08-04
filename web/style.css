@@ -208,6 +208,14 @@ input.minutes { width: 5.5em; flex: 0 0 auto; text-align: right; }
 .pronounce { margin: 2px 0 6px; gap: 10px; }
 .say { font-size: 11.5px; padding: 2px 8px; flex: 0 0 auto; }
 
+/* ---- theorem recall ----
+   The two answer boxes. Roomier than the app's other inputs on purpose: this
+   is the one place you write prose rather than a number or a line, and a
+   single-line box would suggest a single-line answer. */
+.recall-box { margin: 2px 0 4px; line-height: 1.5; }
+.recall-half { border-top: 1px solid var(--border-soft); padding: 7px 0 2px; }
+.recall-half > .row { margin: 0; }
+
 /* ---- theorem archive ----
    No height or overflow here: #modal already caps at 84vh and scrolls, with
    a sticky head. A second scroll container inside it would nest scrollbars

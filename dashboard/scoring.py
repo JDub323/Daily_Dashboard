@@ -27,6 +27,23 @@ K_HALFLIFE = 8
 MATH_SEED = 1500
 CHESS_SEED = 1400
 
+THEOREM_K = 6
+"""K for a graded theorem recall, chosen so the delta is exactly +/-3.
+
+Recall is rated against an opponent equal to the current rating, which makes
+the expected score exactly 0.5, which makes the delta `k * (score - 0.5)`.
+Both halves of the answer land -> score 1.0 -> +3; one -> 0.5 -> 0; neither ->
+0.0 -> -3.
+
+Worth stating why it is done this way rather than by writing +/-3 into the row
+directly. `rating_after - rating_before == k * (score - expected)` is the
+property that lets any rating_event be re-checked by hand years later, and a
+fixed delta beside a fabricated k and score would be the one row in the log
+where the arithmetic did not hold. Here the numbers are real: the opponent
+really is your own rating, the score really is the fraction you got right, and
+the +/-3 falls out.
+"""
+
 
 def _round_half_up(x: float) -> int:
     """JS `Math.round` semantics.
@@ -63,6 +80,18 @@ def expected_score(rating: int, opponent: int) -> float:
 def elo_update(rating: int, opponent: int, score: float, n: int) -> int:
     """New rating after one result. `n` is the count of prior measured events."""
     return elo_update_with_k(rating, opponent, score, k_factor(n))
+
+
+def theorem_score(explained: bool, applied: bool) -> float:
+    """Half for the statement, half for a problem you needed it on.
+
+    Two halves rather than a single verdict because they fail independently
+    and for different reasons: knowing what Cauchy-Schwarz says and remembering
+    the polynomial problem you reached for it on are separate acts of recall,
+    and a card where the first lands and the second does not is genuinely a
+    draw rather than a loss.
+    """
+    return (float(explained) + float(applied)) / 2
 
 
 def elo_update_with_k(rating: int, opponent: int, score: float, k: int) -> int:

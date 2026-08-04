@@ -13,6 +13,7 @@ import { mountAll, refreshLive, register, rerender, rerenderAll, resetCollapse }
 import calendar from "./panels/calendar.js";
 import chess from "./panels/chess.js";
 import daylog from "./panels/daylog.js";
+import deck from "./panels/deck.js";
 import { chessElo, mathElo } from "./panels/elo.js";
 import games from "./panels/games.js";
 import health from "./panels/health.js";
@@ -62,7 +63,7 @@ const PANELS = [
   // home — the checklist, then the year, then everything backward-looking
   todayPanel, activity, word, calendar, daylog, areas, archive,
   // math
-  math, theorem, mathElo,
+  math, theorem, deck, mathElo,
   // politics
   politics,
   // newsletters

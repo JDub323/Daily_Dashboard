@@ -77,6 +77,24 @@ class Provenance(StrEnum):
     `score`/`k` on the row are the lapse's own values carried over only because
     the columns are NOT NULL. Nothing reads them."""
 
+    theorem = "theorem"
+    """A graded theorem recall, scored `(explained + applied) / 2`.
+
+    Rated against an opponent equal to the current rating, so the expected
+    score is exactly 0.5 and the delta is `k * (score - 0.5)` -- with K=6 that
+    is +3, 0 or -3, which is the whole spec, expressed in the elo arithmetic
+    rather than bolted on beside it.
+
+    Real numbers, so the rows carry ratings. Excluded from `n` all the same:
+    recalling what a theorem says is a different skill from solving with it
+    under time pressure, and one row a day would drive K to its floor inside
+    two months -- after which nothing a *problem* did could move the rating
+    much. Confidence about problem solving has to be bought with problems.
+
+    Excluded from `success_rate` too, which reads "how often do you solve the
+    daily problem". Recall is not that question, and a 0.5 cannot clear its
+    threshold anyway."""
+
 
 class MathStatus(StrEnum):
     open = "open"

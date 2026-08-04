@@ -509,6 +509,86 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE word_of_day ADD COLUMN respelling TEXT;
         """,
     ),
+    (
+        9,
+        """
+        -- Theorem recall becomes something you write, and something it costs
+        -- you to get wrong.
+        --
+        -- The old answer was one bit you awarded yourself after pressing
+        -- reveal, which is not recall -- the statement was on screen before
+        -- the judgement was made. Now you write two things before anything is
+        -- revealed: the theorem in your own words, and a problem you needed it
+        -- for. An LLM grades each, and the pair moves the rating.
+        --
+        -- ADD COLUMN rather than a rebuild, as migration 7 did: every column
+        -- here is new and nullable, and SQLite allows a CHECK on an added
+        -- column. `recalled` stays and keeps its meaning -- did you know the
+        -- theorem -- so the archive's "recalled 3x" counts the same thing it
+        -- always did. It is now set from `explained` instead of by hand.
+
+        ALTER TABLE theorem_draw ADD COLUMN explanation TEXT;
+        ALTER TABLE theorem_draw ADD COLUMN application TEXT;
+        ALTER TABLE theorem_draw ADD COLUMN explained INTEGER
+            CHECK (explained IS NULL OR explained IN (0, 1));
+        ALTER TABLE theorem_draw ADD COLUMN applied INTEGER
+            CHECK (applied IS NULL OR applied IN (0, 1));
+        ALTER TABLE theorem_draw ADD COLUMN note TEXT;
+
+        -- A sixth provenance, so another CHECK rebuild of rating_event -- the
+        -- same dance migrations 2 and 6 did, copying every column verbatim by
+        -- explicit list. All three indexes come back.
+        --
+        --   'theorem'  a recall result, scored (explained + applied) / 2
+        --
+        -- It is in NOT_ATTEMPTS on the Python side, and that is the whole
+        -- reason it needs its own name rather than riding in as 'measured'.
+        -- The rating change is real, so unlike 'reconstructed' these rows
+        -- carry ratings. What they are not is evidence about *problem
+        -- solving*: remembering what Cauchy-Schwarz says is a different skill
+        -- from using it under time pressure, and letting a daily recall count
+        -- toward `n` would collapse K -- 96/(1 + n/8) reaches its floor in
+        -- about two months at one row a day -- so a year of theorem cards
+        -- would quietly stop math results from moving the rating at all.
+        -- Confidence in a problem-solving rating has to be bought with
+        -- problems.
+
+        CREATE TABLE rating_event_v4 (
+            id             INTEGER PRIMARY KEY,
+            track          TEXT    NOT NULL CHECK (track IN ('math', 'chess')),
+            date           TEXT    NOT NULL CHECK (date IS strftime('%Y-%m-%d', date)),
+            ref            TEXT    NOT NULL,
+            opponent       INTEGER NOT NULL CHECK (opponent BETWEEN 100 AND 4000),
+            score          REAL    NOT NULL CHECK (score BETWEEN 0.0 AND 1.0),
+            k              INTEGER NOT NULL CHECK (k >= 1),
+            rating_before  INTEGER,
+            rating_after   INTEGER,
+            provenance     TEXT    NOT NULL DEFAULT 'measured'
+                                   CHECK (provenance IN ('measured', 'reconstructed',
+                                                         'lapsed', 'late', 'unlapsed',
+                                                         'theorem')),
+            area           TEXT,
+            -- Unchanged, and still true of a theorem row: only
+            -- `reconstructed` fabricated its trajectory, so only
+            -- `reconstructed` stores NULL ratings.
+            CHECK ((rating_before IS NULL) = (rating_after IS NULL)),
+            CHECK ((rating_after IS NULL) = (provenance = 'reconstructed'))
+        ) STRICT;
+
+        INSERT INTO rating_event_v4
+            (id, track, date, ref, opponent, score, k,
+             rating_before, rating_after, provenance, area)
+        SELECT id, track, date, ref, opponent, score, k,
+               rating_before, rating_after, provenance, area
+        FROM rating_event;
+
+        DROP TABLE rating_event;
+        ALTER TABLE rating_event_v4 RENAME TO rating_event;
+        CREATE INDEX rating_event_track_id ON rating_event (track, id);
+        CREATE INDEX rating_event_area ON rating_event (track, area, id);
+        CREATE INDEX rating_event_date ON rating_event (track, date);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

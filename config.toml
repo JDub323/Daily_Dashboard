@@ -38,6 +38,13 @@ max_pause_continuations = 6
 web_search_max_uses = 4
 web_search_cost_usd = 0.01
 
+# Per-kind model overrides, keyed by the `kind` in metrics.jsonl. Grading a
+# recalled theorem is a short comparison against a statement already on file —
+# a much smaller job than writing a verified Putnam problem, and one that runs
+# every day, so the difference compounds.
+[llm.models]
+theorem-grade = "claude-haiku-4-5"
+
 # Approx $/token for the retrieval-efficiency log. Sonnet 5 is at intro
 # pricing through 2026-08-31; update when it reverts to $3/$15.
 [llm.pricing.claude-sonnet-5]

@@ -103,6 +103,9 @@ class LlmSettings(Base):
     web_search_cost_usd: float = Field(default=0.01, ge=0)
     pricing: dict[str, ModelPricing] = Field(default_factory=dict)
 
+    models: dict[str, str] = Field(default_factory=dict)
+    """Per-kind model overrides, `kind -> model`. See `model_for`."""
+
     # Fallback when a model is missing from [llm.pricing]: the standard
     # non-intro rate. Over- rather than under-reporting cost is the safe
     # direction for a log whose whole purpose is noticing spend.
@@ -110,6 +113,19 @@ class LlmSettings(Base):
 
     def price(self, model: str) -> ModelPricing:
         return self.pricing.get(model, self.FALLBACK_PRICING)
+
+    def model_for(self, kind: str) -> str:
+        """The model for one kind of generation, defaulting to `model`.
+
+        Not every call needs the same model. Deciding whether an explanation of
+        Cauchy-Schwarz says the right thing is a short judgement against a
+        statement already in hand, which is a much smaller job than writing a
+        verified Putnam problem -- and it happens every day, so the difference
+        compounds. Keyed by the same `kind` string that labels the row in
+        metrics.jsonl, so the cost log attributes it correctly with no second
+        vocabulary to keep in step.
+        """
+        return self.models.get(kind, self.model)
 
 
 def week_index(date: dt.date) -> int:
@@ -223,6 +239,38 @@ class MathSettings(Base):
     def area_for(self, date: dt.date) -> str | None:
         """The rating bucket for the week containing `date`."""
         return self.areas.get(self.topic_for(date))
+
+    def area_for_topic(self, topic: str) -> str | None:
+        """The rating bucket for a theorem card's free-text topic.
+
+        A card's `topic` was written by whichever generation created it and is
+        unconstrained, so it is matched against the known areas rather than
+        trusted to be one. Equality is not enough: a real card in the deck
+        reads "Combinatorics / Generating Functions (Complex Analysis
+        applications in competition mathematics)", which is recognisably
+        combinatorics and equal to nothing.
+
+        So: exact match, then containment, then the rotation topics. The
+        containment pass takes the longest area name first, because "number
+        theory" contains no shorter area but "algebra" sits inside plenty of
+        longer phrases, and the more specific name is the better answer.
+
+        None when nothing matches at all -- the honest answer to "which bucket
+        is this" when nothing knows. The caller prefers the grader's own
+        classification and only falls back to this.
+        """
+        wanted = topic.strip().casefold()
+        areas = self.area_names
+        for area in areas:
+            if area.casefold() == wanted:
+                return area
+        for area in sorted(areas, key=len, reverse=True):
+            if area.casefold() in wanted:
+                return area
+        for rotation_topic, area in self.areas.items():
+            if rotation_topic.casefold() in wanted:
+                return area
+        return None
 
     def topic_for(self, date: dt.date) -> str:
         """The topic for the week containing `date`.

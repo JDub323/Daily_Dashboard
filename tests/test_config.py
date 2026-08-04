@@ -170,3 +170,46 @@ def test_the_real_config_and_launch_json_agree_on_the_port():
     launch = json.loads((ROOT / ".claude" / "launch.json").read_text(encoding="utf-8"))
     ports = {c["port"] for c in launch["configurations"] if "port" in c}
     assert ports == {cfg.server.port}
+
+
+# --- mapping a theorem card onto a rating area -----------------------------
+#
+# A card's `topic` is free text from whichever generation wrote it. The one in
+# the real deck reads "Combinatorics / Generating Functions (Complex Analysis
+# applications in competition mathematics)", which is recognisably
+# combinatorics and equal to nothing at all.
+
+
+@pytest.mark.parametrize(
+    ("topic", "expected"),
+    [
+        ("combinatorics", "combinatorics"),
+        ("Combinatorics", "combinatorics"),
+        ("  Number Theory  ", "number theory"),
+        # The real card that made exact matching useless.
+        (
+            "Combinatorics / Generating Functions (Complex Analysis applications"
+            " in competition mathematics)",
+            "combinatorics",
+        ),
+        # A rotation topic rather than an area name.
+        ("generating functions", "combinatorics"),
+        ("nonsense about frogs", None),
+    ],
+)
+def test_a_free_text_topic_maps_onto_a_rating_area(topic, expected):
+    cfg = load_settings(ROOT / "config.toml")
+    assert cfg.math.area_for_topic(topic) == expected
+
+
+def test_the_longest_area_name_wins_a_containment_tie():
+    """ "algebra" sits inside plenty of longer phrases; the specific name is
+    the better answer when both are present."""
+    cfg = load_settings(ROOT / "config.toml")
+    assert cfg.math.area_for_topic("number theory via algebra") == "number theory"
+
+
+def test_a_per_kind_model_override_falls_back_to_the_default():
+    cfg = load_settings(ROOT / "config.toml").llm
+    assert cfg.model_for("theorem-grade") == "claude-haiku-4-5"
+    assert cfg.model_for("math") == cfg.model

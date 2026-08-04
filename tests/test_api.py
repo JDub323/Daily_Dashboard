@@ -14,6 +14,7 @@ import pytest
 
 from dashboard import content, feeds
 from dashboard.models import domain as d
+from dashboard.models.common import Track
 
 from .conftest import TODAY
 
@@ -549,9 +550,9 @@ def test_an_unknown_queue_action_is_rejected(client):
 # --- theorems --------------------------------------------------------------
 
 
-def _card(repo, name: str, added: dt.date = TODAY) -> d.TheoremCard:
+def _card(repo, name: str, added: dt.date = TODAY, topic: str = "combinatorics") -> d.TheoremCard:
     return repo.add_card(
-        d.TheoremCard(name=name, statement=f"the statement of {name}", topic="gf", added=added)
+        d.TheoremCard(name=name, statement=f"the statement of {name}", topic=topic, added=added)
     )
 
 
@@ -610,21 +611,115 @@ def test_an_archived_card_is_never_drawn(client, repo):
     assert len(panel["deck"]) == 2  # archived cards stay visible in the deck list
 
 
-def test_the_self_check_records_and_is_reported_back(client, repo):
+def _grader(monkeypatch, explained: bool, applied: bool, note: str = "ok"):
+    monkeypatch.setattr(
+        content,
+        "grade_theorem",
+        lambda *a, **k: d.TheoremGrade(explained=explained, applied=applied, note=note),
+    )
+
+
+ANSWER = {
+    "explanation": "the dot product is at most the product of the norms",
+    "application": "the polynomial that agreed with a rational function on [0,1]",
+}
+
+
+def test_a_written_recall_is_graded_and_reported_back(client, repo, monkeypatch):
     _card(repo, "a")
     client.get("/api/theorem/today", params={"date": DATE})
+    _grader(monkeypatch, explained=True, applied=False, note="right, but the problem is vague")
 
     assert client.get("/api/state", params={"date": DATE}).json()["theorems"]["recalled"] is None
-    panel = client.post("/api/theorem/recall", json={"date": DATE, "recalled": False}).json()
-    assert panel["recalled"] is False
+    panel = client.post("/api/theorem/recall", json={"date": DATE, **ANSWER}).json()
+
+    # `recalled` tracks the theorem half, so the deck's tally goes on counting
+    # what it always counted.
+    assert panel["recalled"] is True
+    assert panel["written"]["explained"] is True
+    assert panel["written"]["applied"] is False
+    assert panel["written"]["note"] == "right, but the problem is vague"
     assert panel["deck"][0]["seen"] == 1
-    assert panel["deck"][0]["recalled"] == 0
+    assert panel["deck"][0]["recalled"] == 1
+
+
+@pytest.mark.parametrize(
+    ("explained", "applied", "delta"),
+    [(True, True, 3), (True, False, 0), (False, True, 0), (False, False, -3)],
+)
+def test_a_grade_moves_the_rating_by_exactly_three(
+    client, repo, monkeypatch, explained, applied, delta
+):
+    """Half each, so both halves is +3, one is a draw, neither is -3. The
+    number falls out of K=6 against an opponent equal to your own rating."""
+    _card(repo, "a")
+    client.get("/api/theorem/today", params={"date": DATE})
+    _grader(monkeypatch, explained=explained, applied=applied)
+
+    before = repo.current_rating(Track.math, "combinatorics")
+    panel = client.post("/api/theorem/recall", json={"date": DATE, **ANSWER}).json()
+
+    assert panel["delta"] == delta
+    assert repo.current_rating(Track.math, "combinatorics") == before + delta
+
+
+def test_a_recall_does_not_touch_the_pooled_rating_or_its_k(client, repo, monkeypatch):
+    """One row, against the area. A pooled row would walk the headline rating
+    +3 a day with nothing to pull it back, and count as evidence about problem
+    solving, which it is not."""
+    _card(repo, "a")
+    client.get("/api/theorem/today", params={"date": DATE})
+    _grader(monkeypatch, explained=True, applied=True)
+
+    pooled = repo.current_rating(Track.math)
+    n = repo.event_count(Track.math)
+    n_area = repo.event_count(Track.math, "combinatorics")
+
+    client.post("/api/theorem/recall", json={"date": DATE, **ANSWER})
+
+    assert repo.current_rating(Track.math) == pooled
+    assert repo.event_count(Track.math) == n
+    # Not evidence about problem solving in its own area either: left in, one
+    # row a day would drive that area's K to the floor within two months.
+    assert repo.event_count(Track.math, "combinatorics") == n_area
+
+
+def test_the_statement_is_not_sent_until_the_recall_is_graded(client, repo, monkeypatch):
+    """The answer must not be in the page while the question is being asked.
+    The old panel shipped it and trusted the client to hide it."""
+    _card(repo, "a")
+    drawn = client.get("/api/theorem/today", params={"date": DATE}).json()
+    assert drawn["today"]["statement"] == ""
+
+    _grader(monkeypatch, explained=True, applied=True)
+    graded = client.post("/api/theorem/recall", json={"date": DATE, **ANSWER}).json()
+    assert graded["today"]["statement"] == "the statement of a"
+
+
+def test_a_second_submission_is_a_conflict_not_a_second_rating(client, repo, monkeypatch):
+    _card(repo, "a")
+    client.get("/api/theorem/today", params={"date": DATE})
+    _grader(monkeypatch, explained=True, applied=True)
+
+    client.post("/api/theorem/recall", json={"date": DATE, **ANSWER})
+    rated = repo.current_rating(Track.math, "combinatorics")
+
+    again = client.post("/api/theorem/recall", json={"date": DATE, **ANSWER})
+    assert again.status_code == 409
+    assert repo.current_rating(Track.math, "combinatorics") == rated
+
+
+def test_an_empty_answer_is_rejected_rather_than_graded_as_a_miss(client, repo):
+    _card(repo, "a")
+    client.get("/api/theorem/today", params={"date": DATE})
+    response = client.post(
+        "/api/theorem/recall", json={"date": DATE, "explanation": "", "application": ""}
+    )
+    assert response.status_code == 422
 
 
 def test_checking_recall_before_anything_is_drawn_is_a_404(client):
-    assert (
-        client.post("/api/theorem/recall", json={"date": DATE, "recalled": True}).status_code == 404
-    )
+    assert client.post("/api/theorem/recall", json={"date": DATE, **ANSWER}).status_code == 404
 
 
 def test_archiving_a_missing_card_is_a_404(client):
