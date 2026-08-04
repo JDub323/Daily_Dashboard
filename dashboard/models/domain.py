@@ -14,6 +14,9 @@ from pydantic import Field, computed_field
 from .common import (
     Base,
     ChessStatus,
+    DebateSide,
+    DebateStatus,
+    FactStance,
     HealthMetric,
     MathStatus,
     PaperStatus,
@@ -330,6 +333,105 @@ class TheoremDraw(Base):
     explained: bool | None = None
     applied: bool | None = None
     note: str | None = None
+
+
+# --- debate ----------------------------------------------------------------
+
+
+class Reading(Base):
+    """One article offered for the day's issue.
+
+    Frozen onto the session at open time rather than re-ranked on every render.
+    The headline pool turns over through the day, and a prep list that changed
+    while you were reading it would be a list you could not finish -- the same
+    argument that makes today's math problem a stored row rather than a query.
+    """
+
+    title: str
+    link: Url
+    """Proxied for a paywalled domain, exactly as `NewsItem.link` is."""
+
+
+class RubricItem(Base):
+    """One line of the judge's ballot.
+
+    `score` is 0/1/2 against the anchored band descriptors in `debate.RUBRIC`,
+    not a free-running number: the whole reason the rubric is shaped this way
+    is that "7 out of 10 on rhetoric" means something different to every model
+    version, and a rating history has to survive its judge being upgraded.
+    """
+
+    key: str
+    score: int = Field(ge=0, le=2)
+    quote: str = ""
+    """Verbatim from what *you* wrote. An item claiming a point with no quote
+    is voided to zero server-side -- see `debate.apply_quote_rule`."""
+
+    note: str = ""
+
+
+class Foul(Base):
+    """A hard foul: something that costs a point outright rather than scoring
+    a band. Named separately because these are events, not qualities."""
+
+    kind: str
+    quote: str = ""
+
+
+class Scorecard(Base):
+    """What the opponent returns at the end, pasted back as JSON.
+
+    Parsed and re-scored here rather than trusted: the model reports what it
+    observed, and `scoring.debate_score` decides what that is worth. A judge
+    that hands back its own total is a judge whose scale you have to trust
+    across model versions.
+    """
+
+    items: list[RubricItem] = Field(default_factory=list)
+    fouls: list[Foul] = Field(default_factory=list)
+    verdict: str = ""
+    voided: list[str] = Field(default_factory=list)
+    """Item keys that claimed a point without a quote and were zeroed. Kept on
+    the card so the panel can say so -- a rule you cannot see enforced is one
+    you assume is not."""
+
+
+class DebateSession(Base):
+    """The day's debate, from opening the issue to pasting the ballot."""
+
+    date: dt.date
+    issue: str
+    """The issue slug: the rating bucket, frozen here."""
+
+    subarea: str
+    angle: str
+    motion: str
+    format: str
+    side: DebateSide
+    anchor: Rating
+    contra: bool = False
+
+    position: str | None = None
+    confidence: int | None = Field(default=None, ge=0, le=100)
+    position_after: str | None = None
+    confidence_after: int | None = Field(default=None, ge=0, le=100)
+
+    readings: list[Reading] = Field(default_factory=list)
+    status: DebateStatus = DebateStatus.prep
+    briefed_on: dt.date | None = None
+    scorecard: Scorecard | None = None
+    score: Score | None = None
+
+
+class DebateFact(Base):
+    """One sourced claim in the dossier."""
+
+    id: int | None = None
+    issue: str
+    date: dt.date
+    claim: str = Field(min_length=3, max_length=600)
+    source: str = Field(min_length=4, max_length=500)
+    stance: FactStance = FactStance.context
 
 
 # --- papers ----------------------------------------------------------------

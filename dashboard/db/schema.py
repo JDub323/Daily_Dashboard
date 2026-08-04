@@ -589,6 +589,126 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX rating_event_date ON rating_event (track, date);
         """,
     ),
+    (
+        10,
+        """
+        -- The daily debate: a third rated track, and the two tables behind it.
+        --
+        -- A fifth CHECK rebuild of rating_event, for the same reason as
+        -- migrations 2, 6 and 9 and by the same 12-step dance: `track` gains
+        -- 'debate'. Every column is copied verbatim by explicit list -- this
+        -- is still the one table in the schema that cannot be regenerated, so
+        -- it is copied, never recomputed. All three indexes come back.
+        --
+        -- `area` carries the issue slug, exactly as it carries the
+        -- mathematical area for a math row, so per-issue debate ratings need
+        -- no new column and no new query: `current_rating('debate', slug)`
+        -- already works. A scored debate writes two rows, pooled and issue,
+        -- which is the shape `_close_math` established.
+
+        CREATE TABLE rating_event_v5 (
+            id             INTEGER PRIMARY KEY,
+            track          TEXT    NOT NULL CHECK (track IN ('math', 'chess', 'debate')),
+            date           TEXT    NOT NULL CHECK (date IS strftime('%Y-%m-%d', date)),
+            ref            TEXT    NOT NULL,
+            opponent       INTEGER NOT NULL CHECK (opponent BETWEEN 100 AND 4000),
+            score          REAL    NOT NULL CHECK (score BETWEEN 0.0 AND 1.0),
+            k              INTEGER NOT NULL CHECK (k >= 1),
+            rating_before  INTEGER,
+            rating_after   INTEGER,
+            provenance     TEXT    NOT NULL DEFAULT 'measured'
+                                   CHECK (provenance IN ('measured', 'reconstructed',
+                                                         'lapsed', 'late', 'unlapsed',
+                                                         'theorem')),
+            area           TEXT,
+            CHECK ((rating_before IS NULL) = (rating_after IS NULL)),
+            CHECK ((rating_after IS NULL) = (provenance = 'reconstructed'))
+        ) STRICT;
+
+        INSERT INTO rating_event_v5
+            (id, track, date, ref, opponent, score, k,
+             rating_before, rating_after, provenance, area)
+        SELECT id, track, date, ref, opponent, score, k,
+               rating_before, rating_after, provenance, area
+        FROM rating_event;
+
+        DROP TABLE rating_event;
+        ALTER TABLE rating_event_v5 RENAME TO rating_event;
+        CREATE INDEX rating_event_track_id ON rating_event (track, id);
+        CREATE INDEX rating_event_area ON rating_event (track, area, id);
+        CREATE INDEX rating_event_date ON rating_event (track, date);
+
+        -- One session a day, date-keyed -- the rule every daily table here
+        -- follows, and the thing that makes a reload idempotent.
+        --
+        -- `issue`, `subarea`, `angle`, `format` and `anchor` are all frozen
+        -- here at open time rather than recomputed from config at read time.
+        -- That is the same decision `math_problem.area` and
+        -- `rating_event.opponent` record: the rotation is editable, and a
+        -- session must go on meaning what it meant when it was argued.
+        CREATE TABLE debate_session (
+            date        TEXT    PRIMARY KEY
+                                CHECK (date IS strftime('%Y-%m-%d', date)),
+            issue       TEXT    NOT NULL,
+            subarea     TEXT    NOT NULL,
+            angle       TEXT    NOT NULL,
+            motion      TEXT    NOT NULL,
+            format      TEXT    NOT NULL,
+            side        TEXT    NOT NULL CHECK (side IN ('pro', 'con')),
+            anchor      INTEGER NOT NULL CHECK (anchor BETWEEN 100 AND 4000),
+
+            -- Was the side assigned against the stated position. Stored rather
+            -- than re-derived from the weekday, because `contra_days` is
+            -- config and the bonus is already baked into `anchor`.
+            contra      INTEGER NOT NULL DEFAULT 0 CHECK (contra IN (0, 1)),
+
+            -- What you thought before, and after. The pair is the only
+            -- instrument here that measures being *right* rather than being
+            -- persuasive, which is why it is worth two columns and a
+            -- confidence each.
+            position    TEXT,
+            confidence  INTEGER CHECK (confidence IS NULL OR confidence BETWEEN 0 AND 100),
+            position_after   TEXT,
+            confidence_after INTEGER
+                        CHECK (confidence_after IS NULL OR confidence_after BETWEEN 0 AND 100),
+
+            readings    TEXT    NOT NULL DEFAULT '[]',  -- JSON, frozen at open
+            status      TEXT    NOT NULL DEFAULT 'prep'
+                                CHECK (status IN ('prep', 'briefed', 'scored', 'lapsed')),
+            briefed_on  TEXT    CHECK (briefed_on IS NULL
+                                       OR briefed_on IS strftime('%Y-%m-%d', briefed_on)),
+            scorecard   TEXT,                           -- JSON, NULL until scored
+            score       REAL    CHECK (score IS NULL OR score BETWEEN 0.0 AND 1.0),
+
+            -- Open iff unscored, the same invariant math_attempt carries. A
+            -- lapse is closed and carries 0.0, so it satisfies this too.
+            CHECK ((score IS NULL) = (status IN ('prep', 'briefed'))),
+            -- A session cannot have been briefed without a date to count the
+            -- grace period from.
+            CHECK ((briefed_on IS NULL) = (status = 'prep'))
+        ) STRICT;
+
+        -- The dossier, as rows. `dossiers/<issue>.md` is rendered from this
+        -- and is never read back: the database is the record, the markdown is
+        -- there to be grepped.
+        CREATE TABLE debate_fact (
+            id      INTEGER PRIMARY KEY,
+            issue   TEXT    NOT NULL,
+            date    TEXT    NOT NULL CHECK (date IS strftime('%Y-%m-%d', date)),
+            claim   TEXT    NOT NULL CHECK (length(claim) >= 3),
+
+            -- Free text, not a URL column. Usually one -- the panel offers the
+            -- day's readings as one click -- but a fact can come from a book,
+            -- and a schema that could not hold "Borjas, Immigration Economics,
+            -- ch. 4" would be one you route around by pasting a search link.
+            source  TEXT    NOT NULL CHECK (length(source) >= 4),
+            stance  TEXT    NOT NULL CHECK (stance IN ('for', 'against', 'context'))
+        ) STRICT;
+
+        CREATE INDEX debate_fact_issue ON debate_fact (issue, id);
+        CREATE INDEX debate_fact_date ON debate_fact (date);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

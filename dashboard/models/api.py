@@ -26,6 +26,7 @@ from pydantic import Field, model_validator
 from .common import (
     Base,
     ChessOutcome,
+    FactStance,
     HealthMetric,
     MathOutcome,
     Rating,
@@ -36,6 +37,8 @@ from .domain import (
     MAX_SENTENCES,
     SENTENCES,
     DayCompletion,
+    DebateFact,
+    DebateSession,
     MathProblem,
     Paper,
     RatingEvent,
@@ -175,6 +178,52 @@ class TheoremRecallRequest(DateBody):
 class TheoremArchiveRequest(DateBody):
     card_id: int
     archived: bool = True
+
+
+class DebateOpenRequest(DateBody):
+    pass
+
+
+class DebateFactRequest(DateBody):
+    """One sourced claim for the dossier.
+
+    `source` is required and free text. Required because a claim you cannot
+    attribute is not yet a fact and the `evidence` line of the ballot will find
+    that out; free text because a fact can come from a book, and a URL-only
+    field is one you route around by pasting a search link.
+    """
+
+    claim: str = Field(min_length=3, max_length=600)
+    source: str = Field(min_length=4, max_length=500)
+    stance: FactStance = FactStance.context
+
+
+class DebateFactDeleteRequest(DateBody):
+    fact_id: int
+
+
+class DebatePositionRequest(DateBody):
+    """What you believe, before or after arguing it."""
+
+    position: str = Field(min_length=3, max_length=1000)
+    confidence: int | None = Field(default=None, ge=0, le=100)
+    after: bool = False
+
+
+class DebateBriefRequest(DateBody):
+    pass
+
+
+class DebateVerdictRequest(DateBody):
+    """The ballot, pasted whole.
+
+    Deliberately the raw text rather than parsed JSON from the browser. Wordle
+    and Pokedoku parse client-side because their share text is a shape, not a
+    document; a ballot is a document whose reading decides a rating, so it is
+    parsed where the scoring lives and where the tests are.
+    """
+
+    text: str = Field(min_length=2, max_length=20000)
 
 
 class WordleLogRequest(DateBody):
@@ -402,6 +451,67 @@ class TheoremsPanel(Base):
     """Active cards only. `len(deck)` includes the archived ones."""
 
 
+class RubricLine(Base):
+    """One ballot line, as the panel needs it to render a result back.
+
+    Shipped rather than duplicated in JavaScript for the reason the time bonus
+    is: the eight labels and their band descriptors are the rubric, and a second
+    copy in the browser is a second thing to keep in step with the prompt.
+    """
+
+    key: str
+    label: str
+    asks: str
+
+
+class DebatePanel(Base):
+    """Today's debate: what the week is about, where the session has got to,
+    and everything needed to draw it.
+
+    One payload for four panel states -- unopened, prep, briefed, scored -- for
+    the same reason `MathPanel` covers three: the states share a header, and
+    fetching a different shape per state would mean the panel could not tell
+    which one it was in without asking twice.
+    """
+
+    enabled: bool = True
+    """False when `[[debate.issues]]` is empty. The panel says so rather than
+    erroring, the way an empty theorem deck does."""
+
+    reading_day: bool = False
+    """Sunday: the week's sub-area opens, the readings appear, and the day is
+    done at `min_facts`. No debate, so nothing rates."""
+
+    issue: str | None = None
+    """The issue slug -- also the rating bucket and the dossier's filename."""
+
+    issue_name: str | None = None
+    subarea: str | None = None
+    angle: str | None = None
+    angle_label: str | None = None
+    angle_brief: str | None = None
+
+    session: DebateSession | None = None
+    prompt: str | None = None
+    """The assembled prompt, or None before the session is opened. Sent with
+    the panel rather than fetched on click so the copy button is instant and
+    so what you copy is what you were looking at."""
+
+    facts_today: list[DebateFact] = Field(default_factory=list)
+    facts_total: int = 0
+    min_facts: int = 0
+    grace_days: int = 1
+
+    summary: TrackSummary
+    issues: list[AreaRating] = Field(default_factory=list)
+    """Per-issue ratings, strongest first -- the debate track's answer to
+    `MathPanel.areas`, and read the same way: the last line is the weak one."""
+
+    rubric: list[RubricLine] = Field(default_factory=list)
+    delta: int | None = None
+    """What today's ballot did to the pooled debate rating."""
+
+
 class HealthSeries(Base):
     metric: HealthMetric
     points: list[tuple[dt.date, float]] = Field(default_factory=list)
@@ -415,6 +525,7 @@ class DashboardState(Base):
     date: dt.date
     math: MathPanel
     chess: ChessPanel
+    debate: DebatePanel
     word: WordOfDay | None = None
     games: GamesPanel
     theorems: TheoremsPanel

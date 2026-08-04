@@ -34,10 +34,16 @@ Url = HttpUrl
 
 
 class Track(StrEnum):
-    """The two elo-rated activities. One rating_event table serves both."""
+    """The elo-rated activities. One rating_event table serves all of them."""
 
     math = "math"
     chess = "chess"
+
+    debate = "debate"
+    """The daily debate, rated per issue in `area` exactly as math is rated
+    per mathematical area. Its own track rather than a third area of math
+    because `n` -- and so K -- must be counted separately: a year of math
+    results should not make the debate rating confident."""
 
 
 class Provenance(StrEnum):
@@ -94,6 +100,46 @@ class Provenance(StrEnum):
     Excluded from `success_rate` too, which reads "how often do you solve the
     daily problem". Recall is not that question, and a 0.5 cannot clear its
     threshold anyway."""
+
+
+class DebateStatus(StrEnum):
+    """Where the day's session has got to.
+
+    Four states rather than the math panel's three, because taking the prompt
+    is a separate act from doing the reading -- and it is the act that starts
+    the clock. A day spent reading and logging facts owes nothing; a day whose
+    prompt you carried off to the Claude app does.
+    """
+
+    prep = "prep"
+    """Opened. Reading, logging facts, stating a position."""
+
+    briefed = "briefed"
+    """The prompt has been taken. This is the state a lapse fires from."""
+
+    scored = "scored"
+    lapsed = "lapsed"
+    """Briefed, and the grace period ran out with no scorecard. Scored 0.0
+    against the anchor -- exactly what an unmarked math problem costs, and for
+    the same reason: silence must never be cheaper than an honest bad result."""
+
+
+class DebateSide(StrEnum):
+    pro = "pro"
+    con = "con"
+
+
+class FactStance(StrEnum):
+    """Which way a fact cuts, as *you* filed it.
+
+    Recorded because a dossier of undifferentiated facts is a junk drawer, and
+    because "how many of the facts I collected cut against my own position" is
+    a number worth being able to look at.
+    """
+
+    for_ = "for"
+    against = "against"
+    context = "context"
 
 
 class MathStatus(StrEnum):

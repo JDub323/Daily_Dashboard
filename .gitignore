@@ -24,6 +24,10 @@ __pycache__/
 # overnight batches from the scheduled task — regenerated nightly, never a diff
 batches/
 
+# rendered issue dossiers — personal notes, and regenerated from `debate_fact`
+# on every write, so a committed copy would churn without ever being the record
+dossiers/
+
 # ND proxy
 proxy.txt
 

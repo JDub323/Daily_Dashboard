@@ -216,17 +216,21 @@ class Feeds:
         """
         return self.cached("news", self.settings.news.cache_seconds, self._fetch_news)
 
-    def _fetch_news(self) -> list[NewsItem]:
-        cfg = self.settings.news
+    def _rss(self, sources: list[tuple[str, str]], label: str) -> list[NewsItem]:
+        """`(url, category)` pairs -> every item they offered, in source order.
+
+        Shared by the headline pool and the per-issue debate feeds. One dead
+        feed is normal and is logged rather than raised; every feed dead is a
+        `FeedError`, which is what `cached` needs to see before it will serve a
+        stale copy.
+        """
         items: list[NewsItem] = []
         seen_in_fetch: set[str] = set()
         failures: list[str] = []
-        for feed in cfg.feeds:
-            url = str(feed.url)
+        for url, cat in sources:
             try:
                 root = ET.fromstring(http_get(url).encode())
             except TRANSPORT_ERRORS as e:
-                # One dead feed is normal; the quota loop downstream covers.
                 failures.append(f"{url}: {e}")
                 continue
             for item in root.iter("item"):
@@ -241,12 +245,40 @@ class Feeds:
                 if key in seen_in_fetch:
                     continue
                 seen_in_fetch.add(key)
-                items.append(NewsItem(title=title, link=self.proxify(link), cat=feed.cat, key=key))
+                items.append(NewsItem(title=title, link=self.proxify(link), cat=cat, key=key))
         if failures:
-            log.info("%d/%d news feeds failed: %s", len(failures), len(cfg.feeds), failures)
+            log.info("%d/%d %s feeds failed: %s", len(failures), len(sources), label, failures)
         if not items:
-            raise FeedError("all news feeds failed")
+            raise FeedError(f"all {label} feeds failed")
         return items
+
+    def _fetch_news(self) -> list[NewsItem]:
+        cfg = self.settings.news
+        return self._rss([(str(f.url), f.cat) for f in cfg.feeds], "news")
+
+    def issue_news(self, issue: Any) -> Cached[list[NewsItem]]:
+        """Headline candidates for one debate issue.
+
+        With no `feeds` of its own an issue reads the `[news]` pool, which is
+        already being fetched for the headlines panel -- so the common case
+        costs nothing and needs no configuration. Issues that name their own
+        feeds get a cache entry of their own, keyed by slug, and those items
+        are *added* to the general pool rather than replacing it: a dedicated
+        immigration feed should widen what can be found, not narrow it to one
+        outlet's framing.
+        """
+        if not issue.feeds:
+            return self.news()
+        general = self.news().value
+        own = self.cached(
+            f"issue:{issue.slug}",
+            self.settings.news.cache_seconds,
+            lambda: self._rss(
+                [(str(url), f"debate:{issue.slug}") for url in issue.feeds], issue.slug
+            ),
+        )
+        keys = {item.key for item in own.value}
+        return own._replace(value=[*own.value, *(i for i in general if i.key not in keys)])
 
     # -- markets ------------------------------------------------------------
 

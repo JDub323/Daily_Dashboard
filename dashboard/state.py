@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from . import scoring
+from . import debate, scoring
 from .config import Settings
 from .db.repository import Repository
 from .models import api
@@ -156,6 +156,71 @@ def chess_panel(repo: Repository, today: dt.date) -> api.ChessPanel:
     )
 
 
+def debate_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.DebatePanel:
+    """Today's debate, in whichever of its four states it is in.
+
+    Read-only, like everything here: this reports the session, it does not open
+    one. Opening freezes the angle, the side and the reading list, and a boot
+    that opened would mean the day's debate depended on whether you happened to
+    load the dashboard -- the same rule that keeps the theorem draw out of the
+    boot payload.
+
+    The week's issue comes from config rather than from the session when there
+    is no session yet, and from the *session* once there is one. That order
+    matters: the rotation is editable, and a session already opened must go on
+    saying what it was opened as.
+    """
+    summary = track_summary(repo, Track.debate)
+    cfg_debate = cfg.debate
+    base = {
+        "summary": summary,
+        "enabled": cfg_debate.enabled,
+        "min_facts": cfg_debate.min_facts,
+        "grace_days": cfg_debate.grace_days,
+        "reading_day": cfg_debate.is_reading_day(today),
+        "rubric": [api.RubricLine(key=c.key, label=c.label, asks=c.asks) for c in debate.RUBRIC],
+        "issues": sorted(
+            (
+                api.AreaRating(area=slug, rating=rating, events=n)
+                for slug, rating, n in repo.area_ratings(cfg_debate.issue_slugs, Track.debate)
+            ),
+            key=lambda x: -x.rating,
+        ),
+    }
+    if not cfg_debate.enabled:
+        return api.DebatePanel(**base)
+
+    session = repo.debate_session(today)
+    week = cfg_debate.week_for(today)
+    slug = session.issue if session else (week[0] if week else None)
+    subarea = session.subarea if session else (week[1] if week else None)
+    issue = cfg_debate.issue(slug) if slug else None
+    angle = cfg_debate.angle_for(today)
+
+    facts = repo.facts(issue=slug, on=today) if slug else []
+    prompt = None
+    if session is not None and angle is not None and issue is not None:
+        # Every fact on this issue, not only today's: a week's dossier is what
+        # you argue from, and re-collecting Monday's numbers on Friday to get
+        # them into the prompt would be the tool making you do its filing.
+        prompt = debate.build_prompt(session, angle, issue.name, repo.facts(issue=slug))
+
+    return api.DebatePanel(
+        **base,
+        issue=slug,
+        issue_name=issue.name if issue else slug,
+        subarea=subarea,
+        angle=angle.key if angle else None,
+        angle_label=angle.label if angle else None,
+        angle_brief=" ".join(angle.brief.split()) if angle else None,
+        session=session,
+        prompt=prompt,
+        facts_today=facts,
+        facts_total=len(repo.facts(issue=slug)) if slug else 0,
+        delta=repo.debate_delta(today),
+    )
+
+
 def games_panel(repo: Repository, today: dt.date) -> api.GamesPanel:
     wordle = repo.wordle(today)
     pokedoku = repo.pokedoku(today)
@@ -289,6 +354,7 @@ def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.Dash
         date=today,
         math=math_panel(cfg, repo, today),
         chess=chess_panel(repo, today),
+        debate=debate_panel(cfg, repo, today),
         word=repo.word(today),
         games=games_panel(repo, today),
         theorems=theorems_panel(repo, today),

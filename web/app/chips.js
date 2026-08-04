@@ -22,6 +22,9 @@ import { completionWrite, store } from "./store.js";
 
 function tasks() {
   const s = store.state;
+  // Filtered at the end: an unconfigured debate has no chip at all, rather
+  // than a chip that can never go gold. A task nobody can finish would make a
+  // perfect day unreachable, and the streak is counted off exactly that.
   return [
     { id: "math", label: "math problem", done: s.math.status !== "open", panel: "math" },
     { id: "chess", label: "chess puzzle", done: s.chess.status !== "open", panel: "chess" },
@@ -37,13 +40,27 @@ function tasks() {
       panel: "theorem",
     },
     {
+      // What "done" means changes with the day, and it has to: a chip that is
+      // unreachable on some days would make `perfect_days` (done = total)
+      // unreachable with it, and the streak it feeds is the reason the
+      // denominator has to stay honest. On a reading day the debt is the
+      // reading — facts logged against the week's issue. On a debate day it is
+      // the ballot.
+      id: "debate",
+      label: s.debate.reading_day ? "issue reading" : "debate",
+      done: s.debate.reading_day
+        ? s.debate.facts_today.length >= s.debate.min_facts
+        : s.debate.session?.status === "scored",
+      panel: "debate",
+    },
+    {
       id: "paper",
       label: "paper triage",
       done: Boolean(s.papers.surfaced) && s.papers.surfaced.status !== "surfaced",
       panel: "reading",
     },
     { id: "log", label: "day log", done: Boolean(s.daylog), panel: "log" },
-  ];
+  ].filter((task) => task.id !== "debate" || s.debate.enabled);
 }
 
 /** Today's tasks, in chip order. What the cheatsheet counts. */
@@ -103,8 +120,9 @@ export async function renderChips() {
     done === list.length ? " perfect ✦" : " done",
   );
 
-  for (const id of ["math", "chess"]) {
-    markDone(id, list.find((task) => task.id === id).done);
+  for (const id of ["math", "chess", "debate"]) {
+    const task = list.find((entry) => entry.id === id);
+    if (task) markDone(id, task.done);
   }
 
   // The old client fired a save on every page load: it recomputed `pct` as a

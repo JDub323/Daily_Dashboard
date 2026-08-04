@@ -54,6 +54,15 @@ class PathSettings(Base):
     """Where the overnight scheduled task drops `<date>.json`. Serving one is
     free; generating one costs an API call. See `dashboard/batch.py`."""
 
+    dossiers: str = "dossiers"
+    """Rendered issue dossiers, one markdown file per debate issue.
+
+    An *export*, not storage. `debate_fact` rows are the record; these are
+    rewritten from them on every write so `rg` works. Deliberately not
+    hand-edited -- problems.json was both tracked and appended to, which is how
+    a file ends up churning on every commit while claiming to be editable.
+    """
+
     interests: str = "interests.md"
     """What you want to read, in your own words. Optional -- absent means the
     arXiv candidate stays in arXiv's own order. See `dashboard/interests.py`."""
@@ -308,6 +317,209 @@ class TheoremSettings(Base):
     draw over everything off cooldown; 2 is the default steep curve."""
 
 
+class DebateIssue(Base):
+    """One issue: a rating bucket, and the weeks that rate into it.
+
+    The direct counterpart of an entry in `[math.areas]` plus its share of
+    `[math].rotation`, with the difference that both live in one table here.
+    Math's split exists because its rotation predates its areas; there is no
+    reason to repeat it, and keeping them together is what makes adding an
+    issue a single append rather than an edit in two places that must agree.
+    """
+
+    slug: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,40}$")
+    """The rating bucket's name, frozen onto every row it produces. Constrained
+    because it is also a filename (`dossiers/<slug>.md`) and a rating `area`."""
+
+    name: str = Field(min_length=1)
+    keywords: list[str] = Field(default_factory=list)
+    """Substrings that identify a headline as being about this issue. Ranked
+    through `interests.Interests`, so they match casefolded anywhere in the
+    title -- prefer a phrase to a short word, as `interests.md` says."""
+
+    subareas: list[str] = Field(min_length=1)
+    """One week each. Order is the order they come round in."""
+
+    feeds: list[Url] = Field(default_factory=list)
+    """Optional RSS specific to this issue. With none, the readings are ranked
+    out of the `[news]` pool that is fetched anyway -- which costs nothing and
+    is why this can be left empty."""
+
+
+class DebateAngle(Base):
+    """What is being contested today, as opposed to what the week is about."""
+
+    key: str = Field(pattern=r"^[a-z][a-z-]{1,30}$")
+    label: str = Field(min_length=1)
+    format: str = Field(min_length=1)
+    """Names an entry in `[debate.anchors]`. Validated at startup."""
+
+    brief: str = Field(min_length=10)
+    """Goes into the prompt verbatim. The one piece of the prompt with an
+    opinion in it, which is why it is config rather than code."""
+
+
+DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+"""Indexed by `date.weekday()`. Config names days; Python numbers them."""
+
+
+class DebateSettings(Base):
+    """The daily debate. See the header comment in config.toml.
+
+    Nothing here costs an API call, which is the whole reason the feature can
+    be the size of the math problem without being the size of its bill: the
+    argument itself runs in the Claude app on a subscription, and the dashboard
+    only assembles a prompt and parses a scorecard.
+    """
+
+    issues: list[DebateIssue] = Field(default_factory=list)
+    angles: list[DebateAngle] = Field(default_factory=list)
+    anchors: dict[str, Rating] = Field(default_factory=dict)
+
+    rotation_start: dt.date | None = None
+    order: str = Field(default="interleave", pattern=r"^(interleave|sequential)$")
+
+    reading_day: str = "sunday"
+    contra_days: list[str] = Field(default_factory=list)
+    contra_bonus: int = Field(default=75, ge=0, le=400)
+
+    min_facts: int = Field(default=2, ge=0, le=20)
+    grace_days: int = Field(default=1, ge=0, le=14)
+
+    @property
+    def enabled(self) -> bool:
+        """No issues means the feature is off, and the panel says so rather
+        than erroring. Same courtesy `[math].rotation` gets."""
+        return bool(self.issues and self.angles and self.anchors)
+
+    @model_validator(mode="after")
+    def _days_are_days(self) -> DebateSettings:
+        unknown = [d for d in [self.reading_day, *self.contra_days] if d.lower() not in DAYS]
+        if unknown:
+            raise ValueError(f"[debate] names {unknown} — not day name(s) in {DAYS}")
+        if self.reading_day.lower() in [d.lower() for d in self.contra_days]:
+            raise ValueError(f"[debate].reading_day {self.reading_day!r} is also a contra day")
+        return self
+
+    @model_validator(mode="after")
+    def _angles_name_real_formats(self) -> DebateSettings:
+        unknown = sorted({a.format for a in self.angles} - set(self.anchors))
+        if unknown:
+            raise ValueError(
+                f"[[debate.angles]] names format(s) {unknown} with no entry in "
+                f"[debate.anchors] ({sorted(self.anchors)})"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _slugs_are_unique(self) -> DebateSettings:
+        slugs = [i.slug for i in self.issues]
+        dupes = sorted({s for s in slugs if slugs.count(s) > 1})
+        if dupes:
+            # A duplicate slug would silently merge two issues' ratings and
+            # have them overwrite each other's dossier.
+            raise ValueError(f"[[debate.issues]] reuses slug(s) {dupes}")
+        keys = [a.key for a in self.angles]
+        dupes = sorted({k for k in keys if keys.count(k) > 1})
+        if dupes:
+            raise ValueError(f"[[debate.angles]] reuses key(s) {dupes}")
+        return self
+
+    @model_validator(mode="after")
+    def _rotation_is_anchored_to_a_sunday(self) -> DebateSettings:
+        if not self.issues:
+            return self
+        if self.rotation_start is None:
+            raise ValueError("[debate] needs a rotation_start date")
+        if self.rotation_start.weekday() != SUNDAY:
+            raise ValueError(
+                f"[debate].rotation_start must be a Sunday; "
+                f"{self.rotation_start} is a {self.rotation_start:%A}"
+            )
+        return self
+
+    @property
+    def rotation(self) -> list[tuple[str, str]]:
+        """`(issue slug, sub-area)` in the order the weeks visit them.
+
+        Both orderings are in-order traversals of `issues`; neither samples.
+        That is the difference from the theorem deck, and it is deliberate --
+        a recency-weighted draw is right for recall, where the question is
+        "what have I not seen lately", and wrong for a curriculum, where the
+        question is "what comes next".
+
+        Interleaved, an issue with four sub-areas simply appears in four of
+        the rounds and one with three appears in three, so weight follows the
+        list rather than needing a number beside it.
+        """
+        if self.order == "sequential":
+            return [(i.slug, s) for i in self.issues for s in i.subareas]
+        widest = max((len(i.subareas) for i in self.issues), default=0)
+        return [
+            (issue.slug, issue.subareas[round_])
+            for round_ in range(widest)
+            for issue in self.issues
+            if round_ < len(issue.subareas)
+        ]
+
+    def week_for(self, date: dt.date) -> tuple[str, str] | None:
+        """This week's `(issue slug, sub-area)`, or None when off."""
+        rotation = self.rotation
+        if not rotation:
+            return None
+        assert self.rotation_start is not None  # guaranteed by the validator
+        weeks = week_index(date) - week_index(self.rotation_start)
+        return rotation[weeks % len(rotation)]
+
+    def issue(self, slug: str) -> DebateIssue | None:
+        """By slug, or None for an issue that has since left the config.
+
+        None is a state the readers handle rather than an error: results earned
+        under a deleted issue stay in `rating_event` -- deleting an issue must
+        not be able to corrupt a rating history, only to stop adding to it.
+        """
+        return next((i for i in self.issues if i.slug == slug), None)
+
+    @property
+    def issue_slugs(self) -> list[str]:
+        return [i.slug for i in self.issues]
+
+    def is_reading_day(self, date: dt.date) -> bool:
+        return DAYS[date.weekday()] == self.reading_day.lower()
+
+    def is_contra_day(self, date: dt.date) -> bool:
+        return DAYS[date.weekday()] in [d.lower() for d in self.contra_days]
+
+    def angle_for(self, date: dt.date) -> DebateAngle | None:
+        """The angle for a debate day: the nth debate day of the week takes the
+        nth angle.
+
+        Counted by walking the week rather than by indexing on `weekday()`,
+        because which days are debate days is config -- moving the reading day
+        to Wednesday should shuffle the angles with it rather than leave a hole
+        where Sunday's angle used to be.
+        """
+        if not self.angles or self.is_reading_day(date):
+            return None
+        # Monday-first, matching `weekday()`, so the ladder runs through the
+        # week in the order the week is lived rather than from an arbitrary
+        # start.
+        position = sum(
+            0 if DAYS[d] == self.reading_day.lower() else 1 for d in range(date.weekday())
+        )
+        return self.angles[position % len(self.angles)]
+
+    def anchor_for(self, angle: DebateAngle, *, contra: bool) -> int:
+        """The elo opponent: the format's anchor, plus the contra bonus.
+
+        Clamped to the `Rating` range the column enforces, so a large
+        `contra_bonus` on the hardest format cannot write a row that fails its
+        CHECK at the last moment.
+        """
+        base = self.anchors.get(angle.format, 1500)
+        return max(100, min(4000, base + (self.contra_bonus if contra else 0)))
+
+
 class MarketSettings(Base):
     tickers: list[str] = Field(default_factory=list)
     cache_seconds: int = Field(default=600, ge=0)
@@ -375,6 +587,7 @@ class Settings(Base):
     paths: PathSettings = Field(default_factory=PathSettings)
     llm: LlmSettings
     math: MathSettings
+    debate: DebateSettings = Field(default_factory=DebateSettings)
     theorems: TheoremSettings = Field(default_factory=TheoremSettings)
     markets: MarketSettings = Field(default_factory=MarketSettings)
     calendar: CalendarSettings = Field(default_factory=CalendarSettings)

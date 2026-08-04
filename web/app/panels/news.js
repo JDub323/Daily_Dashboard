@@ -86,12 +86,14 @@ export function newsPanel(spec) {
 /** Categories with a home of their own. Everything else falls to the catch-all. */
 const CLAIMED = new Set(["uspolitics", "world", "finance"]);
 
+// Demoted from the hero when the debate arrived. Still the widest net on the
+// tab — the debate panel's reading list is ranked to one issue, and the point
+// of this one is everything that issue is not.
 export const politics = newsPanel({
   id: "news-politics",
   title: "headlines",
   tab: "politics",
-  slot: "hero",
-  hero: true,
+  slot: "grid",
   cats: ["uspolitics", "world"],
 });
 

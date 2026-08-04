@@ -24,7 +24,7 @@ import { $, el } from "./dom.js";
 export const TABS = [
   { id: "home", label: "home", blurb: "everything, counted" },
   { id: "math", label: "math", blurb: "problem of the day, and the theorem deck" },
-  { id: "politics", label: "politics", blurb: "US and world headlines" },
+  { id: "politics", label: "politics", blurb: "the week's issue, the prep, and the argument" },
   { id: "papers", label: "newsletters", blurb: "arXiv triage and the reading queue" },
   { id: "games", label: "games", blurb: "wordle, pokedoku, and the streaks" },
   { id: "markets", label: "markets", blurb: "quotes and the money pages" },

@@ -13,6 +13,7 @@ import { mountAll, refreshLive, register, rerender, rerenderAll, resetCollapse }
 import calendar from "./panels/calendar.js";
 import chess from "./panels/chess.js";
 import daylog from "./panels/daylog.js";
+import debate from "./panels/debate.js";
 import deck from "./panels/deck.js";
 import { chessElo, mathElo } from "./panels/elo.js";
 import games from "./panels/games.js";
@@ -65,7 +66,7 @@ const PANELS = [
   // math
   math, theorem, deck, mathElo,
   // politics
-  politics,
+  debate, politics,
   // newsletters
   reading, misc,
   // games
