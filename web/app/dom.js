@@ -37,7 +37,14 @@ function apply(node, props, isSvg = false) {
   for (const [key, value] of Object.entries(props)) {
     if (value == null || value === false) continue;
     if (key === "class") {
-      isSvg ? node.setAttribute("class", value) : node.classList.add(...String(value).split(" "));
+      // Empty tokens are dropped rather than passed on: `classList.add("")`
+      // throws a SyntaxError, so `class: cond ? "read" : ""` — which reads as
+      // obviously fine — takes the whole panel down whenever the condition is
+      // false. Splitting on whitespace rather than a single space for the same
+      // reason, since `"a  b"` produces an empty token in the middle.
+      const tokens = String(value).split(/\s+/).filter(Boolean);
+      if (!tokens.length) continue;
+      isSvg ? node.setAttribute("class", tokens.join(" ")) : node.classList.add(...tokens);
     } else if (key === "text") {
       node.textContent = String(value);
     } else if (key === "dataset") {

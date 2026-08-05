@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from . import logs
-from .config import DebateAngle, DebateIssue, DebateSettings
+from .config import DAYS, DebateAngle, DebateIssue, DebateSettings
 from .models import domain as d
 from .models.api import NewsItem
 from .models.common import DebateSide, FactStance
@@ -189,6 +189,18 @@ a judge that wanted to be generous produce evidence it can be caught on.
 # --- what is being argued today --------------------------------------------
 
 
+def week_start(cfg: DebateSettings, date: dt.date) -> dt.date:
+    """The reading day the week containing `date` opened on.
+
+    The week's reading list is keyed by this, so Wednesday can still see what
+    Sunday was given. Derived from `reading_day` rather than hardcoded to
+    Sunday: moving the reading day has to move the key with it, or a week's
+    list becomes unreachable the moment the config changes.
+    """
+    wanted = DAYS.index(cfg.reading_day.lower())
+    return date - dt.timedelta(days=(date.weekday() - wanted) % 7)
+
+
 def motion_for(issue: DebateIssue, subarea: str) -> str:
     """The frame the resolution is sharpened from.
 
@@ -218,6 +230,121 @@ def side_for(cfg: DebateSettings, date: dt.date, angle: DebateAngle | None) -> D
     if angle is not None and angle.key == "steelman":
         return DebateSide.con
     return DebateSide.con if cfg.is_contra_day(date) else DebateSide.pro
+
+
+# --- what the 3am task left ------------------------------------------------
+#
+# Both readers return None for every failure mode -- no file, bad JSON, a file
+# describing a different day. `content._from_batch` set the rule and it holds
+# here: a batch is an optimisation, and an optimisation that can take the panel
+# down is not one. Anything surprising goes to the log with a traceback and the
+# caller falls through to the template frame or to RSS.
+
+
+def motion_path(directory: Path, date: dt.date) -> Path:
+    return directory / f"debate-{date.isoformat()}.json"
+
+
+def reading_path(directory: Path, week: dt.date) -> Path:
+    return directory / f"reading-{week.isoformat()}.json"
+
+
+def _load(path: Path, model: Any) -> Any | None:
+    if not path.exists():
+        return None
+    try:
+        return model(**json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError, ValueError):
+        log.exception("unusable batch file at %s; falling through", path)
+        return None
+
+
+def motion_from_batch(directory: Path, date: dt.date, issue: str, subarea: str) -> Any | None:
+    """Tonight's resolved motion, or None.
+
+    The issue and sub-area are checked rather than trusted. The rotation is
+    editable and the file was written eight hours ago against whatever the
+    config said then; serving a motion about semiconductors under an
+    immigration heading would be worse than serving the frame, because it would
+    look deliberate.
+    """
+    from .models.batch import DebateMotion
+
+    motion = _load(motion_path(directory, date), DebateMotion)
+    if motion is None:
+        return None
+    if motion.issue != issue or motion.subarea != subarea:
+        log.warning(
+            "batch motion for %s is about %s/%s, not %s/%s; using the frame instead",
+            date,
+            motion.issue,
+            motion.subarea,
+            issue,
+            subarea,
+        )
+        return None
+    return motion
+
+
+def readings_from_batch(directory: Path, week: dt.date, issue: str, subarea: str) -> Any | None:
+    """This week's reading list, or None. Checked the same way, for the same
+    reason -- a week's list about the wrong sub-area is a week of wrong facts.
+    """
+    from .models.batch import ReadingList
+
+    listing = _load(reading_path(directory, week), ReadingList)
+    if listing is None:
+        return None
+    if listing.issue != issue or listing.subarea != subarea:
+        log.warning(
+            "reading list for week %s is about %s/%s, not %s/%s; ignoring it",
+            week,
+            listing.issue,
+            listing.subarea,
+            issue,
+            subarea,
+        )
+        return None
+    return listing
+
+
+def to_readings(listing: Any, week: dt.date) -> list[d.DebateReading]:
+    """A validated `ReadingList` -> the rows that go in the table."""
+    rows = [
+        d.DebateReading(
+            week_start=week,
+            issue=listing.issue,
+            subarea=listing.subarea,
+            kind="article",
+            title=article.title,
+            url=article.url,
+            publisher=article.publisher or None,
+            published=article.published,
+            summary=article.summary or None,
+            required=article.required,
+        )
+        for article in listing.articles
+    ]
+    rows += [
+        d.DebateReading(
+            week_start=week,
+            issue=listing.issue,
+            subarea=listing.subarea,
+            kind="book",
+            title=book.title,
+            url=book.url,
+            author=book.author or None,
+            summary=book.why or None,
+            lean=book.lean,
+            # Never required, and the schema enforces it too. A hundred-odd
+            # book recommendations over a six-month cycle is already the part
+            # most likely to go unread; one that could block a day would be
+            # worse than one that is ignored.
+            required=False,
+        )
+        for book in listing.books
+    ]
+    return rows
 
 
 # --- the readings ----------------------------------------------------------
@@ -319,6 +446,7 @@ def build_prompt(
     angle: DebateAngle,
     issue_name: str,
     facts: list[d.DebateFact],
+    week_reading: list[d.DebateReading] | None = None,
 ) -> str:
     """The text you copy into the Claude app.
 
@@ -332,6 +460,7 @@ def build_prompt(
     """
     lines: list[str] = []
     add = lines.append
+    resolved = session.motion_source == "batch"
 
     add("You are my debate opponent and, at the end, my judge. This is practice.")
     add("")
@@ -344,7 +473,11 @@ def build_prompt(
     add("")
     add(f"- **Issue:** {issue_name}")
     add(f"- **This week's sub-area:** {session.subarea}")
-    add(f"- **Frame:** {session.motion}")
+    add(f"- **{'Resolution' if resolved else 'Frame'}:** {session.motion}")
+    if session.motion_note:
+        add(f"- **Why it is live:** {session.motion_note}")
+    if session.motion_url:
+        add(f"- **Source:** {session.motion_url}")
     add(f"- **Today's angle — {angle.label}:** {' '.join(angle.brief.split())}")
     add(f"- **Format:** {session.format}")
     add(f"- **I am arguing:** {SIDE_BRIEF[DebateSide(session.side)]}.")
@@ -362,8 +495,20 @@ def build_prompt(
         add(f"> {session.position}{confidence}")
         add("")
 
+    # Two lists, and the distinction matters to the comprehension check below.
+    # The week's reading was assigned on the reading day and is what I am
+    # supposed to have absorbed; today's headlines are whatever the feeds
+    # happened to carry this morning. Only the first is fair to quiz me on.
+    assigned = [r for r in (week_reading or []) if r.kind == "article" and r.read_on]
+    if assigned:
+        add("## The week's reading, which I have marked as read")
+        add("")
+        for reading in assigned:
+            add(f"- {reading.title} — {reading.url}")
+        add("")
+
     if session.readings:
-        add("## What I read today")
+        add("## Headlines I saw today")
         add("")
         for reading in session.readings:
             add(f"- {reading.title} — {reading.link}")
@@ -384,17 +529,32 @@ def build_prompt(
     add("")
     add("## Step 0 — comprehension check")
     add("")
-    add("Before any arguing: ask me exactly three short questions about the articles")
-    add("listed above — what a specific claim was, what a number was, or what the")
-    add("strongest point on the other side in them was. One at a time. Tell me plainly")
-    add("which I got wrong. Do not move on until all three are answered.")
+    if assigned:
+        add("Before any arguing: ask me exactly three short questions about")
+        add("**the week's reading** above — the pieces I said I read, not the headlines.")
+        add("What a specific claim was, what a number was, or what the strongest point on")
+        add("the other side in them was. One at a time. Tell me plainly which I got wrong,")
+        add("and do not move on until all three are answered. Claiming to have read")
+        add("something is a claim like any other; this is where it gets tested.")
+    else:
+        add("Before any arguing: ask me exactly three short questions about the articles")
+        add("listed above — what a specific claim was, what a number was, or what the")
+        add("strongest point on the other side in them was. One at a time. Tell me plainly")
+        add("which I got wrong. Do not move on until all three are answered.")
     add("")
-    add("## Step 1 — the resolution")
-    add("")
-    add("Search for the most live instance of this sub-area in roughly the last three")
-    add("months — a bill, rule, ruling, or event actually in play — and state the")
-    add("resolution in one sentence. Make it specific enough to be false. Then confirm")
-    add("which side I am on and begin.")
+    if resolved:
+        add("## Step 1 — confirm the resolution")
+        add("")
+        add("The resolution above was drawn up overnight against the news. Check it is")
+        add("still accurate — one search is enough — and say so if it has moved. Then")
+        add("confirm which side I am on and begin.")
+    else:
+        add("## Step 1 — the resolution")
+        add("")
+        add("Search for the most live instance of this sub-area in roughly the last three")
+        add("months — a bill, rule, ruling, or event actually in play — and state the")
+        add("resolution in one sentence. Make it specific enough to be false. Then confirm")
+        add("which side I am on and begin.")
     add("")
     add("## How to run it")
     add("")

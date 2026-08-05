@@ -198,12 +198,20 @@ def debate_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.DebateP
     angle = cfg_debate.angle_for(today)
 
     facts = repo.facts(issue=slug, on=today) if slug else []
+    # Carried on every day of the week, not only the reading day: the prompt
+    # quotes what you marked as read, and Thursday should be able to tick the
+    # piece it did not get to on Sunday.
+    week_start = debate.week_start(cfg_debate, today)
+    reading = repo.readings(week_start)
+
     prompt = None
     if session is not None and angle is not None and issue is not None:
         # Every fact on this issue, not only today's: a week's dossier is what
         # you argue from, and re-collecting Monday's numbers on Friday to get
         # them into the prompt would be the tool making you do its filing.
-        prompt = debate.build_prompt(session, angle, issue.name, repo.facts(issue=slug))
+        prompt = debate.build_prompt(
+            session, angle, issue.name, repo.facts(issue=slug), week_reading=reading
+        )
 
     return api.DebatePanel(
         **base,
@@ -217,8 +225,122 @@ def debate_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.DebateP
         prompt=prompt,
         facts_today=facts,
         facts_total=len(repo.facts(issue=slug)) if slug else 0,
+        reading=reading,
+        unread_required=repo.unread_required(week_start),
+        week_start=week_start,
         delta=repo.debate_delta(today),
     )
+
+
+RECENT_DEBATES = 10
+"""How many debates count as "lately" for the per-line trend.
+
+Ten, matching `success_rate`'s window, and for the same reason: it is roughly
+two weeks at this cadence, which is long enough to average out one bad evening
+and short enough that fixing a line shows up inside a fortnight.
+"""
+
+DEBATE_HISTORY_LIMIT = 160
+"""Sessions read for the trends. Six months at six debates a week, which is a
+full rotation of the issue list -- the span over which "am I improving" is a
+question with an answer."""
+
+
+def debate_history(cfg: Settings, repo: Repository) -> api.DebateHistory:
+    """Per-ballot-line trends, fouls, conviction, and the per-issue lines.
+
+    This is the answer to the thing the feature was asked for. The rating says
+    whether you are getting better; these say *at what*, and they exist only
+    because the ballot is eight fixed lines rather than a number -- there is no
+    way to compute "your evidence is weak and your weighing is worse" from a
+    score out of ten.
+
+    Undated, like `history`: nothing here is relative to today.
+    """
+    sessions = repo.debate_history(limit=DEBATE_HISTORY_LIMIT)
+    scored = [s for s in sessions if s.scorecard is not None and s.score is not None]
+
+    by_key: dict[str, list[int]] = {c.key: [] for c in debate.RUBRIC}
+    fouls: dict[str, int] = {}
+    voided = 0
+    for session in scored:
+        card = session.scorecard
+        assert card is not None
+        found = {item.key: item.score for item in card.items}
+        for key in by_key:
+            # A line the judge did not answer is a zero, matching how
+            # `debate_score` totals it. Skipping it here instead would make the
+            # chart disagree with the rating it is explaining.
+            by_key[key].append(found.get(key, 0))
+        for foul in card.fouls:
+            fouls[foul.kind] = fouls.get(foul.kind, 0) + 1
+        voided += len(card.voided)
+
+    lines = [
+        api.RubricTrend(
+            key=criterion.key,
+            label=criterion.label,
+            scores=by_key[criterion.key],
+            **_windows(by_key[criterion.key]),
+        )
+        for criterion in debate.RUBRIC
+    ]
+
+    issue_lines = repo.area_rating_history(Track.debate)
+    return api.DebateHistory(
+        debates=len(scored),
+        # Weakest recent first: the question this answers is "what do I keep
+        # getting wrong", so the answer belongs at the top rather than being
+        # found by scanning. The opposite order from `area_ratings`, which
+        # answers "where am I strong" — deliberately, since a list of eight
+        # is read from the top and a list of ratings is read for its floor.
+        lines=sorted(lines, key=lambda line: line.recent),
+        fouls=sorted(
+            (api.FoulCount(kind=kind, count=n) for kind, n in fouls.items()),
+            key=lambda f: -f.count,
+        ),
+        voided=voided,
+        issues=[
+            api.AreaSeries(area=slug, points=issue_lines[slug], events=len(issue_lines[slug]))
+            for slug in cfg.debate.issue_slugs
+            if issue_lines.get(slug)
+        ],
+        conviction=[
+            api.ConvictionPoint(
+                date=s.date,
+                issue=s.issue,
+                confidence=s.confidence,
+                position=s.position or "",
+                moved=bool(s.position_after and s.position_after != s.position),
+            )
+            for s in sessions
+            if s.confidence is not None
+        ],
+        scores=[(s.date, s.score) for s in scored if s.score is not None],
+    )
+
+
+def _windows(scores: list[int]) -> dict[str, float]:
+    """Overall mean, recent mean, and the gap between recent and everything before.
+
+    `trend` is deliberately zero until there is history on both sides of the
+    window. A trend computed from two debates is noise wearing a plus sign, and
+    the honest rendering of "not enough yet" is a flat line rather than a
+    confident one.
+    """
+    if not scores:
+        return {"average": 0.0, "recent": 0.0, "trend": 0.0}
+
+    def mean(values: list[int]) -> float:
+        return round(sum(values) / len(values), 3)
+
+    recent = scores[-RECENT_DEBATES:]
+    earlier = scores[:-RECENT_DEBATES]
+    return {
+        "average": mean(scores),
+        "recent": mean(recent),
+        "trend": round(mean(recent) - mean(earlier), 3) if earlier else 0.0,
+    }
 
 
 def games_panel(repo: Repository, today: dt.date) -> api.GamesPanel:

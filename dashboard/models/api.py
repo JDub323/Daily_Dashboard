@@ -38,6 +38,7 @@ from .domain import (
     SENTENCES,
     DayCompletion,
     DebateFact,
+    DebateReading,
     DebateSession,
     MathProblem,
     Paper,
@@ -212,6 +213,13 @@ class DebatePositionRequest(DateBody):
 
 class DebateBriefRequest(DateBody):
     pass
+
+
+class DebateReadRequest(DateBody):
+    """Tick or untick one item of the week's reading."""
+
+    reading_id: int
+    read: bool = True
 
 
 class DebateVerdictRequest(DateBody):
@@ -511,6 +519,61 @@ class DebatePanel(Base):
     delta: int | None = None
     """What today's ballot did to the pooled debate rating."""
 
+    reading: list[DebateReading] = Field(default_factory=list)
+    """The week's assigned reading, required articles first.
+
+    Carried on every day of the week, not only the reading day: the debate
+    prompt quotes what you marked as read, and Thursday should be able to tick
+    the piece it did not get to on Sunday.
+    """
+
+    unread_required: int = 0
+    """Required articles still unticked. What the reading day is waiting on."""
+
+    week_start: dt.date | None = None
+
+
+class RubricTrend(Base):
+    """One ballot line's record across every scored debate.
+
+    The thing the whole feature was asked for -- "you don't improve what you
+    don't measure" -- and the reason the rubric is eight fixed lines rather
+    than a number. A rating says you are getting better; this says at what.
+    """
+
+    key: str
+    label: str
+    scores: list[int] = Field(default_factory=list)
+    """0/1/2 per debate, oldest first."""
+
+    average: float = 0.0
+    recent: float = 0.0
+    """Mean over the last `RECENT_DEBATES`, so a line you have fixed stops
+    being dragged down by the month you had not."""
+
+    trend: float = 0.0
+    """`recent` minus the mean of everything before it. Positive is improving.
+    Zero until there is enough history for the two windows to differ, which is
+    honest rather than flat -- a trend computed from two debates is noise."""
+
+
+class FoulCount(Base):
+    kind: str
+    count: int
+
+
+class ConvictionPoint(Base):
+    """What you thought, and how sure, on one day."""
+
+    date: dt.date
+    issue: str
+    confidence: int
+    position: str
+    moved: bool = False
+    """The debate changed your stated position. Counted rather than judged --
+    changing your mind is neither the goal nor a failure, but never doing it
+    over six months is worth being able to see."""
+
 
 class HealthSeries(Base):
     metric: HealthMetric
@@ -606,6 +669,29 @@ class AreaSeries(Base):
     area: str
     points: list[tuple[dt.date, int]] = Field(default_factory=list)
     events: int
+
+
+class DebateHistory(Base):
+    """Everything retrospective about the debate that is not in the panel.
+
+    Below `AreaSeries` because it reuses it for the per-issue rating lines.
+
+    Its own endpoint rather than part of `/api/history`, because it is fetched
+    by one panel on one tab and because the ballot scorecards it reads are the
+    largest rows in the schema -- shipping them with the boot payload would
+    make every page load carry six months of debate.
+    """
+
+    debates: int = 0
+    lines: list[RubricTrend] = Field(default_factory=list)
+    fouls: list[FoulCount] = Field(default_factory=list)
+    voided: int = 0
+    """Ballot lines zeroed for claiming a point with no quotation. A count
+    worth watching: a judge that pads is one whose other numbers read high."""
+
+    issues: list[AreaSeries] = Field(default_factory=list)
+    conviction: list[ConvictionPoint] = Field(default_factory=list)
+    scores: list[tuple[dt.date, float]] = Field(default_factory=list)
 
 
 class DayLogEntry(Base):

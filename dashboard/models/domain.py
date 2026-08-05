@@ -396,6 +396,39 @@ class Scorecard(Base):
     you assume is not."""
 
 
+class DebateReading(Base):
+    """One item of the week's reading: a long-form article, or a book.
+
+    Both in one table because the panel lists them together and the only real
+    difference is which fields are populated -- an article has a publisher and
+    a date, a book has an author and a lean. A second table would be two
+    queries and one more join for a distinction the reader does not make.
+    """
+
+    id: int | None = None
+    week_start: dt.date
+    """The Sunday the week opens on. Not the day it is read."""
+
+    issue: str
+    subarea: str
+    kind: str = Field(pattern=r"^(article|book)$")
+
+    title: str
+    url: Url | None = None
+    author: str | None = None
+    publisher: str | None = None
+    published: dt.date | None = None
+    summary: str | None = None
+
+    lean: str | None = None
+    """`left` / `right` / `neither` for a book; None for an article."""
+
+    required: bool = True
+    """Books are never required -- see the CHECK in migration 11."""
+
+    read_on: dt.date | None = None
+
+
 class DebateSession(Base):
     """The day's debate, from opening the issue to pasting the ballot."""
 
@@ -406,6 +439,14 @@ class DebateSession(Base):
     subarea: str
     angle: str
     motion: str
+    motion_source: str | None = None
+    """`batch` when the 3am task resolved it against the news, `template` when
+    it is the frame the opponent sharpens itself. None predates the column."""
+
+    motion_note: str | None = None
+    """What makes it live right now. Only the batch produces one."""
+
+    motion_url: Url | None = None
     format: str
     side: DebateSide
     anchor: Rating

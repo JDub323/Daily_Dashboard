@@ -93,7 +93,7 @@ function subject(panel) {
   );
 }
 
-function readingList(session) {
+function headlines(session) {
   if (!session.readings.length) {
     return el("div.faint.gap", {
       text: "nothing on this issue in today's feeds — argue from the dossier, or add a "
@@ -101,10 +101,86 @@ function readingList(session) {
     });
   }
   return el("div", null,
-    el("div.faint.gap", { text: "today's reading" }),
+    el("div.faint.gap", { text: "today's headlines" }),
     el("ul.clean", null,
       ...session.readings.map((r) => el("li", null, link(r.link, r.title))),
     ),
+  );
+}
+
+/**
+ * The week's assigned reading: required articles, then optional, then books.
+ *
+ * Shown every day of the week rather than only on the reading day. The prompt
+ * quotes what you have ticked and the opponent opens by quizzing you on it, so
+ * a piece you finish on Thursday still needs somewhere to be ticked — and
+ * Thursday is exactly when you would otherwise be tempted to claim Sunday's
+ * list was read.
+ */
+function weekReading(panel, redraw) {
+  if (!panel.reading.length) {
+    return panel.reading_day
+      ? el("div.faint.gap", {
+          text: "no reading list for this week — the overnight task has not left one. "
+            + "Today's headlines and the dossier are what there is.",
+        })
+      : null;
+  }
+
+  const tick = (item) =>
+    // `.read` in the selector rather than a `class` prop: `el` passes a class
+    // string to classList.add, and an empty one throws rather than being
+    // ignored — which is a whole panel that fails to render for the sake of a
+    // tick box that has not been ticked.
+    el(`button.tiny${item.read_on ? ".read" : ""}`, {
+      text: item.read_on ? "✓" : "○",
+      title: item.read_on ? `read ${item.read_on} — click to untick` : "mark as read",
+      onclick: async () => {
+        put("debate", await api.post("/api/debate/read", {
+          reading_id: item.id,
+          read: !item.read_on,
+        }));
+        redraw();
+      },
+    });
+
+  const article = (item) =>
+    el(`li.reading${item.read_on ? ".read" : ""}`, null,
+      tick(item),
+      " ",
+      item.url ? link(item.url, item.title) : el("span", { text: item.title }),
+      item.required ? el("span.tag", { text: "required" }) : null,
+      item.publisher ? el("span.faint", { text: ` ${item.publisher}` }) : null,
+      item.summary ? el("div.dim.small", { text: item.summary }) : null,
+    );
+
+  // A book is a standing offer, not a task, so it gets no tick box — the
+  // schema will not let one be required and the panel should not imply it is.
+  const book = (item) =>
+    el("li.reading", null,
+      el("span.tag", { text: item.lean }),
+      " ",
+      item.url ? link(item.url, item.title) : el("span", { text: item.title }),
+      item.author ? el("span.faint", { text: ` — ${item.author}` }) : null,
+      item.summary ? el("div.dim.small", { text: item.summary }) : null,
+    );
+
+  const articles = panel.reading.filter((r) => r.kind === "article");
+  const books = panel.reading.filter((r) => r.kind === "book");
+
+  return el("div.gap", null,
+    el("div.faint", {
+      text: panel.unread_required
+        ? `this week's reading · ${panel.unread_required} required piece(s) left`
+        : "this week's reading · all required pieces read ✓",
+    }),
+    articles.length ? el("ul.clean", null, ...articles.map(article)) : null,
+    books.length
+      ? el("div", null,
+          el("div.faint.gap", { text: "books · optional, one from each side" }),
+          el("ul.clean", null, ...books.map(book)),
+        )
+      : null,
   );
 }
 
@@ -334,9 +410,11 @@ function prep(panel, redraw) {
 
   return el("div", null,
     subject(panel),
+    motionLine(session),
     el("div.dim.gap", { text: panel.angle_brief ?? "" }),
     sideLine(session),
-    readingList(session),
+    weekReading(panel, redraw),
+    headlines(session),
     positionBox(session, { after: false }),
     factBox(panel, redraw),
     el("div.row.divider", null,
@@ -347,6 +425,32 @@ function prep(panel, redraw) {
           : `${panel.min_facts - panel.facts_today.length} more fact(s) — the prompt argues from them`,
       }),
     ),
+  );
+}
+
+/**
+ * The resolution, when the overnight task wrote one.
+ *
+ * Nothing is drawn for a template frame — "US policy on X" restates the
+ * sub-area already above it, and a line that adds nothing teaches you to skip
+ * the ones that do. The `overnight` tag is there so a morning where the task
+ * did not run is visibly different rather than quietly worse.
+ */
+function motionLine(session) {
+  if (session.motion_source !== "batch") return null;
+  return el("div.motion.gap", null,
+    el("div", null,
+      el("span.tag", { text: "overnight" }),
+      " ",
+      el("span", { text: session.motion }),
+    ),
+    session.motion_note
+      ? el("div.dim.small", null,
+          session.motion_note,
+          session.motion_url ? " " : null,
+          session.motion_url ? link(session.motion_url, "source ↗") : null,
+        )
+      : null,
   );
 }
 
@@ -394,9 +498,11 @@ function briefed(panel, redraw) {
 
   return el("div", null,
     subject(panel),
+    motionLine(panel.session),
     sideLine(panel.session),
     promptBlock(panel),
-    readingList(panel.session),
+    weekReading(panel, redraw),
+    headlines(panel.session),
     el("div.faint.divider", { text: "the ballot" }),
     box,
     el("div.row", null, submit, message),
@@ -471,6 +577,13 @@ export default {
     if (!panel.enabled) return "off";
     const session = panel.session;
     if (!session) return `${panel.summary.rating}`;
+    // A reading day never scores, so its one line is the reading rather than a
+    // rating that did not move.
+    if (panel.reading_day) {
+      return panel.reading.length
+        ? `read ${panel.reading.filter((r) => r.read_on).length}/${panel.reading.filter((r) => r.required).length} · ${panel.facts_today.length} fact(s)`
+        : `${panel.facts_today.length} fact(s)`;
+    }
     if (session.score == null) return `${panel.summary.rating} · ${session.status}`;
     const delta = panel.delta == null ? "" : ` ${panel.delta >= 0 ? "+" : ""}${panel.delta}`;
     return `${panel.summary.rating}${delta} · ${Math.round(session.score * 16)}/16`;
@@ -495,7 +608,8 @@ export default {
     else if (panel.reading_day) {
       body = el("div", null,
         subject(panel),
-        readingList(session),
+        weekReading(panel, redraw),
+        headlines(session),
         positionBox(session, { after: false }),
         factBox(panel, redraw),
       );

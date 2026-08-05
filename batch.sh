@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 # The overnight hand-off. Used by the scheduled task that generates the day's
-# math problem so the dashboard never has to pay for one.
+# math problem and the day's debate, so the dashboard never has to pay for
+# either.
 #
-#   ./batch.sh --context             what the generator needs to know
-#   ./batch.sh --validate FILE       the server's checks, run at 3am not 8am
+#   ./batch.sh --context                  what the math generator needs
+#   ./batch.sh --validate FILE            the server's checks, at 3am not 8am
+#
+#   ./batch.sh --debate-context           tonight's debate jobs, and which are due
+#   ./batch.sh --validate-debate FILE     the same, for a motion or reading list
+#
+# `--debate-context` reports two nullable jobs: `motion` on every debate day,
+# and `reading_list` only on the night before the reading day. The task writes
+# whichever it was given and validates each with the one --validate-debate,
+# which tells the two shapes apart by their fields.
 #
 # Deliberately a script rather than a `python -m ...` command line the task
 # writes out for itself. The task reaches this repo as

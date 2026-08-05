@@ -709,6 +709,88 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX debate_fact_date ON debate_fact (date);
         """,
     ),
+    (
+        11,
+        """
+        -- Phase 2: the overnight batch, and the week's reading.
+        --
+        -- No CHECK rebuild this time. Every column here is new and nullable or
+        -- defaulted, and SQLite accepts a CHECK on an added column -- so this
+        -- is migration 7's shape rather than migration 10's, and rating_event
+        -- is not touched at all.
+
+        -- Where today's motion came from. NULL on every session opened before
+        -- this, which is honest: those were opened from the template frame,
+        -- but recording that retroactively would be writing a fact from an
+        -- inference. NULL reads as "before this was tracked".
+        ALTER TABLE debate_session ADD COLUMN motion_source TEXT
+            CHECK (motion_source IS NULL OR motion_source IN ('template', 'batch'));
+
+        -- What makes the motion live right now: the bill number, the ruling,
+        -- the date. Only the batch produces one.
+        ALTER TABLE debate_session ADD COLUMN motion_note TEXT;
+        ALTER TABLE debate_session ADD COLUMN motion_url TEXT;
+
+        -- The week's reading, one row per item.
+        --
+        -- Rows rather than a JSON blob on the session, because two of the
+        -- three things wanted from them are per-item and stateful: whether an
+        -- article has been read, and which of them the day is still waiting
+        -- on. A blob would mean rewriting the whole list to tick one box.
+        --
+        -- Keyed by the Sunday the week opens on, not by the day it is read.
+        -- The list is a property of the week -- that is what makes
+        -- regenerating it idempotent, and what lets Wednesday still see what
+        -- Sunday was given.
+        CREATE TABLE debate_reading (
+            id          INTEGER PRIMARY KEY,
+            week_start  TEXT    NOT NULL
+                                CHECK (week_start IS strftime('%Y-%m-%d', week_start)),
+            issue       TEXT    NOT NULL,
+            subarea     TEXT    NOT NULL,
+
+            kind        TEXT    NOT NULL CHECK (kind IN ('article', 'book')),
+            title       TEXT    NOT NULL CHECK (length(title) >= 2),
+            url         TEXT,
+            author      TEXT,
+            publisher   TEXT,
+            published   TEXT    CHECK (published IS NULL
+                                       OR published IS strftime('%Y-%m-%d', published)),
+            summary     TEXT,
+
+            -- 'left' / 'right' / 'neither' for a book; NULL for an article.
+            -- A book is on a side of the argument, not of tonight's motion.
+            lean        TEXT    CHECK (lean IS NULL OR lean IN ('left', 'right', 'neither')),
+
+            -- Books are always optional; articles are required unless the
+            -- generator says otherwise. A table CHECK below ties the two
+            -- together so a required book cannot be written at all -- 100+
+            -- book recommendations over a cycle is already the part most
+            -- likely to go unread, and one that could block a day is worse.
+            required    INTEGER NOT NULL DEFAULT 1 CHECK (required IN (0, 1)),
+
+            -- NULL until ticked. A date rather than a flag: "when did I read
+            -- this" is the question the dossier will want later, and a
+            -- boolean cannot answer it.
+            read_on     TEXT    CHECK (read_on IS NULL
+                                       OR read_on IS strftime('%Y-%m-%d', read_on)),
+
+            -- Table constraints, and they come last because SQLite says so:
+            -- once a table constraint appears, no further column definition
+            -- may follow it. (Putting the `required` CHECK beside the column
+            -- it talks about failed here with a syntax error on the next
+            -- column, which is not what the message says it is.)
+            CHECK (kind = 'article' OR required = 0),
+
+            -- One row per item per week. Regenerating a list therefore
+            -- upserts rather than duplicating, and a re-run of the 3am task
+            -- cannot double the week's required reading.
+            UNIQUE (week_start, kind, title)
+        ) STRICT;
+
+        CREATE INDEX debate_reading_week ON debate_reading (week_start, kind, id);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

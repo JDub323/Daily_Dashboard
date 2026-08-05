@@ -234,10 +234,32 @@ input.minutes { width: 5.5em; flex: 0 0 auto; text-align: right; }
 .ballot-line { border-top: 1px solid var(--border-soft); padding: 6px 0 3px; }
 .ballot-line > .row { margin: 0; }
 
-/* The remove-a-fact button. Small enough not to compete with the claim it sits
-   after, which is the thing being read. */
+/* The overnight resolution. Bordered on the left rather than boxed: it is a
+   quotation of what the 3am task decided, and it sits inside a panel that is
+   already a card. */
+.motion { border-left: 2px solid var(--gold-dim); padding: 2px 0 2px 10px; }
+
+/* The week's reading. A read item dims rather than striking through — it is
+   still the thing the opponent will quiz you on, so it has to stay readable. */
+li.reading { margin: 6px 0; }
+li.reading.read > a { color: var(--dim); }
+li.reading .tag { margin-left: 6px; }
+
+/* The remove-a-fact button, and the reading tick. Small enough not to compete
+   with the text they sit beside, which is the thing being read. */
 button.tiny { font-size: 10.5px; padding: 0 5px; line-height: 1.5; color: var(--faint); }
 button.tiny:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
+/* A ticked item is gold and hovers gold: unticking is not a destructive act,
+   and a red hover on the only control that undoes a mistake reads as one. */
+button.tiny.read { color: var(--gold); border-color: var(--gold-dim); }
+button.tiny.read:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
+
+/* Per-ballot-line bars on the trends panel. A bar, not a sparkline: eight
+   sparklines of 0/1/2 values is eight pieces of noise, and "how am I doing on
+   this line" has a single-number answer. */
+.bar { height: 3px; background: var(--panel2); border-radius: 2px; margin: 3px 0 1px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 2px; transition: width .25s ease; }
+.bar-ok { background: var(--ok); } .bar-gold { background: var(--gold); } .bar-bad { background: var(--bad); }
 
 select {
   background: var(--bg); border: 1px solid var(--border); color: var(--fg);

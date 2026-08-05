@@ -384,6 +384,16 @@ def _register(app: FastAPI) -> None:
     def debate_today(cfg: Cfg, repo: Repo, date: Today) -> api.DebatePanel:
         return state.debate_panel(cfg, repo, date)
 
+    @app.get("/api/debate/history")
+    def debate_trends(cfg: Cfg, repo: Repo) -> api.DebateHistory:
+        """Per-ballot-line trends, fouls, conviction, per-issue rating lines.
+
+        Undated, like `/api/history` and for the same reason: nothing in it is
+        relative to today, so asking the browser for a day it would not use
+        would be cargo-culting the invariant rather than honouring it.
+        """
+        return state.debate_history(cfg, repo)
+
     @app.post("/api/debate/open")
     def debate_open(cfg: Cfg, repo: Repo, fetch: Fetch, body: api.DebateOpenRequest):
         """Open the day's session, freezing what it is about.
@@ -392,12 +402,11 @@ def _register(app: FastAPI) -> None:
         already has it, so a reload cannot reroll the angle or re-freeze a
         different reading list.
 
-        The readings are frozen here rather than ranked on every render because
-        the headline pool turns over through the day, and a prep list that
-        changed while you were working through it is one you can never finish.
-        A feed outage is not fatal -- the session opens with no readings and the
-        panel says so, because the facts box and the debate are both still
-        usable without them.
+        Three things are picked up here, and all three degrade rather than
+        fail: the overnight motion, the week's reading list, and the day's
+        headlines. A night the 3am task did not run is a less current morning
+        -- the motion falls back to the frame the opponent sharpens itself --
+        and a feed outage means no headlines, not no session.
         """
         cfg_debate = cfg.debate
         week = cfg_debate.week_for(body.date)
@@ -407,20 +416,32 @@ def _register(app: FastAPI) -> None:
         issue = cfg_debate.issue(slug)
         assert issue is not None  # the rotation is built from the issue list
         angle = cfg_debate.angle_for(body.date)
+        batches = cfg.path("batches")
+
+        # The week's reading, stored on first sight and then left alone --
+        # `upsert_readings` never clears `read_on`, so a re-run of the task
+        # cannot untick what you have already read.
+        start = debate.week_start(cfg_debate, body.date)
+        if not repo.readings(start):
+            listing = debate.readings_from_batch(batches, start, slug, subarea)
+            if listing is not None:
+                n = repo.upsert_readings(debate.to_readings(listing, start))
+                log.info("stored %d reading(s) for the week of %s (%s)", n, start, slug)
 
         readings: list[dom.Reading] = []
         try:
             readings = debate.pick_readings(fetch.issue_news(issue).value, issue)
         except (FeedError, *feeds.TRANSPORT_ERRORS):
-            log.warning("no readings for %s; opening without them", slug, exc_info=True)
+            log.warning("no headlines for %s; opening without them", slug, exc_info=True)
 
         if angle is None:
             # A reading day. There is no debate to open, so the session exists
-            # only to hold the readings and give the facts somewhere to hang.
+            # only to hold the headlines and give the facts somewhere to hang.
             # It takes the first angle's format purely so the row's NOT NULLs
             # are satisfiable; nothing rates, so the anchor is never used.
             angle = cfg_debate.angles[0]
 
+        motion = debate.motion_from_batch(batches, body.date, slug, subarea)
         side = debate.side_for(cfg_debate, body.date, angle)
         contra = side is dom.DebateSide.con
         repo.open_debate(
@@ -429,7 +450,10 @@ def _register(app: FastAPI) -> None:
                 issue=slug,
                 subarea=subarea,
                 angle=angle.key,
-                motion=debate.motion_for(issue, subarea),
+                motion=motion.motion if motion else debate.motion_for(issue, subarea),
+                motion_source="batch" if motion else "template",
+                motion_note=motion.note if motion else None,
+                motion_url=motion.source_url if motion else None,
                 format=angle.format,
                 side=side,
                 anchor=cfg_debate.anchor_for(angle, contra=contra),
@@ -437,6 +461,17 @@ def _register(app: FastAPI) -> None:
                 readings=readings,
             )
         )
+        return state.debate_panel(cfg, repo, body.date)
+
+    @app.post("/api/debate/read")
+    def debate_read(cfg: Cfg, repo: Repo, body: api.DebateReadRequest) -> api.DebatePanel:
+        """Tick or untick one item of the week's reading.
+
+        The date is the browser's, and it is what gets stored -- "when did I
+        read this" is a fact about a day, and the only authority on which day
+        that is is the browser.
+        """
+        repo.mark_read(body.reading_id, body.date if body.read else None)
         return state.debate_panel(cfg, repo, body.date)
 
     @app.post("/api/debate/fact")

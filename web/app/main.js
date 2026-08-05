@@ -14,6 +14,7 @@ import calendar from "./panels/calendar.js";
 import chess from "./panels/chess.js";
 import daylog from "./panels/daylog.js";
 import debate from "./panels/debate.js";
+import debateStats, { invalidateDebateHistory } from "./panels/debatestats.js";
 import deck from "./panels/deck.js";
 import { chessElo, mathElo } from "./panels/elo.js";
 import games from "./panels/games.js";
@@ -49,6 +50,9 @@ const WATCHES = {
   // Generating a problem is the one action in the app that spends real money,
   // and the spend strip lives in this panel.
   activity: ["math"],
+  // A scored ballot changes every line on the trends panel, and it is the one
+  // panel on the tab that does not read from the boot payload.
+  "debate-stats": ["debate"],
 };
 
 /** Store keys whose writes make the cached /api/history fetch stale. */
@@ -66,7 +70,7 @@ const PANELS = [
   // math
   math, theorem, deck, mathElo,
   // politics
-  debate, politics,
+  debate, debateStats, politics,
   // newsletters
   reading, misc,
   // games
@@ -134,6 +138,7 @@ async function rollOver() {
   await loadConfig();
   await loadState();
   invalidateHistory();
+  invalidateDebateHistory();
   resetCollapse();
   rerenderAll();
   await renderChips();
@@ -203,6 +208,9 @@ async function boot() {
     if (checkDay()) return;
     renderChips();
     if (keys.some((key) => HISTORY_KEYS.includes(key))) invalidateHistory();
+    // Dropped before the WATCHES redraw below, so the trends panel re-fetches
+    // rather than redrawing the numbers it already had.
+    if (keys.includes("debate")) invalidateDebateHistory();
     for (const [id, watched] of Object.entries(WATCHES)) {
       if (keys.some((key) => watched.includes(key))) rerender(id);
     }

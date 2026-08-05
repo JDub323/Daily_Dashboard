@@ -603,7 +603,9 @@ class Repository:
         ).fetchall()
         return {dt.date.fromisoformat(r[0]): r[1] for r in rows}
 
-    def area_rating_history(self) -> dict[str, list[tuple[dt.date, int]]]:
+    def area_rating_history(
+        self, track: Track = Track.math
+    ) -> dict[str, list[tuple[dt.date, int]]]:
         """`area -> [(date, rating_after)]`, oldest first, measured rows only.
 
         The per-area counterpart to `rating_history`, which is pooled-only
@@ -616,11 +618,15 @@ class Repository:
         trajectories were interpolated by the old backfill and are flagged
         rather than trusted. Plotting them would draw a line through numbers
         nobody measured.
+
+        `track` because the debate's issues are the same idea in a second
+        bucket space, and its per-issue chart wants exactly this query.
         """
         rows = self.conn.execute(
             "SELECT area, date, rating_after FROM rating_event "
-            "WHERE track = 'math' AND area IS NOT NULL AND rating_after IS NOT NULL "
-            "ORDER BY id"
+            "WHERE track = ? AND area IS NOT NULL AND rating_after IS NOT NULL "
+            "ORDER BY id",
+            (Track(track).value,),
         ).fetchall()
         out: dict[str, list[tuple[dt.date, int]]] = {}
         for row in rows:
@@ -775,14 +781,18 @@ class Repository:
         """
         self.conn.execute(
             "INSERT INTO debate_session "
-            "(date, issue, subarea, angle, motion, format, side, anchor, contra, readings) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (date) DO NOTHING",
+            "(date, issue, subarea, angle, motion, motion_source, motion_note, motion_url, "
+            "format, side, anchor, contra, readings) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (date) DO NOTHING",
             (
                 _iso(session.date),
                 session.issue,
                 session.subarea,
                 session.angle,
                 session.motion,
+                session.motion_source,
+                session.motion_note,
+                str(session.motion_url) if session.motion_url else None,
                 session.format,
                 session.side.value,
                 session.anchor,
@@ -793,6 +803,101 @@ class Repository:
         opened = self.debate_session(session.date)
         assert opened is not None  # just inserted, or already there
         return opened
+
+    # -- the week's reading -------------------------------------------------
+
+    def upsert_readings(self, items: list[d.DebateReading]) -> int:
+        """Store one week's reading list, returning how many rows landed.
+
+        `ON CONFLICT (week_start, kind, title)` rather than a delete-then-insert:
+        re-running the 3am task must not clear the ticks off articles already
+        read. Everything describing the item is refreshed; `read_on` is
+        deliberately absent from the SET list, so it survives a regeneration.
+        """
+        for item in items:
+            self.conn.execute(
+                "INSERT INTO debate_reading "
+                "(week_start, issue, subarea, kind, title, url, author, publisher, "
+                "published, summary, lean, required) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (week_start, kind, title) DO UPDATE SET "
+                "issue = excluded.issue, subarea = excluded.subarea, url = excluded.url, "
+                "author = excluded.author, publisher = excluded.publisher, "
+                "published = excluded.published, summary = excluded.summary, "
+                "lean = excluded.lean, required = excluded.required",
+                (
+                    _iso(item.week_start),
+                    item.issue,
+                    item.subarea,
+                    item.kind,
+                    item.title,
+                    str(item.url) if item.url else None,
+                    item.author,
+                    item.publisher,
+                    _iso(item.published),
+                    item.summary,
+                    item.lean,
+                    int(item.required),
+                ),
+            )
+        return len(items)
+
+    def readings(self, week_start: dt.date) -> list[d.DebateReading]:
+        """The week's list: required articles first, then optional, then books.
+
+        Ordered here rather than in the panel because the order is a claim
+        about what the day is waiting on, and that claim belongs with the data.
+        """
+        rows = self.conn.execute(
+            # `kind` ascending puts 'article' before 'book' alphabetically,
+            # which is also the order of obligation -- articles are what the
+            # day waits on and books are a standing offer.
+            "SELECT * FROM debate_reading WHERE week_start = ? "
+            "ORDER BY kind ASC, required DESC, id",
+            (_iso(week_start),),
+        ).fetchall()
+        return [self._reading(r) for r in rows]
+
+    @staticmethod
+    def _reading(row: sqlite3.Row) -> d.DebateReading:
+        data = dict(row)
+        data["required"] = bool(data["required"])
+        return d.DebateReading(**data)
+
+    def mark_read(self, reading_id: int, on: dt.date | None) -> d.DebateReading:
+        """Tick or untick one item. `on=None` unticks -- a box you cannot
+        uncheck is one you hesitate to check."""
+        row = self.conn.execute(
+            "UPDATE debate_reading SET read_on = ? WHERE id = ? RETURNING *",
+            (_iso(on), reading_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"no reading {reading_id}")
+        return self._reading(row)
+
+    def readings_exist(self, issue: str, subarea: str) -> bool:
+        """Has this sub-area ever had a reading list?
+
+        Asked by the 3am task to decide whether to offer books. They are worth
+        offering the first time a sub-area comes round and not the second: over
+        a 26-week cycle the alternative is a hundred-odd recommendations, and
+        the fifth list you have not read stops you reading the first.
+        """
+        return (
+            self.conn.execute(
+                "SELECT 1 FROM debate_reading WHERE issue = ? AND subarea = ? LIMIT 1",
+                (issue, subarea),
+            ).fetchone()
+            is not None
+        )
+
+    def unread_required(self, week_start: dt.date) -> int:
+        """Required articles still unticked -- what the reading day waits on."""
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM debate_reading "
+            "WHERE week_start = ? AND required = 1 AND read_on IS NULL",
+            (_iso(week_start),),
+        ).fetchone()[0]
 
     def set_debate_position(
         self, date: dt.date, position: str, confidence: int | None, *, after: bool

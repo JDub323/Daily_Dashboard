@@ -44,12 +44,16 @@ function tasks() {
       // unreachable on some days would make `perfect_days` (done = total)
       // unreachable with it, and the streak it feeds is the reason the
       // denominator has to stay honest. On a reading day the debt is the
-      // reading — facts logged against the week's issue. On a debate day it is
-      // the ballot.
+      // week's required articles plus the facts they produce; on a debate day
+      // it is the ballot.
+      //
+      // `unread_required` is 0 when the overnight task left no list, so a
+      // night it did not run degrades the reading day to the facts alone
+      // rather than making it impossible.
       id: "debate",
       label: s.debate.reading_day ? "issue reading" : "debate",
       done: s.debate.reading_day
-        ? s.debate.facts_today.length >= s.debate.min_facts
+        ? s.debate.unread_required === 0 && s.debate.facts_today.length >= s.debate.min_facts
         : s.debate.session?.status === "scored",
       panel: "debate",
     },
