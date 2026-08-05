@@ -26,6 +26,7 @@ import { finance, misc, politics } from "./panels/news.js";
 import patterns from "./panels/patterns.js";
 import piano from "./panels/piano.js";
 import reading from "./panels/reading.js";
+import spelling from "./panels/spelling.js";
 import { activity, archive, areas, invalidateHistory } from "./panels/stats.js";
 import theorem from "./panels/theorem.js";
 import word from "./panels/word.js";
@@ -69,8 +70,10 @@ const HISTORY_KEYS = ["math", "chess", "daylog"];
  * layout — there is no separate ordering table to disagree with it.
  */
 const PANELS = [
-  // home — the checklist, then the year, then everything backward-looking
-  todayPanel, activity, word, calendar, daylog, areas, archive,
+  // home — the checklist, then the year, then everything backward-looking.
+  // The bee sits beside the word of the day: both are vocabulary, and the two
+  // chips are adjacent for the same reason.
+  todayPanel, activity, word, spelling, calendar, daylog, areas, archive,
   // math
   math, theorem, deck, mathElo,
   // politics

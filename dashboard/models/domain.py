@@ -344,6 +344,42 @@ class TheoremDraw(Base):
     note: str | None = None
 
 
+# --- spelling ---------------------------------------------------------------
+
+
+class SpellingWord(Base):
+    """One drawn word, frozen onto the round.
+
+    `anchor` is resolved from the tier at draw time and stored, the rule
+    `math_problem.anchor` and `rating_event.opponent` both follow: the tier
+    table is config and the pool is a file, and a round has to go on being
+    scored against what it was drawn as.
+    """
+
+    word: str = Field(min_length=1, max_length=64)
+    tier: str
+    hint: str = ""
+    """Spoken-word disambiguation. `principle` and `principal` sound
+    identical, so without this the bee measures hearing rather than spelling."""
+
+    anchor: Rating
+
+
+class SpellingRound(Base):
+    """One day's five words, and how they went."""
+
+    date: dt.date
+    words: list[SpellingWord] = Field(default_factory=list)
+    answers: list[str] = Field(default_factory=list)
+    """What was typed, in word order. Empty while the round is open."""
+
+    correct: int | None = None
+    """NULL until submitted. Derived server-side from `answers`; the client
+    never sends a score, exactly as it never sends a math outcome's score."""
+
+    status: str = "open"
+
+
 # --- debate ----------------------------------------------------------------
 
 

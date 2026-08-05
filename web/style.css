@@ -200,6 +200,17 @@ input.minutes { width: 5.5em; flex: 0 0 auto; text-align: right; }
 /* ---- reading panel ---- */
 .paper-title { margin: 6px 0; }
 
+/* ---- spelling bee ----
+   One row per word. The box is the widest thing on the line because it is the
+   only thing you touch; everything left of it is context. */
+.spell-row + .spell-row { border-top: 1px solid var(--border-soft); padding-top: 6px; }
+.spell-row > .row { margin: 4px 0 2px; }
+.spell-n { min-width: 1.2em; }
+.spell-hint { margin: 0 0 5px 1.9em; }
+/* Autocorrect and spellcheck are off on this input in markup; the underline a
+   browser draws anyway would be the answer key. */
+input.spell-box { flex: 1; min-width: 140px; }
+
 /* ---- word panel ---- */
 .sentence { margin: 3px 0; }
 .verdict { margin-top: 6px; }
@@ -292,6 +303,10 @@ select {
 .chip.done { border-color: var(--gold-dim); color: var(--gold);
              background: linear-gradient(180deg, rgba(232,180,88,.08), transparent); }
 .chip.done::before { content: "✦ "; }
+/* Optional: tracked and gold when done, but out of the ring's denominator.
+   A dashed border rather than a dimmer one — dim reads as "disabled", and
+   these are perfectly live, just not owed. */
+.chip.optional { border-style: dashed; }
 .completion-ring { color: var(--gold); font-weight: 700; }
 
 /* ---- home: the stat cards beside the heatmap ---- */

@@ -846,6 +846,86 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX theorem_draw_card ON theorem_draw (deck, card_id, date);
         """,
     ),
+    (
+        13,
+        """
+        -- The spelling bee: five words a day, spoken, on their own elo track.
+        --
+        -- The sixth CHECK rebuild of rating_event, by the same 12-step dance
+        -- as migrations 2, 6, 9, 10 and 12, copying every column verbatim by
+        -- explicit list. `track` gains 'spelling'. All three indexes come back.
+
+        CREATE TABLE rating_event_v6 (
+            id             INTEGER PRIMARY KEY,
+            track          TEXT    NOT NULL
+                                   CHECK (track IN ('math', 'chess', 'debate', 'spelling')),
+            date           TEXT    NOT NULL CHECK (date IS strftime('%Y-%m-%d', date)),
+            ref            TEXT    NOT NULL,
+            opponent       INTEGER NOT NULL CHECK (opponent BETWEEN 100 AND 4000),
+            score          REAL    NOT NULL CHECK (score BETWEEN 0.0 AND 1.0),
+            k              INTEGER NOT NULL CHECK (k >= 1),
+            rating_before  INTEGER,
+            rating_after   INTEGER,
+            provenance     TEXT    NOT NULL DEFAULT 'measured'
+                                   CHECK (provenance IN ('measured', 'reconstructed',
+                                                         'lapsed', 'late', 'unlapsed',
+                                                         'theorem')),
+            area           TEXT,
+            CHECK ((rating_before IS NULL) = (rating_after IS NULL)),
+            CHECK ((rating_after IS NULL) = (provenance = 'reconstructed'))
+        ) STRICT;
+
+        INSERT INTO rating_event_v6
+            (id, track, date, ref, opponent, score, k,
+             rating_before, rating_after, provenance, area)
+        SELECT id, track, date, ref, opponent, score, k,
+               rating_before, rating_after, provenance, area
+        FROM rating_event;
+
+        DROP TABLE rating_event;
+        ALTER TABLE rating_event_v6 RENAME TO rating_event;
+        CREATE INDEX rating_event_track_id ON rating_event (track, id);
+        CREATE INDEX rating_event_area ON rating_event (track, area, id);
+        CREATE INDEX rating_event_date ON rating_event (track, date);
+
+        -- One round a day, date-keyed, like every other daily table here --
+        -- which is what makes a reload idempotent rather than a reroll.
+        --
+        -- `words` is the drawn list frozen at open time: word, tier and
+        -- anchor, exactly as `math_problem` freezes its anchor. The pool and
+        -- the tier table are both editable, and a round has to go on being
+        -- scored against what it was drawn as.
+        CREATE TABLE spelling_round (
+            date     TEXT    PRIMARY KEY
+                             CHECK (date IS strftime('%Y-%m-%d', date)),
+            words    TEXT    NOT NULL,           -- JSON, frozen at draw time
+            answers  TEXT    NOT NULL DEFAULT '[]',  -- JSON, what you typed
+            correct  INTEGER CHECK (correct IS NULL OR correct >= 0),
+            status   TEXT    NOT NULL DEFAULT 'open'
+                             CHECK (status IN ('open', 'done')),
+            -- Open iff unscored, the invariant every attempt table here has.
+            CHECK ((status = 'open') = (correct IS NULL))
+        ) STRICT;
+
+        -- Every word ever served, and how it went. This is the draw's memory:
+        -- never-seen words go first, then ones you have missed and are due
+        -- again, then whatever is least recent. Keyed by the word itself, so
+        -- editing spelling.json cannot orphan a history.
+        CREATE TABLE spelling_seen (
+            word        TEXT    PRIMARY KEY,
+            tier        TEXT    NOT NULL,
+            first_seen  TEXT    NOT NULL
+                                CHECK (first_seen IS strftime('%Y-%m-%d', first_seen)),
+            last_seen   TEXT    NOT NULL
+                                CHECK (last_seen IS strftime('%Y-%m-%d', last_seen)),
+            asked       INTEGER NOT NULL DEFAULT 0 CHECK (asked >= 0),
+            missed      INTEGER NOT NULL DEFAULT 0 CHECK (missed >= 0),
+            CHECK (missed <= asked)
+        ) STRICT;
+
+        CREATE INDEX spelling_seen_tier ON spelling_seen (tier, last_seen);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

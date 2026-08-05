@@ -27,6 +27,16 @@ K_HALFLIFE = 8
 MATH_SEED = 1500
 CHESS_SEED = 1400
 
+SPELLING_SEED = 1300
+"""Between the `everyday` and `tricky` anchors.
+
+The premise of the feature is a competent speller who has been letting
+autocorrect do it -- so starting level with the easy tier would assert the
+problem is worse than it is, and starting at the hard one would make the first
+week a run of losses that says nothing. Between them, the first few days find
+the level quickly at K=96 and then settle.
+"""
+
 DEBATE_SEED = 1400
 """Below every format anchor, deliberately.
 

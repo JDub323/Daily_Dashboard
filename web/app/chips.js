@@ -29,8 +29,37 @@ function tasks() {
     { id: "math", label: "math problem", done: s.math.status !== "open", panel: "math" },
     { id: "chess", label: "chess puzzle", done: s.chess.status !== "open", panel: "chess" },
     { id: "word", label: "word of day", done: Boolean(s.word?.grade), panel: "word" },
-    { id: "wordle", label: "wordle", done: Boolean(s.games.wordle_today), panel: "games" },
-    { id: "pokedoku", label: "pokedoku", done: Boolean(s.games.pokedoku_today), panel: "games" },
+    {
+      // Beside the word of the day, because they are the same half of the day
+      // — one grows the vocabulary, the other stops autocorrect quietly taking
+      // the spelling of it away. Different words entirely: the bee draws from
+      // `spelling.json` and never touches what the word panel generated.
+      id: "spelling",
+      label: "spelling bee",
+      done: s.spelling.status === "done",
+      panel: "spelling",
+    },
+    // `optional` — still tracked, still gold when done, but out of the
+    // denominator. These two are the only things on the list that somebody
+    // else schedules: the puzzle exists whether or not it suits your day, and
+    // a ring that says 8/10 because the NYT published a Wordle is measuring
+    // their calendar rather than yours. The streaks and the average in the
+    // games panel are untouched — this changes what a perfect day *requires*,
+    // not what gets recorded.
+    {
+      id: "wordle",
+      label: "wordle",
+      done: Boolean(s.games.wordle_today),
+      panel: "games",
+      optional: true,
+    },
+    {
+      id: "pokedoku",
+      label: "pokedoku",
+      done: Boolean(s.games.pokedoku_today),
+      panel: "games",
+      optional: true,
+    },
     {
       // Done means answered, not merely drawn. The boot payload never draws,
       // so an unopened day shows `today: null` — which is correctly not done.
@@ -76,7 +105,8 @@ function tasks() {
   ].filter(
     (task) =>
       (task.id !== "debate" || s.debate.enabled)
-      && (task.id !== "patterns" || s.patterns.deck_size > 0),
+      && (task.id !== "patterns" || s.patterns.deck_size > 0)
+      && (task.id !== "spelling" || s.spelling.enabled),
   );
 }
 
@@ -85,14 +115,25 @@ export function chipTasks() {
   return tasks();
 }
 
+/** The ones a perfect day is counted from. Optional chips are shown and
+ *  tracked; they are simply not owed. */
+export const required = (list) => list.filter((task) => !task.optional);
+
 /**
  * Jump to the next thing you have not done. The ritual key, `n`.
  *
- * False when there is nothing left, so the caller can say so rather than
- * silently doing nothing — which is indistinguishable from a broken binding.
+ * Required first, and optional only once nothing is owed — so `n` walks the
+ * day you have to do and then offers the games, rather than parking you on
+ * Wordle while the math problem is still open.
+ *
+ * False when there is nothing left at all, so the caller can say so rather
+ * than silently doing nothing — which is indistinguishable from a broken
+ * binding.
  */
 export function openNextUnfinished() {
-  const next = tasks().find((task) => !task.done);
+  const list = tasks();
+  const next =
+    required(list).find((task) => !task.done) ?? list.find((task) => !task.done);
   if (!next) return false;
   focusPanel(next.panel);
   return true;
@@ -115,14 +156,21 @@ let target = null;
 
 export async function renderChips() {
   const list = tasks();
-  const done = list.filter((task) => task.done).length;
+  // The count is over the required ones only. Optional chips still render and
+  // still go gold — what they no longer do is stand between you and a perfect
+  // day. Rows already in `day_completion` keep the total they were written
+  // with, so the heatmap and the streak stay true about the days they describe.
+  const counted = required(list);
+  const done = counted.filter((task) => task.done).length;
+  const extra = list.filter((task) => task.optional && task.done).length;
 
   if (target) {
     mount(target,
       el("div.chips", null,
         ...list.map((task) =>
-          el(`div.chip${task.done ? ".done" : ""}`, {
+          el(`div.chip${task.done ? ".done" : ""}${task.optional ? ".optional" : ""}`, {
             text: task.label,
+            title: task.optional ? "optional — not counted toward the day" : "",
             role: "button",
             tabIndex: 0,
             onclick: () => focusPanel(task.panel),
@@ -133,8 +181,11 @@ export async function renderChips() {
   }
 
   mount(document.querySelector("#st-completion"),
-    el("span.completion-ring", { text: `${done}/${list.length}` }),
-    done === list.length ? " perfect ✦" : " done",
+    el("span.completion-ring", { text: `${done}/${counted.length}` }),
+    done === counted.length ? " perfect ✦" : " done",
+    // Said rather than hidden: a finished optional chip should visibly count
+    // for something, or it reads as a task the ring is ignoring.
+    extra ? el("span.faint", { text: ` · +${extra}` }) : null,
   );
 
   for (const id of ["math", "chess", "debate"]) {
@@ -148,7 +199,7 @@ export async function renderChips() {
   //
   // `completionWrite` also decides which *day* the write belongs to, which is
   // not necessarily today — see its comment.
-  const write = completionWrite(store.state, done, list.length);
+  const write = completionWrite(store.state, done, counted.length);
   if (!write) return;
 
   const row = await api.post("/api/completion", write);

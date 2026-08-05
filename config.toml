@@ -19,6 +19,7 @@ db = "dashboard.db"
 problems = "problems.json"  # hand-curated seed pool, read-only to the server
 metrics = "metrics.jsonl"
 static = "web"        # index.html, style.css, app/*.js, data/, vendor/katex
+spelling = "spelling.json"  # the hand-curated word pool, read-only to the server
 # Rendered issue dossiers, one markdown file per issue. Written by the server,
 # never read by it -- the database is the record and these exist to be grepped.
 dossiers = "dossiers"
@@ -181,6 +182,41 @@ amc = 10
 # One theorem a day, sampled from the deck you curate. The weight of a card is
 # (days since it last appeared - cooldown_days) ** recency_exponent, and zero
 # through the cooldown -- so yesterday's theorem cannot be today's.
+# ---------------------------------------------------------------------------
+# The spelling bee. Five words a day, spoken rather than shown.
+#
+# Costs nothing: the words come from the hand-curated pool in spelling.json,
+# never from a generation. Rated on its own elo track, one result per word
+# against that word's tier anchor — so getting the hard one right is worth
+# more than the easy one, which is the whole reason the ladder ramps.
+[spelling]
+words_per_day = 5
+
+# The ladder, easiest first. One entry per word, each naming a tier below.
+# Two `tricky` slots because that is where most commonly-misspelled words
+# actually live; the ends are the stretch in each direction.
+ladder = ["everyday", "tricky", "tricky", "nasty", "brutal"]
+
+# How long after missing a word before it can come back. Missed words are
+# *preferred* once eligible — the point of this is to stop misspelling the
+# words you misspell, so the ones you got wrong are the ones worth repeating.
+relearn_days = 7
+
+# How long before a word you got *right* may come round again. Long, because
+# repeats should be rare: with ~180 words in the pool and five a day, the pool
+# itself takes about five weeks to cycle, and this stops a thin tier from
+# repeating sooner than that.
+cooldown_days = 30
+
+# Fixed elo anchors per tier, exactly as [math.anchors] works: difficulty is a
+# tier name in spelling.json, never a number, so the scale cannot drift when
+# the pool is edited.
+[spelling.anchors]
+everyday = 1150
+tricky = 1350
+nasty = 1550
+brutal = 1750
+
 [theorems]
 cooldown_days = 1
 recency_exponent = 2.0

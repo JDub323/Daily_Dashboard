@@ -45,6 +45,12 @@ class Track(StrEnum):
     because `n` -- and so K -- must be counted separately: a year of math
     results should not make the debate rating confident."""
 
+    spelling = "spelling"
+    """The spelling bee. Five results a day, one per word, each against that
+    word's tier anchor -- so K falls faster here than anywhere else, which is
+    right: five independent trials a day is a great deal more evidence per day
+    than one problem."""
+
 
 class Provenance(StrEnum):
     measured = "measured"

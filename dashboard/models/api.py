@@ -43,6 +43,7 @@ from .domain import (
     MathProblem,
     Paper,
     RatingEvent,
+    SpellingWord,
     TheoremCard,
     TopicInfo,
     WordGrade,
@@ -251,6 +252,21 @@ class DebateVerdictRequest(DateBody):
     text: str = Field(min_length=2, max_length=20000)
 
 
+class SpellingNewRequest(DateBody):
+    pass
+
+
+class SpellingSubmitRequest(DateBody):
+    """The whole round at once, in word order.
+
+    Answers rather than a score: the client never marks its own work here, for
+    the same reason it never derives a math score. A blank is a wrong answer,
+    which is why the entries may be empty strings.
+    """
+
+    answers: list[str] = Field(max_length=20)
+
+
 class WordleLogRequest(DateBody):
     """Parsed client-side from the share text, posted as structured data."""
 
@@ -449,6 +465,35 @@ class TheoremDeckEntry(Base):
     recalled: int = 0
 
 
+class SpellingPanel(Base):
+    """The bee: today's words, what you typed, and how it went.
+
+    [Not an invariant, deliberately] The words *are* in this payload before the
+    round is marked, unlike the math answer or the theorem statement. They have
+    to be — `speechSynthesis` runs in the browser, so the string it says out
+    loud has to reach it. That is the same bargain the math panel already
+    acknowledges about its answer: declining to render it was never a control,
+    only an inconvenience. Marking still happens server-side, so the *score*
+    is not the client's to decide.
+    """
+
+    enabled: bool = True
+    words: list[SpellingWord] = Field(default_factory=list)
+    answers: list[str] = Field(default_factory=list)
+    marks: list[bool] = Field(default_factory=list)
+    """Per word, once the round is closed. Empty while it is open."""
+
+    correct: int | None = None
+    status: str = "open"
+
+    summary: TrackSummary
+    delta: int | None = None
+    """Net rating change across today's five results."""
+
+    trouble: list[tuple[str, int, int]] = Field(default_factory=list)
+    """`(word, missed, asked)` worst first — the words to look at."""
+
+
 class PatternsPanel(Base):
     """The argument deck: today's card, the deck, and the pattern rating.
 
@@ -641,6 +686,7 @@ class DashboardState(Base):
     chess: ChessPanel
     debate: DebatePanel
     patterns: PatternsPanel
+    spelling: SpellingPanel
     word: WordOfDay | None = None
     games: GamesPanel
     theorems: TheoremsPanel

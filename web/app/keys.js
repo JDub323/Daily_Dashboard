@@ -16,7 +16,7 @@
 //
 // Shift is not in that list, because Shift-Tab is a binding.
 
-import { chipTasks, openNextUnfinished } from "./chips.js";
+import { chipTasks, openNextUnfinished, required } from "./chips.js";
 import { $, el } from "./dom.js";
 import * as nav from "./nav.js";
 import { TABS, activateNth, cycle } from "./tabs.js";
@@ -117,7 +117,9 @@ const BINDINGS = [
 ];
 
 function openHelp() {
-  const tasks = chipTasks();
+  // The required ones, matching the statusline. Two surfaces disagreeing about
+  // how much of the day is left is worse than either number alone.
+  const tasks = required(chipTasks());
   const done = tasks.filter((task) => task.done).length;
   openModal("keyboard", (body) => {
     body.replaceChildren(

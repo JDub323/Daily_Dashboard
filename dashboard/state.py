@@ -16,7 +16,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import NamedTuple
 
-from . import debate, scoring
+from . import debate, scoring, spelling
 from .config import Settings
 from .db.repository import ARGUMENT_AREA, Repository
 from .models import api
@@ -344,6 +344,39 @@ def _windows(scores: list[int]) -> dict[str, float]:
     }
 
 
+def spelling_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.SpellingPanel:
+    """Today's bee.
+
+    Read-only, like everything here: this reports the round, it does not draw
+    one. Drawing is a POST, because a boot that drew would hand you a fresh set
+    of words on any morning you opened the tab and then closed it -- and unlike
+    a theorem, hearing a word is the whole test.
+
+    `marks` is recomputed from the stored answers rather than stored alongside
+    them. They cannot disagree that way, and the comparison is a casefold.
+    """
+    summary = track_summary(repo, Track.spelling)
+    base = {
+        "summary": summary,
+        "enabled": cfg.spelling.enabled,
+        "trouble": repo.spelling_trouble(),
+    }
+    round_ = repo.spelling_round(today)
+    if round_ is None:
+        return api.SpellingPanel(**base)
+
+    done = round_.status != "open"
+    return api.SpellingPanel(
+        **base,
+        words=round_.words,
+        answers=round_.answers,
+        marks=spelling.mark(round_.words, round_.answers) if done else [],
+        correct=round_.correct,
+        status=round_.status,
+        delta=repo.rating_delta(Track.spelling, today) if done else None,
+    )
+
+
 def games_panel(repo: Repository, today: dt.date) -> api.GamesPanel:
     wordle = repo.wordle(today)
     pokedoku = repo.pokedoku(today)
@@ -535,6 +568,7 @@ def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.Dash
         chess=chess_panel(repo, today),
         debate=debate_panel(cfg, repo, today),
         patterns=patterns_panel(repo, today),
+        spelling=spelling_panel(cfg, repo, today),
         word=repo.word(today),
         games=games_panel(repo, today),
         theorems=theorems_panel(repo, today),

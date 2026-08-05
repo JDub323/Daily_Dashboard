@@ -42,7 +42,7 @@ from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import content, debate, feeds, interests, logs, scoring, spend, state
+from . import content, debate, feeds, interests, logs, scoring, spelling, spend, state
 from .config import Settings, load_env, settings
 from .content import ContentError
 from .db import Database, Repository
@@ -619,6 +619,63 @@ def _register(app: FastAPI) -> None:
         repo.set_sentences(body.date, body.sentences)
         repo.set_grade(body.date, grade)
         return api.WordCheckResponse(grade=grade)
+
+    # -- spelling ----------------------------------------------------------
+    #
+    # Free, like the debate: five words come off a curated pool, and the only
+    # work here is choosing them and comparing strings.
+
+    @app.post("/api/spelling/new")
+    def spelling_new(cfg: Cfg, repo: Repo, body: api.SpellingNewRequest) -> api.SpellingPanel:
+        """Draw today's words, or hand back the ones already drawn.
+
+        A POST rather than a GET-that-writes, unlike the theorem draw. Hearing
+        a word *is* the test here, so a round that could be re-requested is one
+        you could reroll until you got five you knew — and `open_spelling_round`
+        makes that impossible, but the verb should say so too.
+        """
+        if not cfg.spelling.enabled:
+            raise LookupError("the spelling bee is not configured")
+        existing = repo.spelling_round(body.date)
+        if existing is not None:
+            return state.spelling_panel(cfg, repo, body.date)
+
+        pool = spelling.load_pool(cfg.path("spelling"))
+        if not pool:
+            raise LookupError(f"no words in the spelling pool at {cfg.path('spelling')}")
+        seen = {
+            word: spelling.Seen(last_seen=last, missed=missed)
+            for word, (last, missed) in repo.spelling_seen().items()
+        }
+        words = spelling.draw(pool, seen, cfg.spelling, body.date)
+        if not words:
+            raise LookupError("the spelling pool has no usable words for today's ladder")
+        repo.open_spelling_round(body.date, words)
+        return state.spelling_panel(cfg, repo, body.date)
+
+    @app.post("/api/spelling/submit")
+    def spelling_submit(cfg: Cfg, repo: Repo, body: api.SpellingSubmitRequest) -> api.SpellingPanel:
+        """Mark the round and rate every word.
+
+        Marking is server-side: the client posts what was typed and nothing
+        else. The words are in its payload — they have to be, for the browser
+        to say them out loud — but the *score* is not its to decide, which is
+        the same split `/api/math/finish` uses.
+        """
+        round_ = repo.spelling_round(body.date)
+        if round_ is None:
+            raise LookupError(f"no spelling round on {body.date}")
+        marks = spelling.mark(round_.words, body.answers)
+        _, events = repo.finish_spelling(body.date, body.answers, marks)
+        log.info(
+            "spelling %s: %d/%d, %s -> %s",
+            body.date,
+            sum(marks),
+            len(marks),
+            events[0].rating_before if events else "-",
+            events[-1].rating_after if events else "-",
+        )
+        return state.spelling_panel(cfg, repo, body.date)
 
     # -- games -------------------------------------------------------------
 

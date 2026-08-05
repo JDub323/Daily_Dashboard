@@ -39,6 +39,7 @@ SEEDS = {
     Track.math: scoring.MATH_SEED,
     Track.chess: scoring.CHESS_SEED,
     Track.debate: scoring.DEBATE_SEED,
+    Track.spelling: scoring.SPELLING_SEED,
 }
 
 ARGUMENT_AREA = "argument-patterns"
@@ -767,6 +768,123 @@ class Repository:
             ).fetchone()
             return d.ChessAttempt(**dict(row)), d.RatingEvent(**dict(ev))
 
+    # -- spelling -----------------------------------------------------------
+
+    def spelling_round(self, date: dt.date) -> d.SpellingRound | None:
+        row = self.conn.execute(
+            "SELECT * FROM spelling_round WHERE date = ?", (_iso(date),)
+        ).fetchone()
+        return d.SpellingRound(**_unpack(row, "words", "answers")) if row else None
+
+    def open_spelling_round(self, date: dt.date, words: list[d.SpellingWord]) -> d.SpellingRound:
+        """Claim the day for a set of words, or hand back the ones it has.
+
+        `ON CONFLICT DO NOTHING` and a re-read, the shape `record_draw` uses:
+        two tabs opening at once both see no round and both insert, and the
+        loser should get today's actual words rather than an IntegrityError.
+        It is also what stops a reload redrawing -- which here would not merely
+        reroll a puzzle but hand you a fresh set after you had heard the first.
+        """
+        self.conn.execute(
+            "INSERT INTO spelling_round (date, words) VALUES (?, ?) ON CONFLICT (date) DO NOTHING",
+            (_iso(date), _json([w.model_dump(mode="json") for w in words])),
+        )
+        opened = self.spelling_round(date)
+        assert opened is not None  # just inserted, or already there
+        return opened
+
+    def finish_spelling(
+        self, date: dt.date, answers: list[str], marks: list[bool]
+    ) -> tuple[d.SpellingRound, list[d.RatingEvent]]:
+        """Close the round and rate every word, atomically.
+
+        One rating event *per word*, each against that word's own anchor, which
+        is what makes the ladder mean anything: missing the `brutal` word costs
+        little and getting it right pays, and the `everyday` word is the other
+        way round. A single event against a mean anchor would score a day that
+        got the hard one and missed the easy one identically to its reverse.
+
+        `WHERE status = 'open'` is the double-submit guard, as everywhere else
+        here: a second tab submitting the same round updates zero rows and
+        raises rather than rating five words twice.
+        """
+        with transaction(self.conn):
+            existing = self.spelling_round(date)
+            if existing is None:
+                raise LookupError(f"no spelling round on {date}")
+            if existing.status != "open":
+                raise ValueError(f"the spelling round on {date} is already done")
+
+            row = self.conn.execute(
+                "UPDATE spelling_round SET status = 'done', answers = ?, correct = ? "
+                "WHERE date = ? AND status = 'open' RETURNING *",
+                (_json(answers), sum(marks), _iso(date)),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"the spelling round on {date} was closed concurrently")
+
+            events = [
+                self._rate_word(date, word, ok)
+                for word, ok in zip(existing.words, marks, strict=False)
+            ]
+            for word, ok in zip(existing.words, marks, strict=False):
+                self._record_word_seen(date, word, ok)
+            return d.SpellingRound(**_unpack(row, "words", "answers")), events
+
+    def _rate_word(self, date: dt.date, word: d.SpellingWord, ok: bool) -> d.RatingEvent:
+        """One elo row against the word's frozen anchor. Caller holds the
+        transaction. Read inside the loop rather than batched, so each word
+        chains off the rating the previous one produced -- five results in a
+        row, exactly as five days of results would be."""
+        n = self.event_count(Track.spelling)
+        before = self.current_rating(Track.spelling)
+        k = scoring.k_factor(n)
+        after = scoring.elo_update(before, word.anchor, 1.0 if ok else 0.0, n)
+        row = self.conn.execute(
+            "INSERT INTO rating_event "
+            "(track, date, ref, opponent, score, k, rating_before, rating_after, provenance) "
+            "VALUES ('spelling', ?, ?, ?, ?, ?, ?, ?, 'measured') RETURNING *",
+            (_iso(date), word.word, word.anchor, 1.0 if ok else 0.0, k, before, after),
+        ).fetchone()
+        return d.RatingEvent(**dict(row))
+
+    def _record_word_seen(self, date: dt.date, word: d.SpellingWord, ok: bool) -> None:
+        """Add the word to the draw's memory. Caller holds the transaction.
+
+        `first_seen` is never moved forward and `asked`/`missed` accumulate, so
+        this is the whole basis for "prefer the ones I keep getting wrong".
+        """
+        self.conn.execute(
+            "INSERT INTO spelling_seen (word, tier, first_seen, last_seen, asked, missed) "
+            "VALUES (?, ?, ?, ?, 1, ?) "
+            "ON CONFLICT (word) DO UPDATE SET last_seen = excluded.last_seen, "
+            "tier = excluded.tier, asked = asked + 1, missed = missed + excluded.missed",
+            (word.word.casefold(), word.tier, _iso(date), _iso(date), 0 if ok else 1),
+        )
+
+    def spelling_seen(self) -> dict[str, tuple[dt.date, int]]:
+        """`word -> (last seen, times missed)`, casefolded. What the draw reads."""
+        return {
+            r[0]: (dt.date.fromisoformat(r[1]), r[2])
+            for r in self.conn.execute("SELECT word, last_seen, missed FROM spelling_seen")
+        }
+
+    def spelling_trouble(self, limit: int = 8) -> list[tuple[str, int, int]]:
+        """`(word, missed, asked)` for the ones you get wrong most, worst first.
+
+        The panel's one backward-looking line. A rating says whether you are
+        improving; this says which words to look at, which is the thing the
+        feature was actually asked for.
+        """
+        return [
+            (r[0], r[1], r[2])
+            for r in self.conn.execute(
+                "SELECT word, missed, asked FROM spelling_seen WHERE missed > 0 "
+                "ORDER BY missed DESC, asked DESC, word LIMIT ?",
+                (limit,),
+            )
+        ]
+
     # -- debate -------------------------------------------------------------
     #
     # Shaped after the math half above rather than after the theorem deck: a
@@ -1070,6 +1188,21 @@ class Repository:
         a lapsed session is no longer `briefed`."""
         cutoff = today - dt.timedelta(days=max(0, grace_days))
         return [self.lapse_debate(date)[1] for date in self.unbriefed_debate_dates(cutoff)]
+
+    def rating_delta(self, track: Track, on: dt.date) -> int | None:
+        """Net rating change on one track on one day, or None if nothing moved.
+
+        Summed rather than read off a single row, because a spelling round
+        writes five events on one date and what happened that day is their net.
+        Pooled rows only (`area IS NULL`), so a per-area chain cannot
+        double-count into it.
+        """
+        row = self.conn.execute(
+            "SELECT SUM(rating_after - rating_before) FROM rating_event "
+            "WHERE track = ? AND date = ? AND area IS NULL AND rating_after IS NOT NULL",
+            (Track(track).value, _iso(on)),
+        ).fetchone()
+        return row[0]
 
     def debate_delta(self, on: dt.date) -> int | None:
         """What that day's ballot did to the pooled debate rating, or None.

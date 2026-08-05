@@ -63,6 +63,11 @@ class PathSettings(Base):
     a file ends up churning on every commit while claiming to be editable.
     """
 
+    spelling: str = "spelling.json"
+    """The hand-curated spelling pool. Read-only to the server, and tracked in
+    git -- unlike `problems.json`, nothing ever appends to this, so it stays
+    hand-editable without churning."""
+
     interests: str = "interests.md"
     """What you want to read, in your own words. Optional -- absent means the
     arXiv candidate stays in arXiv's own order. See `dashboard/interests.py`."""
@@ -302,6 +307,59 @@ class MathSettings(Base):
         the moment the table is edited.
         """
         return sorted(self.anchors, key=lambda t: self.anchors[t])[len(self.anchors) // 2]
+
+
+class SpellingSettings(Base):
+    """The spelling bee. Five words a day, spoken rather than shown.
+
+    Costs nothing per day: the words come from the pool in `spelling.json`.
+    Anchors are per tier and fixed here for the reason `[math.anchors]` is --
+    difficulty is a tier name in the pool file, never a number, so editing the
+    pool cannot drift the rating scale.
+    """
+
+    words_per_day: int = Field(default=5, ge=1, le=20)
+    ladder: list[str] = Field(default_factory=list)
+    """Tier per slot, easiest first. Validated against `anchors` at startup."""
+
+    anchors: dict[str, Rating] = Field(default_factory=dict)
+
+    relearn_days: int = Field(default=7, ge=0, le=365)
+    """How long after missing a word before it can come back -- and once it
+    can, it is *preferred*. Not stopping misspelling the words you misspell is
+    the one way this feature could be busywork."""
+
+    cooldown_days: int = Field(default=30, ge=0, le=3650)
+    """How long before a word you got right may come round again."""
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.ladder and self.anchors)
+
+    @model_validator(mode="after")
+    def _ladder_names_real_tiers(self) -> SpellingSettings:
+        unknown = sorted(set(self.ladder) - set(self.anchors))
+        if unknown:
+            raise ValueError(
+                f"[spelling].ladder names tier(s) {unknown} with no entry in "
+                f"[spelling.anchors] ({sorted(self.anchors)})"
+            )
+        if self.ladder and len(self.ladder) != self.words_per_day:
+            # Two ways to say how many words a day, and they must agree --
+            # otherwise the count silently becomes whichever the draw reads.
+            raise ValueError(
+                f"[spelling].ladder has {len(self.ladder)} entries but "
+                f"words_per_day is {self.words_per_day}"
+            )
+        return self
+
+    def anchor_for(self, tier: str) -> int:
+        """The elo opponent for a word of this tier, or the middle of the
+        table for a tier the pool names and the config does not."""
+        if tier in self.anchors:
+            return self.anchors[tier]
+        by_value = sorted(self.anchors.values())
+        return by_value[len(by_value) // 2] if by_value else 1400
 
 
 class TheoremSettings(Base):
@@ -612,6 +670,7 @@ class Settings(Base):
     llm: LlmSettings
     math: MathSettings
     debate: DebateSettings = Field(default_factory=DebateSettings)
+    spelling: SpellingSettings = Field(default_factory=SpellingSettings)
     theorems: TheoremSettings = Field(default_factory=TheoremSettings)
     markets: MarketSettings = Field(default_factory=MarketSettings)
     calendar: CalendarSettings = Field(default_factory=CalendarSettings)
