@@ -102,6 +102,25 @@ class Provenance(StrEnum):
     threshold anyway."""
 
 
+class Deck(StrEnum):
+    """Which deck a recall card belongs to.
+
+    One table, two decks, because the *machinery* is identical: a card you
+    curate as you meet it, drawn once a day by how long since it last came up,
+    answered in two boxes before anything is revealed, graded, and worth +/-3.
+    Only three things differ, and all three are parameters rather than code --
+    which rating track the result lands on, what a card is generated from, and
+    what the grader is told it is looking at.
+    """
+
+    math = "math"
+    """Theorems. Rated into the math track's area buckets."""
+
+    argument = "argument"
+    """Argument patterns and fallacies -- principal-agent, tragedy of the
+    commons, base-rate neglect. Rated into the debate track."""
+
+
 class DebateStatus(StrEnum):
     """Where the day's session has got to.
 

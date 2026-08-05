@@ -261,6 +261,11 @@ button.tiny.read:hover:not(:disabled) { border-color: var(--gold); color: var(--
 .bar-fill { height: 100%; border-radius: 2px; transition: width .25s ease; }
 .bar-ok { background: var(--ok); } .bar-gold { background: var(--gold); } .bar-bad { background: var(--bad); }
 
+/* A retired card in the argument deck. Dimmed rather than hidden: the list is
+   also where you restore one, and something you cannot see is something you
+   cannot take back. */
+.archive-item.retired { opacity: .5; }
+
 select {
   background: var(--bg); border: 1px solid var(--border); color: var(--fg);
   font: inherit; font-size: 12.5px; padding: 4px 6px; border-radius: 6px; flex: 0 0 auto;

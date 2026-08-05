@@ -363,6 +363,20 @@ DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sun
 """Indexed by `date.weekday()`. Config names days; Python numbers them."""
 
 
+class ArgumentPattern(Base):
+    """One hand-written card for the argument deck.
+
+    Hand-written for the reason `[topic_library]` is: a card that costs nothing
+    and is wrong only in ways you can see beats one regenerated at a fraction
+    of a cent a time. `statement` is prose and deliberately not LaTeX -- this
+    deck shares a table with the theorem cards and nothing else about them.
+    """
+
+    name: str = Field(min_length=2, max_length=120)
+    topic: str = Field(min_length=2, max_length=60)
+    statement: str = Field(min_length=20, max_length=1000)
+
+
 class DebateSettings(Base):
     """The daily debate. See the header comment in config.toml.
 
@@ -375,6 +389,10 @@ class DebateSettings(Base):
     issues: list[DebateIssue] = Field(default_factory=list)
     angles: list[DebateAngle] = Field(default_factory=list)
     anchors: dict[str, Rating] = Field(default_factory=dict)
+
+    patterns: list[ArgumentPattern] = Field(default_factory=list)
+    """The starter argument deck, seeded at startup. Empty is fine -- the deck
+    then starts bare and fills from the ballot and the add box."""
 
     rotation_start: dt.date | None = None
     order: str = Field(default="interleave", pattern=r"^(interleave|sequential)$")
@@ -423,6 +441,12 @@ class DebateSettings(Base):
         dupes = sorted({k for k in keys if keys.count(k) > 1})
         if dupes:
             raise ValueError(f"[[debate.angles]] reuses key(s) {dupes}")
+        names = [p.name for p in self.patterns]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            # Seeding matches on name, so a duplicate here would seed one card
+            # and silently drop the other.
+            raise ValueError(f"[[debate.patterns]] reuses name(s) {dupes}")
         return self
 
     @model_validator(mode="after")

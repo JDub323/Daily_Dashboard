@@ -23,6 +23,7 @@ import markets from "./panels/markets.js";
 import math from "./panels/math.js";
 import metrics from "./panels/metrics.js";
 import { finance, misc, politics } from "./panels/news.js";
+import patterns from "./panels/patterns.js";
 import piano from "./panels/piano.js";
 import reading from "./panels/reading.js";
 import { activity, archive, areas, invalidateHistory } from "./panels/stats.js";
@@ -53,6 +54,9 @@ const WATCHES = {
   // A scored ballot changes every line on the trends panel, and it is the one
   // panel on the tab that does not read from the boot payload.
   "debate-stats": ["debate"],
+  // …and it names the patterns the argument deck offers to add, so that panel
+  // has to redraw when a ballot lands too.
+  patterns: ["debate"],
 };
 
 /** Store keys whose writes make the cached /api/history fetch stale. */
@@ -70,7 +74,7 @@ const PANELS = [
   // math
   math, theorem, deck, mathElo,
   // politics
-  debate, debateStats, politics,
+  debate, patterns, debateStats, politics,
   // newsletters
   reading, misc,
   // games

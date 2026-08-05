@@ -47,6 +47,9 @@ web_search_cost_usd = 0.01
 # every day, so the difference compounds.
 [llm.models]
 theorem-grade = "claude-haiku-4-5"
+# The same argument, for the same shape of job: grading a recalled argument
+# pattern is a comparison against a statement already on file.
+pattern-grade = "claude-haiku-4-5"
 
 # Approx $/token for the retrieval-efficiency log. Sonnet 5 is at intro
 # pricing through 2026-08-31; update when it reverts to $3/$15.
@@ -347,6 +350,104 @@ brief = """
 Skip whether it is right and ask whether it can be done: which agency, under \
 what authority, with what money and headcount, on what timeline, and what \
 breaks first. Vagueness about who does the work is the failure to hunt for."""
+
+# ---------------------------------------------------------------------------
+# The starter argument deck.
+#
+# The same recall machinery as the theorem deck, pointed at argument patterns
+# instead: one card a day, drawn by how long since it last came up, answered
+# in two boxes before anything is revealed, graded, worth +/-3.
+#
+# Hand-written rather than generated, for the reason `[topic_library]` is: a
+# card that costs nothing and is wrong only in ways you can see beats one
+# regenerated at a fraction of a cent a time. These are seeded into the deck at
+# startup if a card of the same name is not already there, so editing a
+# statement here does *not* rewrite a card you have already been graded on --
+# archive it in the panel and it will come back with the new text.
+#
+# You will not learn a pattern from a card. You learn it by being hit with one
+# and not seeing it coming, which is why the ballot is asked to name the
+# patterns that showed up and the panel offers to add them.
+
+[[debate.patterns]]
+name = "Principal-agent problem"
+topic = "incentives"
+statement = "Whenever one party acts on another's behalf, their interests diverge and the principal cannot fully observe the agent. Most 'why doesn't the agency just do X' arguments die here: the agency's incentives are not the public's."
+
+[[debate.patterns]]
+name = "Tragedy of the commons"
+topic = "incentives"
+statement = "A shared resource with private benefit and socialised cost gets over-consumed, even when every user knows it. The argument is about which of the three fixes applies — property rights, regulation, or community norms — not whether the problem is real."
+
+[[debate.patterns]]
+name = "Base-rate neglect"
+topic = "statistics"
+statement = "Judging how likely something is from how vivid or representative the evidence is, ignoring how common it is to begin with. The tell is a striking anecdote standing in for a rate."
+
+[[debate.patterns]]
+name = "Concentrated benefits, diffuse costs"
+topic = "incentives"
+statement = "A policy costing everyone a little and paying a few a lot will be defended far harder than it is opposed, regardless of whether it is good. Explains persistence, not merit — using it to argue a policy is *wrong* is the mistake."
+
+[[debate.patterns]]
+name = "Baptists and bootleggers"
+topic = "incentives"
+statement = "A restriction backed at once by those who think it moral and those who profit from it. The coalition tells you nothing about whether the restriction is right, and everything about why it is hard to remove."
+
+[[debate.patterns]]
+name = "Seen and unseen (opportunity cost)"
+topic = "economics"
+statement = "The visible effect of a policy is not its net effect: what the same money, time or attention would otherwise have done is invisible and usually uncounted. Every 'this created N jobs' claim owes an account of the unseen."
+
+[[debate.patterns]]
+name = "Chesterton's fence"
+topic = "reasoning"
+statement = "Do not remove a rule until you can state why it was put there. A burden-of-proof move, not a conservative one — it is discharged by giving the reason, and it fails when the reason is known and bad."
+
+[[debate.patterns]]
+name = "Motte and bailey"
+topic = "rhetoric"
+statement = "Arguing a strong, useful claim (the bailey) and retreating under fire to a weak, obvious one (the motte) as though they were the same claim. Caught by asking which version is being defended right now."
+
+[[debate.patterns]]
+name = "Isolated demand for rigor"
+topic = "rhetoric"
+statement = "Applying a standard of evidence to an opponent's claim that you do not apply to your own. Not a fallacy in the claim attacked — the attack may be correct — but a reason to check the symmetry."
+
+[[debate.patterns]]
+name = "Negative externality"
+topic = "economics"
+statement = "A cost of a transaction borne by someone outside it, so the price is wrong and too much of the thing gets produced. The argument is over the size of the cost and who should internalise it, rarely over whether it exists."
+
+[[debate.patterns]]
+name = "Regulatory capture"
+topic = "institutions"
+statement = "A regulator comes to serve the industry it regulates, because that industry supplies its information, its staff and its political cover. Predicts that a rule will be written to raise rivals' costs rather than to protect anyone."
+
+[[debate.patterns]]
+name = "Second-best, and the nirvana fallacy"
+topic = "reasoning"
+statement = "Comparing a real policy against a perfect alternative that is not on the table. The comparison that matters is against the other thing that could actually happen, including doing nothing."
+
+[[debate.patterns]]
+name = "Selection effect"
+topic = "statistics"
+statement = "The sample was not drawn at random from the population the claim is about — people selected into it, or out of it, for reasons related to the outcome. Ask how someone got into the data before asking what the data says."
+
+[[debate.patterns]]
+name = "Revealed versus stated preference"
+topic = "reasoning"
+statement = "What people say they want and what they choose under real constraints diverge. Powerful against survey evidence and easy to over-apply: a constrained choice reveals the constraint as much as the preference."
+
+[[debate.patterns]]
+name = "Rights as trumps"
+topic = "ethics"
+statement = "A rights claim refuses the trade-off rather than losing it — it says the aggregate calculation does not get to run. Recognising it is what stops a utilitarian and a deontologist arguing past each other for an hour."
+
+[[debate.patterns]]
+name = "Slippery slope, valid and invalid"
+topic = "reasoning"
+statement = "Valid when a mechanism carries you down the slope — a precedent, an incentive, an institution. Invalid when the slope is asserted. Always ask for the step, not the destination."
 
 # ---------------------------------------------------------------------------
 # The issues. Each one is a rating bucket, and its sub-areas are weeks.

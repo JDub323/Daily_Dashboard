@@ -46,12 +46,13 @@ from . import content, debate, feeds, interests, logs, scoring, spend, state
 from .config import Settings, load_env, settings
 from .content import ContentError
 from .db import Database, Repository
+from .db.repository import ARGUMENT_AREA
 from .debate import DebateError
 from .feeds import FeedError, Feeds
 from .llm import LlmError
 from .models import api
 from .models import domain as dom
-from .models.common import PaperStatus, Track
+from .models.common import Deck, PaperStatus, Track
 from .models.domain import PokedokuResult, WordleResult
 
 log = logs.get(__name__)
@@ -106,6 +107,43 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         app.state.db.close()
+
+
+def _seed_patterns(cfg: Settings, repo: Repository, date: dt.date) -> None:
+    """Put the hand-written argument cards in the deck, once.
+
+    Matched on name, so this is idempotent across restarts and does not rewrite
+    a card you have already been graded on -- see `Repository.seed_cards`. A
+    card you archive stays archived, because the row still exists.
+
+    `date` is the browser's, not the server's, and that is why this is called
+    from `/api/state` rather than from `lifespan` where it started: [Invariant
+    1] says the server never asks its own clock what day it is, and `added` is
+    a date on a row. There is no browser at startup, so there is no honest
+    answer to "what day is it" there.
+
+    Failure is logged and swallowed. A starter deck is a convenience, and a
+    convenience that can take the boot payload down is not one.
+    """
+    if not cfg.debate.patterns:
+        return
+    cards = [
+        dom.TheoremCard(
+            name=pattern.name,
+            statement=pattern.statement,
+            topic=pattern.topic,
+            added=date,
+            deck=Deck.argument,
+        )
+        for pattern in cfg.debate.patterns
+    ]
+    try:
+        added = repo.seed_cards(cards)
+    except Exception:
+        log.exception("could not seed the argument deck; continuing without it")
+        return
+    if added:
+        log.info("seeded %d argument pattern(s) into the deck", added)
 
 
 def create_app(cfg: Settings | None = None) -> FastAPI:
@@ -223,6 +261,7 @@ def _register(app: FastAPI) -> None:
         # clock. It is idempotent and a no-op on all but the first load of the
         # day, and doing it here means the rating in the payload already
         # accounts for it rather than being a figure the next reload contradicts.
+        _seed_patterns(cfg, repo, date)
         lapses = repo.reconcile_math_lapses(date)
         lapses += repo.reconcile_debate_lapses(date, cfg.debate.grace_days)
         for event in lapses:
@@ -608,7 +647,7 @@ def _register(app: FastAPI) -> None:
         age the deck, and the card that would have come up is still waiting.
         The lapse rule in `scoring` makes the same call about math problems.
         """
-        _draw_theorem(cfg, repo, date)
+        _draw_card(cfg, repo, date, Deck.math)
         return state.theorems_panel(repo, date)
 
     @app.post("/api/theorem/add")
@@ -666,6 +705,83 @@ def _register(app: FastAPI) -> None:
     def theorem_archive(repo: Repo, body: api.TheoremArchiveRequest) -> api.TheoremsPanel:
         repo.set_archived(body.card_id, body.archived)
         return state.theorems_panel(repo, body.date)
+
+    # -- argument patterns -------------------------------------------------
+    #
+    # The theorem deck's machinery pointed at a second deck. The routes are
+    # separate rather than a `deck` parameter on the theorem ones because they
+    # return different payloads and because a client that could pass the deck
+    # in could pass the wrong one -- and the wrong one here means a pattern
+    # recall moving a math area rating.
+
+    @app.get("/api/pattern/today")
+    def pattern_today(cfg: Cfg, repo: Repo, date: Today) -> api.PatternsPanel:
+        """Today's pattern, drawn on first ask and fixed from then on.
+
+        A GET that writes, exactly as `/api/theorem/today` is, and for the
+        identical reason: the draw is the act of surfacing, and surfacing has
+        to be idempotent per day or a reload rerolls it.
+        """
+        _draw_card(cfg, repo, date, Deck.argument)
+        return state.patterns_panel(repo, date)
+
+    @app.post("/api/pattern/add")
+    def pattern_add(cfg: Cfg, repo: Repo, body: api.PatternAddRequest) -> api.PatternsPanel:
+        """Add a card by name, generating its statement.
+
+        A name already in the deck is a no-op rather than a second card and a
+        second generation: the usual way this is reached is pressing a button
+        beside a pattern the ballot named, and the same pattern gets named on
+        plenty of nights.
+        """
+        existing = repo.card_named(body.prompt, Deck.argument)
+        if existing is None:
+            card = content.pattern_from_prompt(cfg, body.date, body.prompt)
+            if repo.card_named(card.name, Deck.argument) is None:
+                repo.add_card(card)
+            else:
+                # The generation resolved a phrase to a card already held --
+                # "the commons thing" to "Tragedy of the commons". Paid for,
+                # and worth it: the alternative is a duplicate in the rotation.
+                log.info("%r resolved to %r, already in the deck", body.prompt, card.name)
+        return state.patterns_panel(repo, body.date)
+
+    @app.post("/api/pattern/recall")
+    def pattern_recall(cfg: Cfg, repo: Repo, body: api.PatternRecallRequest) -> api.PatternsPanel:
+        """Grade a written recall, and let it move the pattern rating.
+
+        The grading happens before the transaction, as `/api/theorem/recall`
+        does: it is a network call of a few seconds, and holding SQLite's write
+        lock across one would block every other write in the app for its
+        duration. The double-submit guard is in the UPDATE's WHERE clause.
+        """
+        drawn = repo.draw(body.date, Deck.argument)
+        if drawn is None:
+            raise LookupError(f"no pattern drawn on {body.date}")
+        if drawn.explained is not None:
+            raise ValueError(f"the pattern drawn on {body.date} was already graded")
+
+        card = repo.card(drawn.card_id)
+        if card is None:
+            raise LookupError(f"pattern card {drawn.card_id} is missing")
+
+        grade = content.grade_pattern(cfg, body.date, card, body.explanation, body.application)
+        repo.record_recall(
+            body.date,
+            explanation=body.explanation,
+            application=body.application,
+            grade=grade,
+            # Fixed, not chosen: a pattern applies everywhere, so there is no
+            # issue it belongs to and nothing for the grader to pick.
+            area=ARGUMENT_AREA,
+            deck=Deck.argument,
+        )
+        return state.patterns_panel(repo, body.date)
+
+    @app.post("/api/pattern/archive")
+    def pattern_archive(repo: Repo, body: api.PatternArchiveRequest) -> api.PatternsPanel:
+        repo.set_archived(body.card_id, body.archived)
+        return state.patterns_panel(repo, body.date)
 
     # -- papers ------------------------------------------------------------
 
@@ -837,10 +953,14 @@ def _domain_pokedoku(body: api.PokedokuLogRequest) -> PokedokuResult:
     return PokedokuResult(**body.model_dump())
 
 
-def _draw_theorem(
-    cfg: Settings, repo: Repository, date: dt.date, rng: random.Random | None = None
+def _draw_card(
+    cfg: Settings,
+    repo: Repository,
+    date: dt.date,
+    deck: Deck = Deck.math,
+    rng: random.Random | None = None,
 ) -> None:
-    """Pick the day's theorem, unless the day already has one.
+    """Pick the day's card from one deck, unless that deck already drew today.
 
     Two rules sit in front of the weighted sample:
 
@@ -853,17 +973,21 @@ def _draw_theorem(
       inventing one. New cards drain in the order you added them, one a day.
 
     Everything after that is `scoring.draw_weight` over the active deck.
-    """
-    if repo.draw(date) is not None:
-        return
-    deck = repo.deck()
-    if not deck:
-        return
-    last = repo.last_drawn()
 
-    unseen = [c for c in deck if c.id not in last]
+    `deck` is a parameter rather than two copies of this function: the argument
+    deck wants the identical scheduler, and the recency curve is the one piece
+    of this feature that has already been tuned once.
+    """
+    if repo.draw(date, deck) is not None:
+        return
+    cards = repo.cards(deck)
+    if not cards:
+        return
+    last = repo.last_drawn(deck)
+
+    unseen = [c for c in cards if c.id not in last]
     if unseen:
-        repo.record_draw(date, unseen[0].id)
+        repo.record_draw(date, unseen[0].id, deck)
         return
 
     weights = [
@@ -872,9 +996,9 @@ def _draw_theorem(
             cooldown=cfg.theorems.cooldown_days,
             exponent=cfg.theorems.recency_exponent,
         )
-        for c in deck
+        for c in cards
     ]
-    repo.record_draw(date, deck[scoring.weighted_draw(weights, rng)].id)
+    repo.record_draw(date, cards[scoring.weighted_draw(weights, rng)].id, deck)
 
 
 def _generate(cfg: Settings, db: Database, date: dt.date) -> Iterator[dict[str, Any]]:

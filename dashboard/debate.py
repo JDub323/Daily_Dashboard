@@ -595,6 +595,13 @@ def build_prompt(
     add("- Do not total the scores or state a rating. Report the lines; the arithmetic")
     add("  happens elsewhere and is not yours to shade.")
     add("")
+    add("Finally, `patterns`: name up to three argument patterns, reasoning structures")
+    add("or named fallacies that actually showed up tonight — ones you used against me,")
+    add('or ones I reached for. Standard names only ("principal-agent problem",')
+    add('"motte and bailey", "base-rate neglect"), no explanation. Leave it empty')
+    add("rather than padding it; these become flashcards, and a made-up name is a card")
+    add("I will spend a month failing to recall.")
+    add("")
     add("Output **exactly one** fenced JSON block, and nothing after it:")
     add("")
     add("```json")
@@ -611,6 +618,7 @@ def build_prompt(
                     {"key": "…one object per line above, all eight…"},
                 ],
                 "fouls": [{"kind": FOULS[0].key, "quote": "my words, verbatim"}],
+                "patterns": ["Principal-agent problem"],
                 "verdict": "one or two sentences: the single thing to fix next time",
             },
             indent=2,
@@ -705,11 +713,21 @@ def parse_scorecard(text: str) -> d.Scorecard:
         and (kind := str(entry.get("kind", "")).strip().casefold()) in FOUL_KEYS
     ]
 
+    # Deduped case-insensitively and capped at three, because these become
+    # flashcards: a judge that lists six is one whose list is padding, and the
+    # cost of padding here is a month of failing to recall an invented name.
+    patterns: list[str] = []
+    for name in raw.get("patterns") or []:
+        cleaned = str(name).strip()[:120]
+        if cleaned and cleaned.casefold() not in {p.casefold() for p in patterns}:
+            patterns.append(cleaned)
+
     return d.Scorecard(
         # Rubric order, not the order the judge happened to write them in, so
         # the panel reads the same way every day.
         items=[items[key] for key in RUBRIC_KEYS if key in items],
         fouls=fouls,
+        patterns=patterns[:3],
         verdict=str(raw.get("verdict") or "")[:600],
     )
 

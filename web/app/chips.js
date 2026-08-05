@@ -58,13 +58,26 @@ function tasks() {
       panel: "debate",
     },
     {
+      // Same rule as the theorem chip: done means answered, not merely drawn.
+      // Hidden when the deck is empty rather than permanently red — an
+      // unfinishable task would put a perfect day out of reach.
+      id: "patterns",
+      label: "argument pattern",
+      done: s.patterns.recalled !== null,
+      panel: "patterns",
+    },
+    {
       id: "paper",
       label: "paper triage",
       done: Boolean(s.papers.surfaced) && s.papers.surfaced.status !== "surfaced",
       panel: "reading",
     },
     { id: "log", label: "day log", done: Boolean(s.daylog), panel: "log" },
-  ].filter((task) => task.id !== "debate" || s.debate.enabled);
+  ].filter(
+    (task) =>
+      (task.id !== "debate" || s.debate.enabled)
+      && (task.id !== "patterns" || s.patterns.deck_size > 0),
+  );
 }
 
 /** Today's tasks, in chip order. What the cheatsheet counts. */

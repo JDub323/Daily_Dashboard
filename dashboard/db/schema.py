@@ -791,6 +791,61 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX debate_reading_week ON debate_reading (week_start, kind, id);
         """,
     ),
+    (
+        12,
+        """
+        -- Phase 3: the theorem deck becomes two decks.
+        --
+        -- Argument patterns -- principal-agent, tragedy of the commons,
+        -- base-rate neglect -- want exactly the machinery the theorem deck
+        -- already has: curate a card when you meet one, draw one a day
+        -- weighted by how long since it last appeared, answer two boxes before
+        -- anything is revealed, get graded, move +/-3. Building a parallel set
+        -- of tables for that would be copying a scheduler, a draw log and a
+        -- grader to change which rating track the answer lands on.
+        --
+        -- So: a `deck` column on both tables, defaulting to 'math', which is
+        -- what every existing row is.
+
+        ALTER TABLE theorem_card ADD COLUMN deck TEXT NOT NULL DEFAULT 'math'
+            CHECK (deck IN ('math', 'argument'));
+
+        -- `theorem_draw` needs its PRIMARY KEY widened from (date) to
+        -- (date, deck), so this one is the 12-step rebuild. One draw per deck
+        -- per day: both decks must be able to come up on the same morning, and
+        -- with the old key the second would silently lose to the first --
+        -- `record_draw` inserts ON CONFLICT DO NOTHING and re-reads, so the
+        -- symptom would have been the argument card quietly never appearing.
+        CREATE TABLE theorem_draw_v2 (
+            date         TEXT    NOT NULL
+                                 CHECK (date IS strftime('%Y-%m-%d', date)),
+            deck         TEXT    NOT NULL DEFAULT 'math'
+                                 CHECK (deck IN ('math', 'argument')),
+            card_id      INTEGER NOT NULL REFERENCES theorem_card (id)
+                                 ON DELETE CASCADE,
+            recalled     INTEGER CHECK (recalled IS NULL OR recalled IN (0, 1)),
+            explanation  TEXT,
+            application  TEXT,
+            explained    INTEGER CHECK (explained IS NULL OR explained IN (0, 1)),
+            applied      INTEGER CHECK (applied IS NULL OR applied IN (0, 1)),
+            note         TEXT,
+            PRIMARY KEY (date, deck)
+        ) STRICT;
+
+        INSERT INTO theorem_draw_v2
+            (date, deck, card_id, recalled, explanation, application,
+             explained, applied, note)
+        SELECT date, 'math', card_id, recalled, explanation, application,
+               explained, applied, note
+        FROM theorem_draw;
+
+        DROP TABLE theorem_draw;
+        ALTER TABLE theorem_draw_v2 RENAME TO theorem_draw;
+
+        -- The recency query is per deck now, so the index leads with it.
+        CREATE INDEX theorem_draw_card ON theorem_draw (deck, card_id, date);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

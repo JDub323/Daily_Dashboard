@@ -142,6 +142,23 @@ class PaperQueueActionRequest(DateBody):
     action: str = Field(pattern=r"^(up|read|drop)$")
 
 
+class PatternAddRequest(DateBody):
+    """ "add motte and bailey" — a name, not a statement. Same bargain the
+    theorem deck makes: adding costs one phrase, and the LLM writes it out."""
+
+    prompt: str = Field(min_length=2, max_length=200)
+
+
+class PatternRecallRequest(DateBody):
+    explanation: str = Field(min_length=3, max_length=2000)
+    application: str = Field(min_length=3, max_length=2000)
+
+
+class PatternArchiveRequest(DateBody):
+    card_id: int
+    archived: bool = True
+
+
 class TheoremNewRequest(DateBody):
     pass
 
@@ -432,6 +449,40 @@ class TheoremDeckEntry(Base):
     recalled: int = 0
 
 
+class PatternsPanel(Base):
+    """The argument deck: today's card, the deck, and the pattern rating.
+
+    Its own payload rather than a second `TheoremsPanel`, because the two
+    panels ask about different things and share only their machinery. This one
+    carries a rating (the theorem panel reads its area rating off the math
+    panel, which has nowhere to put a debate-track number) and the patterns
+    the last ballot named, which is where most cards come from.
+    """
+
+    today: TheoremCard | None = None
+    """[Invariant] `statement` is blanked until the day is graded, exactly as
+    `TheoremsPanel.today` is and for the same reason."""
+
+    recalled: bool | None = None
+    written: TheoremWritten | None = None
+    delta: int | None = None
+
+    deck: list[TheoremDeckEntry] = Field(default_factory=list)
+    deck_size: int = 0
+
+    rating: Rating
+    """The pattern-recall rating: the debate track's `argument-patterns`
+    bucket. Deliberately not one of the issues — see `ARGUMENT_AREA`."""
+
+    events: int = 0
+    """Graded recalls behind that rating. Zero means it is the pooled debate
+    rating standing in, not something earned."""
+
+    suggested: list[str] = Field(default_factory=list)
+    """Patterns the most recent ballot named that are not in the deck yet.
+    Offered as buttons; nothing is added without a press."""
+
+
 class TheoremsPanel(Base):
     today: TheoremCard | None = None
     """Null until the day's draw happens, which is a GET of its own rather
@@ -589,6 +640,7 @@ class DashboardState(Base):
     math: MathPanel
     chess: ChessPanel
     debate: DebatePanel
+    patterns: PatternsPanel
     word: WordOfDay | None = None
     games: GamesPanel
     theorems: TheoremsPanel

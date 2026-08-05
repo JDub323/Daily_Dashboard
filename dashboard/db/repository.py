@@ -24,6 +24,7 @@ from ..models.common import (
     ChessOutcome,
     ChessStatus,
     DebateStatus,
+    Deck,
     Game,
     HealthMetric,
     MathOutcome,
@@ -39,6 +40,21 @@ SEEDS = {
     Track.chess: scoring.CHESS_SEED,
     Track.debate: scoring.DEBATE_SEED,
 }
+
+ARGUMENT_AREA = "argument-patterns"
+"""The bucket an argument-pattern recall rates into, on the debate track.
+
+Deliberately not one of the configured issue slugs, and that is the whole
+design. A pattern like principal-agent is not *about* immigration or Taiwan --
+it applies everywhere -- so filing it under whichever issue the week happened
+to be showing would be an arbitrary attribution that then shows up in the
+per-issue breakdown as evidence about that issue.
+
+Being outside the issue list also keeps it out of the panel strip and the
+trends chart, both of which iterate `cfg.debate.issue_slugs`. It is read in one
+place, the argument deck's own panel, which is where "do I actually know my
+patterns" is the question being asked.
+"""
 
 NOT_ATTEMPTS = (Provenance.lapsed, Provenance.unlapsed, Provenance.theorem)
 """Rows that move the rating without anybody having attempted a *problem*.
@@ -1222,9 +1238,16 @@ class Repository:
 
     def add_card(self, card: d.TheoremCard) -> d.TheoremCard:
         row = self.conn.execute(
-            "INSERT INTO theorem_card (name, statement, topic, added, archived) "
-            "VALUES (?, ?, ?, ?, ?) RETURNING *",
-            (card.name, card.statement, card.topic, _iso(card.added), int(card.archived)),
+            "INSERT INTO theorem_card (name, statement, topic, added, archived, deck) "
+            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+            (
+                card.name,
+                card.statement,
+                card.topic,
+                _iso(card.added),
+                int(card.archived),
+                Deck(card.deck).value,
+            ),
         ).fetchone()
         return d.TheoremCard(**dict(row))
 
@@ -1232,18 +1255,54 @@ class Repository:
         row = self.conn.execute("SELECT * FROM theorem_card WHERE id = ?", (card_id,)).fetchone()
         return d.TheoremCard(**dict(row)) if row else None
 
-    def deck(self, *, include_archived: bool = False) -> list[d.TheoremCard]:
-        """The deck, oldest first. Archived cards are excluded by default --
+    def card_named(self, name: str, deck: Deck = Deck.math) -> d.TheoremCard | None:
+        """By name within a deck, case-insensitively.
+
+        Used by seeding and by the add box: adding "tragedy of the commons"
+        twice should find the card you already have rather than pay for a
+        second one and put both in the rotation.
+        """
+        row = self.conn.execute(
+            "SELECT * FROM theorem_card WHERE deck = ? AND name = ? COLLATE NOCASE",
+            (Deck(deck).value, name),
+        ).fetchone()
+        return d.TheoremCard(**dict(row)) if row else None
+
+    def cards(
+        self, deck: Deck = Deck.math, *, include_archived: bool = False
+    ) -> list[d.TheoremCard]:
+        """One deck, oldest first. Archived cards are excluded by default --
         every caller that draws wants the active deck, and the one caller that
         renders the management list asks for the rest explicitly."""
-        where = "" if include_archived else "WHERE archived = 0"
-        rows = self.conn.execute(f"SELECT * FROM theorem_card {where} ORDER BY id").fetchall()
+        archived = "" if include_archived else " AND archived = 0"
+        rows = self.conn.execute(
+            f"SELECT * FROM theorem_card WHERE deck = ?{archived} ORDER BY id",
+            (Deck(deck).value,),
+        ).fetchall()
         return [d.TheoremCard(**dict(r)) for r in rows]
 
-    def deck_size(self) -> int:
-        return self.conn.execute("SELECT COUNT(*) FROM theorem_card WHERE archived = 0").fetchone()[
-            0
-        ]
+    def deck_size(self, deck: Deck = Deck.math) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM theorem_card WHERE deck = ? AND archived = 0",
+            (Deck(deck).value,),
+        ).fetchone()[0]
+
+    def seed_cards(self, cards: list[d.TheoremCard]) -> int:
+        """Insert any card whose name is not already in its deck. Returns how
+        many landed.
+
+        Matched on name rather than upserted on content, and that is the whole
+        rule: editing a statement in config.toml must not rewrite a card you
+        have already been graded on, because the archive would then show you
+        recalling something you were never asked. Archive the card in the panel
+        and it comes back with the new text.
+        """
+        added = 0
+        for card in cards:
+            if self.card_named(card.name, Deck(card.deck)) is None:
+                self.add_card(card)
+                added += 1
+        return added
 
     def set_archived(self, card_id: int, archived: bool) -> d.TheoremCard:
         row = self.conn.execute(
@@ -1256,7 +1315,7 @@ class Repository:
 
     # -- the draw log -------------------------------------------------------
 
-    def last_drawn(self) -> dict[int, dt.date]:
+    def last_drawn(self, deck: Deck = Deck.math) -> dict[int, dt.date]:
         """`card_id -> the last date it appeared`, for cards that have.
 
         One aggregate for the whole deck rather than a query per card: the
@@ -1264,27 +1323,36 @@ class Repository:
         draw's cost scale with the deck.
         """
         rows = self.conn.execute(
-            "SELECT card_id, MAX(date) FROM theorem_draw GROUP BY card_id"
+            "SELECT card_id, MAX(date) FROM theorem_draw WHERE deck = ? GROUP BY card_id",
+            (Deck(deck).value,),
         ).fetchall()
         return {r[0]: dt.date.fromisoformat(r[1]) for r in rows}
 
-    def draw(self, on: dt.date) -> d.TheoremDraw | None:
-        row = self.conn.execute("SELECT * FROM theorem_draw WHERE date = ?", (_iso(on),)).fetchone()
+    def draw(self, on: dt.date, deck: Deck = Deck.math) -> d.TheoremDraw | None:
+        row = self.conn.execute(
+            "SELECT * FROM theorem_draw WHERE date = ? AND deck = ?",
+            (_iso(on), Deck(deck).value),
+        ).fetchone()
         return d.TheoremDraw(**dict(row)) if row else None
 
-    def record_draw(self, on: dt.date, card_id: int) -> d.TheoremDraw:
+    def record_draw(self, on: dt.date, card_id: int, deck: Deck = Deck.math) -> d.TheoremDraw:
         """Claim the day for a card, or return the card that already has it.
 
         `ON CONFLICT DO NOTHING` plus a re-read rather than a check-then-write:
         two tabs opening the dashboard at once would both see no draw and both
-        insert, and the loser of that race should get today's actual theorem
-        back, not an IntegrityError.
+        insert, and the loser of that race should get today's actual card back,
+        not an IntegrityError.
+
+        The conflict target is `(date, deck)`, so the two decks claim the same
+        morning independently -- which is the whole reason migration 12 widened
+        the primary key.
         """
         self.conn.execute(
-            "INSERT INTO theorem_draw (date, card_id) VALUES (?, ?) ON CONFLICT (date) DO NOTHING",
-            (_iso(on), card_id),
+            "INSERT INTO theorem_draw (date, deck, card_id) VALUES (?, ?, ?) "
+            "ON CONFLICT (date, deck) DO NOTHING",
+            (_iso(on), Deck(deck).value, card_id),
         )
-        drawn = self.draw(on)
+        drawn = self.draw(on, deck)
         assert drawn is not None  # just inserted, or already there
         return drawn
 
@@ -1296,6 +1364,7 @@ class Repository:
         application: str,
         grade: d.TheoremGrade,
         area: str | None,
+        deck: Deck = Deck.math,
     ) -> tuple[d.TheoremDraw, d.RatingEvent]:
         """Store a written recall and rate it, in one transaction.
 
@@ -1317,12 +1386,18 @@ class Repository:
         area's theorem comes round, which is roughly weekly, and it moves the
         number that is actually asking the related question: how well do you
         know this topic.
+
+        An argument-deck recall lands on the debate track and on
+        `ARGUMENT_AREA`, which is deliberately not one of the configured issues
+        -- see that constant. Everything else about the write is identical,
+        which is the whole point of the shared table.
         """
+        track = Track.debate if Deck(deck) is Deck.argument else Track.math
         with transaction(self.conn):
             row = self.conn.execute(
                 "UPDATE theorem_draw SET recalled = ?, explanation = ?, application = ?, "
                 "explained = ?, applied = ?, note = ? "
-                "WHERE date = ? AND explained IS NULL RETURNING *",
+                "WHERE date = ? AND deck = ? AND explained IS NULL RETURNING *",
                 (
                     int(grade.explained),
                     explanation,
@@ -1331,26 +1406,28 @@ class Repository:
                     int(grade.applied),
                     grade.note,
                     _iso(on),
+                    Deck(deck).value,
                 ),
             ).fetchone()
             if row is None:
-                if self.draw(on) is None:
-                    raise LookupError(f"no theorem drawn on {_iso(on)}")
-                raise ValueError(f"the theorem drawn on {_iso(on)} was already graded")
+                if self.draw(on, deck) is None:
+                    raise LookupError(f"no card drawn on {_iso(on)}")
+                raise ValueError(f"the card drawn on {_iso(on)} was already graded")
 
             draw = d.TheoremDraw(**dict(row))
             card = self.card(draw.card_id)
             assert card is not None  # a draw references a card by foreign key
 
             score = scoring.theorem_score(grade.explained, grade.applied)
-            before = self.current_rating(Track.math, area)
+            before = self.current_rating(track, area)
             after = scoring.elo_update_with_k(before, before, score, scoring.THEOREM_K)
             event = self.conn.execute(
                 "INSERT INTO rating_event "
                 "(track, date, ref, opponent, score, k, rating_before, rating_after, "
                 "provenance, area) "
-                "VALUES ('math', ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
                 (
+                    Track(track).value,
                     _iso(on),
                     card.name,
                     before,
@@ -1364,22 +1441,36 @@ class Repository:
             ).fetchone()
             return draw, d.RatingEvent(**dict(event))
 
-    def theorem_delta(self, on: dt.date) -> int | None:
+    def theorem_delta(self, on: dt.date, deck: Deck = Deck.math) -> int | None:
         """What that day's recall did to the rating, or None if it did not.
 
         Read back off the event rather than recomputed from the grade: the row
         is what happened, and a second calculation of it here would be a second
         place for the +/-3 to be decided.
         """
+        track = Track.debate if Deck(deck) is Deck.argument else Track.math
         row = self.conn.execute(
             "SELECT rating_after - rating_before FROM rating_event "
-            "WHERE track = 'math' AND date = ? AND provenance = ? "
+            "WHERE track = ? AND date = ? AND provenance = ? "
             "ORDER BY id DESC LIMIT 1",
-            (_iso(on), Provenance.theorem.value),
+            (Track(track).value, _iso(on), Provenance.theorem.value),
         ).fetchone()
         return row[0] if row else None
 
-    def recall_counts(self) -> dict[int, tuple[int, int]]:
+    def recall_total(self, deck: Deck = Deck.math) -> int:
+        """Graded recalls in one deck, ever.
+
+        Deliberately not `event_count`, which is the K-factor's `n` and
+        excludes `theorem` rows on purpose -- a recall is not evidence about
+        problem solving. But the pattern rating is moved by *nothing else*, so
+        "how much is behind this number" has to be counted from the draws.
+        """
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM theorem_draw WHERE deck = ? AND explained IS NOT NULL",
+            (Deck(deck).value,),
+        ).fetchone()[0]
+
+    def recall_counts(self, deck: Deck = Deck.math) -> dict[int, tuple[int, int]]:
         """`card_id -> (times seen, times recalled)` across all history.
 
         An unanswered draw counts as seen and not as recalled, which is what
@@ -1387,7 +1478,8 @@ class Repository:
         """
         rows = self.conn.execute(
             "SELECT card_id, COUNT(*), COALESCE(SUM(recalled), 0) "
-            "FROM theorem_draw GROUP BY card_id"
+            "FROM theorem_draw WHERE deck = ? GROUP BY card_id",
+            (Deck(deck).value,),
         ).fetchall()
         return {r[0]: (r[1], r[2]) for r in rows}
 

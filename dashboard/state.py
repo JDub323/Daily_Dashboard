@@ -14,13 +14,14 @@ while the client compared against its own, so any skew silently broke every
 from __future__ import annotations
 
 import datetime as dt
+from typing import NamedTuple
 
 from . import debate, scoring
 from .config import Settings
-from .db.repository import Repository
+from .db.repository import ARGUMENT_AREA, Repository
 from .models import api
 from .models import domain as d
-from .models.common import Game, HealthMetric, MathOutcome, Track
+from .models.common import Deck, Game, HealthMetric, MathOutcome, Track
 
 HISTORY_LIMIT = 40
 """Rating events sent to the elo charts. The chart plots the last 40 anyway;
@@ -355,17 +356,33 @@ def games_panel(repo: Repository, today: dt.date) -> api.GamesPanel:
     )
 
 
-def theorems_panel(repo: Repository, today: dt.date) -> api.TheoremsPanel:
-    """The deck and today's draw, if one has happened.
+class DeckView(NamedTuple):
+    """One deck's projection: today's card, the list, and what was written.
 
-    Read-only, like everything here: this reports the draw, it does not make
-    it. A boot that drew would mean the theorem of the day changed depending
-    on whether you happened to open the tab -- and the module that draws has
-    to be one that writes.
+    Extracted when the argument deck arrived. The two panels differ in what
+    they hang off this -- the theorem panel has no rating of its own, the
+    pattern panel has no archive modal -- but the draw, the blanking invariant
+    and the seen/recalled counts are the same job done twice, and doing it
+    twice is how the invariant below gets broken in one of them.
     """
-    drawn = repo.draw(today)
-    last = repo.last_drawn()
-    counts = repo.recall_counts()
+
+    today: d.TheoremCard | None
+    entries: list[api.TheoremDeckEntry]
+    written: api.TheoremWritten | None
+    recalled: bool | None
+    delta: int | None
+    size: int
+
+
+def deck_view(repo: Repository, today: dt.date, deck: Deck) -> DeckView:
+    """Read-only, like everything here: this reports the draw, it does not make
+    it. A boot that drew would mean the card of the day changed depending on
+    whether you happened to open the tab -- and the module that draws has to be
+    one that writes.
+    """
+    drawn = repo.draw(today, deck)
+    last = repo.last_drawn(deck)
+    counts = repo.recall_counts(deck)
     graded = drawn is not None and drawn.explained is not None
 
     # [Invariant] Today's statement does not cross the wire until the recall
@@ -384,16 +401,15 @@ def theorems_panel(repo: Repository, today: dt.date) -> api.TheoremsPanel:
         hidden = drawn is not None and not graded and card.id == drawn.card_id
         return card.model_copy(update={"statement": ""}) if hidden else card
 
-    deck = [
+    entries = [
         api.TheoremDeckEntry(
             card=shown(card),
             days_since=(today - last[card.id]).days if card.id in last else None,
             seen=counts.get(card.id, (0, 0))[0],
             recalled=counts.get(card.id, (0, 0))[1],
         )
-        for card in repo.deck(include_archived=True)
+        for card in repo.cards(deck, include_archived=True)
     ]
-    card = shown(repo.card(drawn.card_id)) if drawn else None
 
     written = None
     if drawn is not None and graded:
@@ -405,13 +421,54 @@ def theorems_panel(repo: Repository, today: dt.date) -> api.TheoremsPanel:
             note=drawn.note or "",
         )
 
-    return api.TheoremsPanel(
-        today=card,
-        recalled=drawn.recalled if drawn else None,
+    return DeckView(
+        today=shown(repo.card(drawn.card_id)) if drawn else None,
+        entries=entries,
         written=written,
-        delta=repo.theorem_delta(drawn.date) if graded and drawn else None,
-        deck=deck,
-        deck_size=repo.deck_size(),
+        recalled=drawn.recalled if drawn else None,
+        delta=repo.theorem_delta(drawn.date, deck) if graded and drawn else None,
+        size=repo.deck_size(deck),
+    )
+
+
+def theorems_panel(repo: Repository, today: dt.date) -> api.TheoremsPanel:
+    view = deck_view(repo, today, Deck.math)
+    return api.TheoremsPanel(
+        today=view.today,
+        recalled=view.recalled,
+        written=view.written,
+        delta=view.delta,
+        deck=view.entries,
+        deck_size=view.size,
+    )
+
+
+def patterns_panel(repo: Repository, today: dt.date) -> api.PatternsPanel:
+    """The argument deck, plus the rating it moves and what to add next.
+
+    `suggested` is the answer to the real problem with any curated deck: you
+    cannot add a card for a pattern you did not know existed. The last ballot
+    was asked to name the ones that showed up, and the ones not already in the
+    deck become buttons here.
+    """
+    view = deck_view(repo, today, Deck.argument)
+    have = {entry.card.name.casefold() for entry in view.entries}
+    latest = repo.debate_history(limit=1)
+    suggested = [
+        name
+        for name in (latest[0].scorecard.patterns if latest and latest[0].scorecard else [])
+        if name.casefold() not in have
+    ]
+    return api.PatternsPanel(
+        today=view.today,
+        recalled=view.recalled,
+        written=view.written,
+        delta=view.delta,
+        deck=view.entries,
+        deck_size=view.size,
+        rating=repo.current_rating(Track.debate, ARGUMENT_AREA),
+        events=repo.recall_total(Deck.argument),
+        suggested=suggested,
     )
 
 
@@ -477,6 +534,7 @@ def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.Dash
         math=math_panel(cfg, repo, today),
         chess=chess_panel(repo, today),
         debate=debate_panel(cfg, repo, today),
+        patterns=patterns_panel(repo, today),
         word=repo.word(today),
         games=games_panel(repo, today),
         theorems=theorems_panel(repo, today),

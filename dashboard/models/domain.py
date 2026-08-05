@@ -16,6 +16,7 @@ from .common import (
     ChessStatus,
     DebateSide,
     DebateStatus,
+    Deck,
     FactStance,
     HealthMetric,
     MathStatus,
@@ -275,6 +276,10 @@ class TheoremCard(Base):
     added: dt.date
     archived: bool = False
 
+    deck: Deck = Deck.math
+    """Which deck this belongs to. `math` on every card that predates the
+    column, which is what all of them were."""
+
 
 class TheoremGrade(Base):
     """What the grader made of a written recall."""
@@ -307,6 +312,10 @@ class TheoremDraw(Base):
     """
 
     date: dt.date
+    deck: Deck = Deck.math
+    """Part of the key: one draw per deck per day, so a theorem and an argument
+    pattern can both come up on the same morning."""
+
     card_id: int
 
     recalled: bool | None = None
@@ -390,6 +399,16 @@ class Scorecard(Base):
     items: list[RubricItem] = Field(default_factory=list)
     fouls: list[Foul] = Field(default_factory=list)
     verdict: str = ""
+
+    patterns: list[str] = Field(default_factory=list, max_length=3)
+    """Argument patterns that showed up and are worth being able to name.
+
+    Free, since the judge is already writing a ballot, and the answer to the
+    real problem with a curated deck: you cannot add a card for a pattern you
+    did not know existed. This is the thing that noticed it. The panel offers
+    each one as a button; nothing is added without a press.
+    """
+
     voided: list[str] = Field(default_factory=list)
     """Item keys that claimed a point without a quote and were zeroed. Kept on
     the card so the panel can say so -- a rule you cannot see enforced is one

@@ -33,6 +33,7 @@ from .db.repository import Repository
 from .llm import LlmError
 from .models import domain as d
 from .models.api import TopicResponse
+from .models.common import Deck
 
 log = logs.get(__name__)
 
@@ -650,6 +651,121 @@ def theorem_from_prompt(settings: Settings, date: dt.date, prompt: str) -> d.The
         f"phrase is ambiguous, take the reading most common in competition "
         f"mathematics.",
     )
+
+
+# --- argument patterns -----------------------------------------------------
+#
+# The second deck. Same table, same draw, same two boxes, same +/-3 -- only the
+# prompts differ, because what is being recalled is a pattern of reasoning
+# rather than a theorem, and the failure modes are not the same ones.
+
+_PATTERN_SYSTEM = (
+    "You write recall cards for argument patterns: the reasoning structures and "
+    "failure modes that recur across policy debates -- principal-agent problems, "
+    "tragedy of the commons, base-rate neglect, motte and bailey, regulatory capture. "
+    "Respond ONLY with JSON:\n"
+    '{"name":"the standard name, plain text, title case, no quotation marks",'
+    '"statement":"what the pattern claims and when it applies, in two or three '
+    "sentences of plain English. Say what recognising it buys you in an argument, and "
+    'name the way it is most often misused. No LaTeX, no markdown.",'
+    '"topic":"the family it belongs to -- one or two words, e.g. incentives, '
+    'statistics, rhetoric, ethics, economics, institutions, reasoning"}'
+)
+"""Why this is not `_THEOREM_SYSTEM` with a word changed.
+
+Three differences, each load-bearing. No LaTeX, because a pattern has no
+notation and the theorem prompt's insistence on delimiters would produce
+`$$principal-agent$$`. A *usable* statement rather than a precise one -- the
+point of the card is recognising the pattern in the wild under time pressure,
+not reciting its definition. And the misuse clause, which has no theorem
+analogue: every one of these is a tool that is over-applied at least as often
+as it is applied, and a card that does not say so teaches you to reach for it.
+"""
+
+
+def pattern_from_prompt(settings: Settings, date: dt.date, prompt: str) -> d.TheoremCard:
+    """A pattern card from a name or a description.
+
+    The flow this exists for: finish a debate, read the ballot, notice that the
+    opponent used something you did not have a name for, and type the name --
+    or, when the ballot named it for you, press the button beside it.
+    """
+    raw = _json_generation(
+        settings,
+        kind="pattern",
+        date=date,
+        topic=prompt[:60],
+        system=_PATTERN_SYSTEM,
+        user=(
+            f"The user wants a recall card for: {prompt!r}. Identify the argument "
+            f"pattern, fallacy or reasoning structure they mean, give its standard "
+            f"name, and state it. If the phrase is ambiguous, take the reading most "
+            f"useful in a policy debate."
+        ),
+    )
+    try:
+        return d.TheoremCard(
+            name=raw["name"],
+            statement=raw["statement"],
+            topic=raw.get("topic") or "reasoning",
+            added=date,
+            deck=Deck.argument,
+        )
+    except (KeyError, TypeError) as e:
+        raise ContentError(f"the pattern generation was missing {e}") from e
+
+
+def grade_pattern(
+    settings: Settings,
+    date: dt.date,
+    card: d.TheoremCard,
+    explanation: str,
+    application: str,
+) -> d.TheoremGrade:
+    """Grade a recalled argument pattern against the card on file.
+
+    The same two halves as `grade_theorem` and the same generosity about
+    wording, but the second half asks a different question. A theorem's
+    application is a problem you needed it on; a pattern's is an argument where
+    it *decided* something -- one you made, one made at you, or one you read.
+
+    The bar on the second half is deliberately low on specificity and high on
+    concreteness: "someone argued the agency would just enforce it, and the
+    agency's incentives are not the public's" earns it without naming a debate.
+    "In politics" does not.
+    """
+    raw = _json_generation(
+        settings,
+        kind="pattern-grade",
+        date=date,
+        system=(
+            "You grade a recalled argument pattern against its real statement. Be "
+            "generous about wording -- plain English is the point -- and strict about "
+            "content: a statement that would not let someone recognise the pattern in "
+            "an argument, or that describes a different pattern, fails. Respond ONLY "
+            'with JSON: {"explained":bool,"applied":bool,'
+            '"note":"one line, name what was missing or confirm what was right"}'
+        ),
+        user=(
+            f"Pattern: {card.name}\n"
+            f"Its actual statement: {card.statement}\n\n"
+            f"They explained it as:\n{explanation}\n\n"
+            f"They said it showed up in:\n{application}\n\n"
+            "`explained`: would their explanation let someone spot this pattern in an "
+            "argument, and is it this pattern rather than a neighbouring one?\n"
+            "`applied`: is that a real argument where this pattern actually decided "
+            "something -- one they made, one made at them, or one they read? They do "
+            "not have to name the debate; a concrete description of the move counts. "
+            "A generic gesture at a subject area does not."
+        ),
+    )
+    try:
+        # `area` is absent from the prompt on purpose: an argument recall rates
+        # into one fixed bucket, so there is nothing for the grader to choose
+        # and asking would invite it to invent one.
+        return d.TheoremGrade(**raw)
+    except TypeError as e:
+        raise ContentError("the pattern grader did not return the expected shape") from e
 
 
 # --- topic reference links -------------------------------------------------
