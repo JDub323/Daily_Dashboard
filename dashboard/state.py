@@ -359,7 +359,6 @@ def spelling_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.Spell
     base = {
         "summary": summary,
         "enabled": cfg.spelling.enabled,
-        "trouble": repo.spelling_trouble(),
     }
     round_ = repo.spelling_round(today)
     if round_ is None:

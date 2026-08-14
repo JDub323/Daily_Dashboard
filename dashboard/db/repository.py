@@ -869,21 +869,11 @@ class Repository:
             for r in self.conn.execute("SELECT word, last_seen, missed FROM spelling_seen")
         }
 
-    def spelling_trouble(self, limit: int = 8) -> list[tuple[str, int, int]]:
-        """`(word, missed, asked)` for the ones you get wrong most, worst first.
-
-        The panel's one backward-looking line. A rating says whether you are
-        improving; this says which words to look at, which is the thing the
-        feature was actually asked for.
-        """
-        return [
-            (r[0], r[1], r[2])
-            for r in self.conn.execute(
-                "SELECT word, missed, asked FROM spelling_seen WHERE missed > 0 "
-                "ORDER BY missed DESC, asked DESC, word LIMIT ?",
-                (limit,),
-            )
-        ]
+    # `spelling_trouble` was here: `(word, missed, asked)` worst first, for a
+    # "keeps catching you" line under the round. It went with the line. The
+    # miss counts it read are still kept and still matter -- they are what
+    # decides which word gets the day's one relearn slot -- they are just not
+    # something the panel says out loud any more.
 
     # -- debate -------------------------------------------------------------
     #

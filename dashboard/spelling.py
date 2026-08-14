@@ -100,28 +100,40 @@ def draw(
     2. **Words never asked**, in pool order.
     3. **Everything else**, least recent first, and only past `cooldown_days`.
 
+    Bucket 1 is capped at `max_repeats` rungs per round. Uncapped it took every
+    rung it was due on, and a round could be five words you had already been
+    asked -- which is the relearn rule working exactly as written and reading,
+    from the other side of the screen, as a bee that had run out of ideas. The
+    allowance goes to the strongest claim on it rather than to whichever tier
+    the ladder lists first, so the one repeat you get is the word you have
+    missed most, not the easiest word you happen to have missed once.
+
     Falling off the end of all three means the tier is exhausted -- every word
     in it is inside its cooldown -- and the rung takes the least recent word
-    regardless. That is the "repeats rare, but possible" rule: with a pool this
-    size it happens when a thin tier cycles, not otherwise, and asking nothing
-    would be worse than asking something twice.
+    regardless. A rung with no allowance and no unseen word does the same, and
+    for the same reason: asking nothing is worse than asking something twice.
+    That also means the cap is best-effort and stops binding once the pool has
+    cycled, when there is no such thing as a word you have not had.
 
     Deterministic: same pool, same history, same day, same five words. No RNG,
     because there is nothing here a random choice would decide better than
     "the one you have gone longest without".
     """
+    rungs = [[w for w in pool if w.tier == tier] for tier in cfg.ladder]
+    spenders = _allowance(rungs, seen, cfg, today)
+
     picked: list[d.SpellingWord] = []
     used: set[str] = set()
 
-    for tier in cfg.ladder:
-        candidates = [w for w in pool if w.tier == tier and w.word.casefold() not in used]
-        if not candidates:
+    for i, candidates in enumerate(rungs):
+        free = [w for w in candidates if w.word.casefold() not in used]
+        if not free:
             # No word of this tier left. Widening to another tier would quietly
             # change what the rung is worth, so the rung is dropped instead and
             # the day is short -- visible, rather than mis-rated.
-            log.warning("spelling pool has no unused %r word for today's ladder", tier)
+            log.warning("spelling pool has no unused %r word for today's ladder", cfg.ladder[i])
             continue
-        choice = _best(candidates, seen, cfg, today)
+        choice = _best(free, seen, cfg, today, relearn=i in spenders)
         used.add(choice.word.casefold())
         picked.append(
             d.SpellingWord(
@@ -134,8 +146,64 @@ def draw(
     return picked
 
 
-def _best(
+def _allowance(
+    rungs: list[list[PoolWord]],
+    seen: dict[str, Seen],
+    cfg: SpellingSettings,
+    today: dt.date,
+) -> set[int]:
+    """Which rungs may ask a word you have missed before.
+
+    Ranked across the whole ladder by how strong each rung's claim is -- the
+    word missed most, then longest unseen -- so the day's one relearn slot goes
+    where it is worth most. Ties break towards the easier rung, which is the
+    ladder's own order.
+
+    Two rungs of the same tier draw on the same candidates and therefore make
+    the same claim; only the first can win it, and the second is left to pick
+    something new. That is deliberate: two rungs of the same tier are two
+    chances to meet a word, and spending both on one word you already know you
+    cannot spell is not what the second rung is for.
+    """
+    if cfg.max_repeats <= 0:
+        return set()
+    claims = []
+    for i, candidates in enumerate(rungs):
+        due = _due_misses(candidates, seen, cfg, today)
+        if due:
+            best = max(due, key=lambda w: _claim(w, seen, today))
+            missed, age = _claim(best, seen, today)
+            claims.append((-missed, -age, i))
+    claims.sort()
+    return {i for _, _, i in claims[: cfg.max_repeats]}
+
+
+def _claim(word: PoolWord, seen: dict[str, Seen], today: dt.date) -> tuple[int, int]:
+    """How much a missed word deserves to come back: misses, then age."""
+    record = seen[word.word.casefold()]
+    return record.missed, (today - record.last_seen).days
+
+
+def _due_misses(
     candidates: list[PoolWord], seen: dict[str, Seen], cfg: SpellingSettings, today: dt.date
+) -> list[PoolWord]:
+    """Words here that were missed and whose `relearn_days` have passed."""
+    return [
+        w
+        for w in candidates
+        if (record := seen.get(w.word.casefold()))
+        and record.missed
+        and (today - record.last_seen).days >= cfg.relearn_days
+    ]
+
+
+def _best(
+    candidates: list[PoolWord],
+    seen: dict[str, Seen],
+    cfg: SpellingSettings,
+    today: dt.date,
+    *,
+    relearn: bool = True,
 ) -> PoolWord:
     def history(word: PoolWord) -> Seen | None:
         return seen.get(word.word.casefold())
@@ -144,17 +212,20 @@ def _best(
         record = history(word)
         return (today - record.last_seen).days if record else 10_000
 
-    due_misses = [
-        w
-        for w in candidates
-        if (record := history(w)) and record.missed and age(w) >= cfg.relearn_days
-    ]
+    unseen = [w for w in candidates if history(w) is None]
+    if not relearn and unseen:
+        # This rung is over the day's allowance, and there is something new to
+        # ask instead. Where there is not, it falls through to the order below
+        # and repeats -- if the day is going to repeat anyway, it should at
+        # least repeat something you got wrong.
+        return unseen[0]
+
+    due_misses = _due_misses(candidates, seen, cfg, today)
     if due_misses:
         # Most missed first, then longest unseen: the word you have got wrong
         # three times outranks the one you got wrong once.
         return max(due_misses, key=lambda w: (history(w).missed, age(w)))
 
-    unseen = [w for w in candidates if history(w) is None]
     if unseen:
         return unseen[0]
 

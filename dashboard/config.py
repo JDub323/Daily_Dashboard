@@ -349,6 +349,16 @@ class SpellingSettings(Base):
     cooldown_days: int = Field(default=30, ge=0, le=3650)
     """How long before a word you got right may come round again."""
 
+    max_repeats: int = Field(default=1, ge=0, le=20)
+    """How many rungs of one round may ask a word you have had before.
+
+    A cap on the relearn rule above, not a replacement for it. Missed words are
+    still preferred and still come back -- one of them a day, rather than as
+    many as have come due, which is how a round ended up being mostly words you
+    had already seen. Best effort by construction: a rung whose tier has no
+    unseen word left repeats regardless, because a short day is worse than a
+    repeated one."""
+
     @property
     def enabled(self) -> bool:
         return bool(self.ladder and self.anchors)

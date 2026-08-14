@@ -490,9 +490,6 @@ class SpellingPanel(Base):
     delta: int | None = None
     """Net rating change across today's five results."""
 
-    trouble: list[tuple[str, int, int]] = Field(default_factory=list)
-    """`(word, missed, asked)` worst first — the words to look at."""
-
 
 class PatternsPanel(Base):
     """The argument deck: today's card, the deck, and the pattern rating.

@@ -103,6 +103,15 @@ function open(body, panel) {
       oninput: (e) => { held.answers[i] = e.target.value; },
       onkeydown: (e) => {
         if (e.key !== "Enter") return;
+        // Shift-Enter says the word again. The one thing you want mid-round is
+        // to hear it once more, and the speak button is a mouse away from a
+        // box you are typing in — which on a spoken test is the whole task
+        // interrupted. Held rather than replacing Enter, because Enter's walk
+        // is the keyboard path through the round.
+        if (e.shiftKey) {
+          say(word.word);
+          return;
+        }
         // Enter walks down the list and submits from the last box — the
         // keyboard path through the whole round without reaching for a mouse.
         if (i + 1 < inputs.length) inputs[i + 1].focus();
@@ -148,8 +157,10 @@ function open(body, panel) {
   queueMicrotask(() => inputs[0]?.focus());
 
   return el("div", null,
+    // Printed rather than left in the cheatsheet, for the reason the tab
+    // digits are: a shortcut you have to look up is one you never learn.
     speakable
-      ? null
+      ? el("div.faint.small", { text: "shift-enter says that box's word again" })
       : el("div.err.small", { text: "this browser has no speech synthesis — the words cannot be spoken" }),
     ...rows,
     el("div.row.divider", null, submit, message),
@@ -192,17 +203,6 @@ function marked(panel) {
   );
 }
 
-/** The words you keep getting wrong. The one line here that is not about today. */
-function trouble(panel) {
-  if (!panel.trouble.length) return null;
-  return el("div.divider", null,
-    el("div.faint", { text: "keeps catching you" }),
-    el("div.dim.small", {
-      text: panel.trouble.map(([word, missed, asked]) => `${word} ${missed}/${asked}`).join(" · "),
-    }),
-  );
-}
-
 function render(body) {
   const panel = store.state.spelling;
   let main;
@@ -210,7 +210,11 @@ function render(body) {
   else if (panel.status === "done") main = marked(panel);
   else main = open(body, panel);
 
-  mount(body, header(panel), main, trouble(panel));
+  // A "keeps catching you" line used to sit under all of this, listing the
+  // words with the worst miss ratio. The counts behind it are still kept and
+  // still decide which word gets the day's one relearn slot; the panel is
+  // about today again.
+  mount(body, header(panel), main);
 }
 
 export default {

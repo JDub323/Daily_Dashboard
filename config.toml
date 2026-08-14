@@ -208,6 +208,15 @@ relearn_days = 7
 # repeating sooner than that.
 cooldown_days = 30
 
+# How many of the five may be a word you have already been asked. The relearn
+# rule above is uncapped by nature -- every word that has come due wants its
+# rung back -- and a morning of five words you had already seen is that rule
+# working as written and reading as a bee with nothing left to ask. One a day,
+# spent on the word you have missed most. Best effort: once the pool has
+# cycled there is no such thing as a word you have not had, and every rung
+# repeats whatever this says.
+max_repeats = 1
+
 # Fixed elo anchors per tier, exactly as [math.anchors] works: difficulty is a
 # tier name in spelling.json, never a number, so the scale cannot drift when
 # the pool is edited.

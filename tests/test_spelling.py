@@ -162,6 +162,75 @@ def test_an_exhausted_tier_repeats_rather_than_coming_up_short(settings):
     assert [w.word for w in drawn] == ["alpha"]  # the least recent of the two
 
 
+# --- one repeat a round -----------------------------------------------------
+
+
+def test_only_one_rung_asks_a_word_you_have_had(settings):
+    """Uncapped, every rung with a word due for relearning took it, and a
+    morning could be five words you had already seen."""
+    words = pool(
+        ("alpha", "easy"), ("alef", "easy"),
+        ("beta", "hard"), ("bet", "hard"),
+    )  # fmt: skip
+    old = TODAY - dt.timedelta(days=10)
+    history = seen(alpha=(old, 1), beta=(old, 1))
+
+    drawn = spelling.draw(words, history, cfg(), TODAY)
+    assert [w.word for w in drawn] == ["alpha", "bet"]
+
+
+def test_the_allowance_goes_to_the_word_you_have_missed_most(settings):
+    """Not to whichever tier the ladder lists first: the one repeat you get
+    should be the one worth having."""
+    words = pool(
+        ("alpha", "easy"), ("alef", "easy"),
+        ("beta", "hard"), ("bet", "hard"),
+    )  # fmt: skip
+    old = TODAY - dt.timedelta(days=10)
+    history = seen(alpha=(old, 1), beta=(old, 3))
+
+    drawn = spelling.draw(words, history, cfg(), TODAY)
+    assert [w.word for w in drawn] == ["alef", "beta"]
+
+
+def test_two_rungs_of_a_tier_do_not_both_spend_it(settings):
+    """The real ladder has two `tricky` rungs. They make the same claim, and
+    only the first can win it."""
+    words = pool(("alpha", "easy"), ("alef", "easy"), ("aleph", "easy"))
+    history = seen(alpha=(TODAY - dt.timedelta(days=10), 2))
+
+    drawn = spelling.draw(words, history, cfg(ladder=["easy", "easy"], words_per_day=2), TODAY)
+    assert [w.word for w in drawn] == ["alpha", "alef"]
+
+
+def test_the_cap_yields_when_there_is_nothing_new_to_ask(settings):
+    """Best effort, as the config says. A rung over the allowance with no
+    unseen word repeats anyway — and repeats a miss, since if the day is going
+    to repeat it should repeat something you got wrong."""
+    words = pool(("alpha", "easy"), ("beta", "hard"), ("bet", "hard"))
+    old = TODAY - dt.timedelta(days=10)
+    history = seen(alpha=(old, 3), beta=(old, 1), bet=(old, 0))
+
+    drawn = spelling.draw(words, history, cfg(), TODAY)
+    assert [w.word for w in drawn] == ["alpha", "beta"]
+
+
+def test_the_allowance_can_be_turned_off_entirely(settings):
+    """`max_repeats = 0`: never ask a word you have had while a new one
+    exists, whatever its miss count."""
+    words = pool(("alpha", "easy"), ("alef", "easy"))
+    history = seen(alpha=(TODAY - dt.timedelta(days=10), 3))
+
+    drawn = spelling.draw(
+        words, history, cfg(ladder=["easy"], words_per_day=1, max_repeats=0), TODAY
+    )
+    assert [w.word for w in drawn] == ["alef"]
+
+
+def test_the_real_config_allows_one_repeat(settings):
+    assert settings.spelling.max_repeats == 1
+
+
 def test_a_tier_with_no_words_drops_its_rung(settings):
     """Widening to another tier would quietly change what the rung is worth."""
     drawn = spelling.draw(pool(("alpha", "easy")), {}, cfg(), TODAY)
@@ -280,15 +349,17 @@ def test_the_round_records_what_was_asked_and_missed(repo):
     history = repo.spelling_seen()
     assert history["alpha"][1] == 0
     assert history["beta"][1] == 1
-    assert repo.spelling_trouble() == [("beta", 1, 1)]
 
 
 def test_missing_the_same_word_twice_accumulates(repo):
+    """Nothing displays this any more — the "keeps catching you" line is gone.
+    It still has to be counted: it is what decides which word gets the day's
+    one relearn slot."""
     for offset in range(2):
         day = TODAY + dt.timedelta(days=offset)
         repo.open_spelling_round(day, words_for(repo, ("beta", "hard", 1600)))
         repo.finish_spelling(day, ["wrong"], [False])
-    assert repo.spelling_trouble() == [("beta", 2, 2)]
+    assert repo.spelling_seen()["beta"][1] == 2
 
 
 def test_reopening_a_round_returns_the_same_words(repo):
