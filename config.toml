@@ -225,6 +225,42 @@ recency_exponent = 2.0
 tickers = ["^SPX", "AAPL", "MSFT", "NVDA"]
 cache_seconds = 600
 
+# Append the symbols from positions.csv to the movements list above.
+#
+# Worth understanding before leaving this on, because it is the one setting
+# here that gives something away: with it true, the tickers you hold are on
+# screen whether or not the portfolio is unlocked. The Hello prompt is then
+# protecting share counts, cost basis and dollar values -- not the fact that
+# you own them. Set false and the lock covers the whole thing, at the cost of
+# not seeing your positions move until you unlock.
+include_holdings = true
+
+# ---------------------------------------------------------------------------
+# The portfolio panel: your actual holdings, behind Windows Hello.
+#
+# Reads `[paths].positions` -- a Fidelity positions export, gitignored and
+# never committed. Absent by default; the panel says so rather than erroring.
+#
+# What the lock is and is not, stated here because the name oversells it:
+# WebAuthn asks Windows for *user verification*, and Windows decides whether a
+# fingerprint, a face or the PIN satisfies that. There is no way for a web page
+# to insist on the finger. So this stops someone glancing at an open laptop; it
+# does not stop someone who knows the PIN, and it does nothing at all about the
+# CSV sitting unencrypted on disk where any process running as you can read it.
+[portfolio]
+enabled = true
+
+# How long an unlock lasts. Enforced by the server -- the token stops being
+# accepted whether or not a browser is still counting down -- so closing the
+# laptop mid-window does not leave the endpoint open.
+unlock_seconds = 300
+
+# WebAuthn relying-party ID. Left unset it is derived from [server].host, which
+# maps 127.0.0.1 to "localhost" -- the only value that works, since an rp_id
+# must be a domain and an IP address is not one. Set it only if you serve this
+# under a real hostname.
+# rp_id = "dashboard.example"
+
 [calendar]
 # argv, not a shell string -- see feeds.gcalcli. `wsl -e` is prepended
 # automatically when the server runs on Windows.

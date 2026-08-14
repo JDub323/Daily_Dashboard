@@ -26,10 +26,12 @@ function row(quote) {
 
 export default {
   id: "mkt",
-  title: "markets",
+  title: "movements",
   tab: "markets",
-  slot: "hero",
-  hero: true,
+  // Demoted from hero when the portfolio arrived. The tab's point is now what
+  // you actually own; the index and the majors are the frame it is read
+  // against, which is a supporting role and reads better as one.
+  slot: "grid",
   live: true,
 
   async render(node) {

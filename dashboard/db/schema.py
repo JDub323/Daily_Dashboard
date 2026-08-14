@@ -926,6 +926,48 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX spelling_seen_tier ON spelling_seen (tier, last_seen);
         """,
     ),
+    (
+        14,
+        """
+        -- The portfolio lock: Windows Hello credentials, public halves only.
+        --
+        -- No rebuild and nothing else touched -- this is a new table on its
+        -- own, and rating_event is not involved.
+        --
+        -- Storing this in `dashboard.db` rather than a file beside it is on
+        -- purpose. There is no secret in the row: WebAuthn's private key never
+        -- leaves the TPM, and everything here is what the browser would hand
+        -- to any site that asked. What the database gives it is the gitignore
+        -- entry that already exists and the backup story the rest of the
+        -- personal data already has -- a credential in an untracked JSON file
+        -- beside it would be one more thing to remember.
+        --
+        -- Several rows are allowed. One laptop needs one, but "enrol the
+        -- desktop as well" should not mean deleting the credential that
+        -- currently works and hoping the new one takes.
+        CREATE TABLE webauthn_credential (
+            -- base64url, as the browser reports it. TEXT rather than BLOB so
+            -- the allowCredentials list is a straight SELECT with no encoding
+            -- step between the database and the page.
+            id          TEXT    PRIMARY KEY,
+            public_key  BLOB    NOT NULL,   -- SPKI DER, from getPublicKey()
+            alg         INTEGER NOT NULL,   -- COSE identifier: -7, -8 or -257
+
+            -- The authenticator's own counter, for detecting a cloned
+            -- credential. Windows Hello reports a constant 0 and the spec
+            -- allows that, so this is frequently never anything else -- see
+            -- webauthn.verify_assertion, which only treats a *regression* as
+            -- evidence.
+            sign_count  INTEGER NOT NULL DEFAULT 0 CHECK (sign_count >= 0),
+
+            label       TEXT    NOT NULL DEFAULT '',
+            created     TEXT    NOT NULL
+                                CHECK (created IS strftime('%Y-%m-%d', created)),
+            last_used   TEXT    CHECK (last_used IS NULL
+                                       OR last_used IS strftime('%Y-%m-%d', last_used))
+        ) STRICT;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

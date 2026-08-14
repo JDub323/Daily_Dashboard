@@ -25,6 +25,7 @@ import metrics from "./panels/metrics.js";
 import { finance, misc, politics } from "./panels/news.js";
 import patterns from "./panels/patterns.js";
 import piano from "./panels/piano.js";
+import portfolio from "./panels/portfolio.js";
 import reading from "./panels/reading.js";
 import spelling from "./panels/spelling.js";
 import { activity, archive, areas, invalidateHistory } from "./panels/stats.js";
@@ -82,8 +83,9 @@ const PANELS = [
   reading, misc,
   // games
   games, metrics,
-  // markets
-  markets, finance,
+  // markets — the portfolio is the hero; the movements list is the frame it
+  // is read against.
+  portfolio, markets, finance,
   // hobbies
   chess, piano, chessElo,
   // health

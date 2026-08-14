@@ -42,22 +42,30 @@ function message(body) {
   return null;
 }
 
-export async function get(path, params = {}) {
+/**
+ * `headers` exists for exactly one caller: the portfolio panel's unlock token.
+ *
+ * It is passed per request rather than held here because that is the property
+ * worth having — a token in this module, or in a cookie, would ride along on
+ * every call the dashboard makes and end up in the access log. The panel keeps
+ * it in one closure and attaches it to the two requests that need it.
+ */
+export async function get(path, params = {}, headers = null) {
   const query = new URLSearchParams(params).toString();
-  return unwrap(await fetch(query ? `${path}?${query}` : path));
+  return unwrap(await fetch(query ? `${path}?${query}` : path, headers ? { headers } : undefined));
 }
 
 /** A dated POST — `date` is filled in from the browser unless supplied. */
-export function post(path, body = {}) {
-  return postRaw(path, { date: today(), ...body });
+export function post(path, body = {}, headers = null) {
+  return postRaw(path, { date: today(), ...body }, headers);
 }
 
 /** For the endpoints whose bodies have no `date` field; they forbid extras. */
-export async function postRaw(path, body = {}) {
+export async function postRaw(path, body = {}, headers = null) {
   return unwrap(
     await fetch(path, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
     }),
   );

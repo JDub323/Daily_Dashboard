@@ -913,3 +913,95 @@ class MathStatusEvent(Base):
 class MathDoneEvent(Base):
     problem: MathProblem
     hints_revealed: int = 0
+
+
+# --- the portfolio ---------------------------------------------------------
+#
+# Every model below crosses the fingerprint gate except `PortfolioStatus`,
+# which is what the locked panel draws itself from and therefore must contain
+# nothing worth locking: whether a credential exists, whether an unlock is
+# live, and where the page has to be loaded from. No symbol, no total, no
+# count of positions.
+
+
+class PortfolioStatus(Base):
+    enabled: bool = True
+    enrolled: bool = False
+    """Whether any authenticator has been registered. False means the enrol
+    button, which is unauthenticated -- see `POST /api/portfolio/enroll/begin`
+    for why the first one has to be, and what that costs."""
+
+    unlocked: bool = False
+    expires_in: int = 0
+    """Seconds left on the caller's token, for the countdown. 0 when locked."""
+
+    present: bool = False
+    """Whether the positions file exists at all. A fresh clone has none, and
+    'no file yet' is a different message from 'locked'."""
+
+    origin: str
+    """Where WebAuthn will work. The panel compares this against its own
+    `location.origin` and explains the mismatch rather than letting the browser
+    reject the ceremony with a console error nobody is looking at."""
+
+
+class PortfolioPosition(Base):
+    """One row of the export.
+
+    Every number is optional and independently so: a money market fund has no
+    cost basis and a pending trade has no quantity. See `dashboard/portfolio.py`
+    -- modelling those as 0.0 would put them in the totals as real numbers.
+    """
+
+    symbol: str
+    description: str = ""
+    account_type: str = ""
+    quantity: float | None = None
+    last_price: float | None = None
+    last_change: float | None = None
+    value: float | None = None
+    day_gain: float | None = None
+    day_gain_pct: float | None = None
+    total_gain: float | None = None
+    total_gain_pct: float | None = None
+    pct_of_account: float | None = None
+    cost_basis: float | None = None
+    avg_cost: float | None = None
+
+
+class PortfolioTotals(Base):
+    value: float | None = None
+    day_gain: float | None = None
+    day_gain_pct: float | None = None
+    total_gain: float | None = None
+    total_gain_pct: float | None = None
+
+
+class PortfolioResponse(Base):
+    positions: list[PortfolioPosition] = Field(default_factory=list)
+    totals: PortfolioTotals = Field(default_factory=PortfolioTotals)
+    warnings: list[str] = Field(default_factory=list)
+    """Cells that could not be read, by line and column name. Never contains a
+    cell value -- the point of the file is that its numbers stay in it."""
+
+    as_of: dt.datetime | None = None
+    """The file's mtime. The export carries no timestamp of its own."""
+
+    expires_in: int = 0
+
+
+class EnrollFinish(DateBody):
+    credential_id: str = Field(min_length=1, max_length=1024)
+    client_data_json: str = Field(min_length=1, max_length=8192)
+    public_key: str = Field(min_length=1, max_length=8192)
+    """SPKI DER, base64url, from `AuthenticatorAttestationResponse.getPublicKey()`."""
+
+    alg: int
+    label: str = Field(default="", max_length=64)
+
+
+class UnlockFinish(DateBody):
+    credential_id: str = Field(min_length=1, max_length=1024)
+    client_data_json: str = Field(min_length=1, max_length=8192)
+    authenticator_data: str = Field(min_length=1, max_length=8192)
+    signature: str = Field(min_length=1, max_length=8192)

@@ -48,7 +48,18 @@ class PathSettings(Base):
     db: str = "dashboard.db"
     problems: str = "problems.json"
     metrics: str = "metrics.jsonl"
-    static: str = "."
+
+    static: str = "web"
+    """The directory mounted as a catch-all at `/`.
+
+    Was `"."`, which means *the project root* -- and the mount serves whatever
+    is beneath it, so that default published `dashboard.db`, `.env`,
+    `config.toml` and `metrics.jsonl` to anything that could reach the port.
+    Nothing was actually running on it (config.toml has said `web` since the
+    rewrite), but a default is what a config gets when it omits the line, and
+    this one was the wrong shape of mistake to leave lying around next to a
+    file called positions.csv.
+    """
 
     batches: str = "batches"
     """Where the overnight scheduled task drops `<date>.json`. Serving one is
@@ -71,6 +82,12 @@ class PathSettings(Base):
     interests: str = "interests.md"
     """What you want to read, in your own words. Optional -- absent means the
     arXiv candidate stays in arXiv's own order. See `dashboard/interests.py`."""
+
+    positions: str = "positions.csv"
+    """The brokerage positions export. Gitignored, and the one file here whose
+    absence is the normal case -- a fresh clone has none and the panel says so.
+
+    Validated below as *not* living under `static`, which would publish it."""
 
 
 class ModelPricing(Base):
@@ -606,6 +623,35 @@ class MarketSettings(Base):
     tickers: list[str] = Field(default_factory=list)
     cache_seconds: int = Field(default=600, ge=0)
 
+    include_holdings: bool = True
+    """Append the symbols from the positions file to the movements list.
+
+    On by decision, not by default-because-it-is-easier. It is the one part of
+    this feature that *reduces* privacy: with it on, the tickers you hold are
+    on screen whether or not the portfolio is unlocked, so the Hello prompt is
+    protecting share counts and dollar values rather than the fact that you own
+    NVDA. Turning it off leaves the lock covering the whole thing.
+    """
+
+
+class PortfolioSettings(Base):
+    """The fingerprint-locked holdings panel.
+
+    `unlock_seconds` is enforced server-side -- `webauthn.Unlocks` stops
+    serving the data when it expires, and the panel's countdown is a display of
+    that rather than the thing enforcing it.
+    """
+
+    enabled: bool = True
+
+    unlock_seconds: int = Field(default=300, ge=30, le=3600)
+    """How long an unlock lasts. Five minutes by request."""
+
+    rp_id: str | None = None
+    """WebAuthn relying-party ID. Derived from `[server].host` when unset, and
+    that derivation is the useful one -- see `webauthn.for_settings`, and note
+    that an IP address cannot be an rp_id at all."""
+
 
 class CalendarSettings(Base):
     command: list[str] = Field(default_factory=lambda: ["gcalcli", "--nocolor"])
@@ -673,6 +719,7 @@ class Settings(Base):
     spelling: SpellingSettings = Field(default_factory=SpellingSettings)
     theorems: TheoremSettings = Field(default_factory=TheoremSettings)
     markets: MarketSettings = Field(default_factory=MarketSettings)
+    portfolio: PortfolioSettings = Field(default_factory=PortfolioSettings)
     calendar: CalendarSettings = Field(default_factory=CalendarSettings)
     news: NewsSettings = Field(default_factory=NewsSettings)
     arxiv: ArxivSettings
@@ -691,6 +738,27 @@ class Settings(Base):
     def path(self, name: str) -> Path:
         """Resolve one of the [paths] entries against `root`."""
         return (self.root / getattr(self.paths, name)).resolve()
+
+    @model_validator(mode="after")
+    def _positions_are_not_published(self) -> Settings:
+        """The positions file must not sit inside the static root.
+
+        `[paths].static` is mounted as a catch-all at `/`, so anything beneath
+        it is served to anyone who can reach the port -- no token, no Hello, no
+        panel involved. Every other guard in this feature would still be in
+        place and completely bypassed by a URL.
+
+        Caught at startup rather than by a check at read time, because the way
+        this goes wrong is a `[paths]` edit made months from now for an
+        unrelated reason, and the symptom is silence.
+        """
+        static, positions = self.path("static"), self.path("positions")
+        if positions == static or static in positions.parents:
+            raise ValueError(
+                f"[paths].positions ({positions}) is inside [paths].static ({static}), "
+                "where the web server would publish it unauthenticated. Move it outside."
+            )
+        return self
 
 
 # --- loading ---------------------------------------------------------------

@@ -185,7 +185,7 @@ def test_both_hosts_errors_are_reported_not_shadowed(fetcher, monkeypatch):
     monkeypatch.setattr(feeds, "http_get", failing)
     monkeypatch.setattr(fetcher.settings.markets, "tickers", ["AAPL"])
     with pytest.raises(FeedError):
-        fetcher._fetch_markets()
+        fetcher._fetch_markets(["AAPL"])
     assert seen == ["query1", "query2"]
 
 
@@ -197,7 +197,7 @@ def test_one_dead_ticker_does_not_kill_the_panel(fetcher, monkeypatch):
 
     monkeypatch.setattr(feeds, "http_get", half)
     monkeypatch.setattr(fetcher.settings.markets, "tickers", ["AAPL", "MSFT"])
-    rows = fetcher._fetch_markets()
+    rows = fetcher._fetch_markets(["AAPL", "MSFT"])
     assert rows[0].error and "query1" in rows[0].error and "query2" in rows[0].error
     assert rows[1].price == 110.0
 

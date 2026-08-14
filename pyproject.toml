@@ -13,6 +13,13 @@ dependencies = [
     "fastapi>=0.115",
     "pydantic>=2.9",
     "uvicorn[standard]>=0.30",
+    # Signature verification for the portfolio panel's Windows Hello lock.
+    # The alternative was hand-rolling ECDSA P-256 and PKCS#1 v1.5 over a
+    # hand-rolled CBOR decoder, which is a lot of arithmetic to get subtly
+    # wrong inside the one part of this project that is load-bearing for
+    # something. `dashboard/webauthn.py` imports it lazily, so a venv that
+    # predates this still boots -- the panel says what to run instead.
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

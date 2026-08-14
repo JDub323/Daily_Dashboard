@@ -31,4 +31,14 @@ if [ ! -x "$PY" ]; then
   python3 -m venv --system-site-packages "$VENV"
   "$PY" -m pip install --quiet --upgrade pip
   "$PY" -m pip install --quiet --editable ".[dev]"
+  cp pyproject.toml "$VENV/.deps-stamp"
+# An --editable install tracks the *source*, not the dependency list, so adding
+# a package to pyproject.toml changed nothing in an environment created before
+# the edit. The failure that produced this was a panel reporting a missing
+# import on a machine where `pip install -e .` had demonstrably been run --
+# months earlier, against a shorter list. The stamp makes "the deps moved" a
+# thing the launcher notices rather than something you diagnose.
+elif ! cmp -s pyproject.toml "$VENV/.deps-stamp"; then
+  echo "dependencies changed; updating $VENV" >&2
+  "$PY" -m pip install --quiet --editable ".[dev]" && cp pyproject.toml "$VENV/.deps-stamp"
 fi

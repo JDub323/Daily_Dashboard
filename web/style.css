@@ -433,3 +433,37 @@ svg text { font: 10px "Cascadia Code", Consolas, monospace; fill: var(--faint); 
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important;
                            transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* ---- portfolio ----
+   The one table in the app, and it earns the tag: fourteen columns of a
+   brokerage export collapsed to six, each row aligned against the next so a
+   position that is down stands out by column rather than by being read.
+
+   Numbers are tabular-nums and right-aligned for the same reason — a column of
+   proportional digits cannot be scanned for magnitude, which is the only thing
+   anyone does with it. The symbol column stays left, because that one is read
+   as a word. */
+.scroll-x { overflow-x: auto; margin: 8px 0; }
+
+table.holdings { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.holdings th {
+  text-align: right;
+  font-weight: 500;
+  color: var(--faint);
+  padding: 0 0 4px;
+  border-bottom: 1px solid var(--border-soft);
+}
+table.holdings th:first-child { text-align: left; }
+table.holdings td {
+  text-align: right;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+table.holdings td:first-child { text-align: left; white-space: normal; }
+/* Columns need air between them, but the outer edges should sit flush with the
+   panel body rather than indented from it. */
+table.holdings th + th, table.holdings td + td { padding-left: 14px; }
+/* A long fund name should not set the width of the whole table. */
+table.holdings td:first-child .small { max-width: 22ch; overflow-wrap: anywhere; }

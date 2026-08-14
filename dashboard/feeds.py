@@ -25,7 +25,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from typing import Any, Generic, NamedTuple, TypeVar
 
-from . import logs
+from . import logs, portfolio
 from .config import Settings
 from .models.api import CalendarEvent, CalendarResponse, MarketRow, NewsItem
 from .models.common import Base
@@ -158,6 +158,27 @@ class Cached(NamedTuple, Generic[T]):
     stale: bool = False
 
 
+def _yahoo_symbol(ticker: str) -> str:
+    """What Yahoo calls a ticker the rest of the world spells differently.
+
+    Two rewrites, both of which produce a 404 rather than an error that says
+    what is wrong:
+
+    `^SPX` is the S&P under its Yahoo name `^GSPC` -- longstanding, and the
+    reason this function exists at all.
+
+    A dot in a class share becomes a hyphen. Brokerages write Berkshire's B
+    shares as `BRK.B` and Yahoo wants `BRK-B`; the positions file therefore
+    supplies the one spelling the quote feed will not accept, which showed up
+    the moment holdings started reaching this code. The display ticker keeps
+    the dot, because that is what the file says and what the row is labelled
+    with -- only the URL is rewritten.
+    """
+    if ticker == "^SPX":
+        return "^GSPC"
+    return ticker.replace(".", "-")
+
+
 class Feeds:
     """External data, with a stale-tolerant cache.
 
@@ -283,13 +304,47 @@ class Feeds:
     # -- markets ------------------------------------------------------------
 
     def markets(self) -> Cached[list[MarketRow]]:
-        return self.cached("markets", self.settings.markets.cache_seconds, self._fetch_markets)
+        # The ticker set is in the cache key, not just the payload. It is
+        # derived from a file you edit -- adding a position and reloading has
+        # to show the new symbol, and with a bare "markets" key it would have
+        # shown the old list for up to ten more minutes and looked like the
+        # edit had not taken. Stale entries for previous ticker sets age out on
+        # their own; there are at most a handful of them in a session.
+        tickers = self._market_tickers()
+        return self.cached(
+            f"markets:{','.join(tickers)}",
+            self.settings.markets.cache_seconds,
+            lambda: self._fetch_markets(tickers),
+        )
 
-    def _fetch_markets(self) -> list[MarketRow]:
+    def _market_tickers(self) -> list[str]:
+        """The configured tickers, then anything held that is not already there.
+
+        Config order first on purpose: the index and the majors are the frame
+        the holdings are read against, and a portfolio that grows should not
+        push ^SPX off the top of the panel.
+
+        A failure here is swallowed. The movements list is not the portfolio
+        panel -- if the positions file is missing or unreadable, the right
+        outcome is the four configured tickers, not a market panel that has
+        broken because of a spreadsheet.
+        """
+        tickers = list(self.settings.markets.tickers)
+        if not self.settings.markets.include_holdings:
+            return tickers
+        try:
+            held = portfolio.tickers(self.settings.path("positions"))
+        except OSError:
+            log.warning("could not read the positions file; showing configured tickers only")
+            return tickers
+        known = {t.upper() for t in tickers}
+        return tickers + [t for t in held if t.upper() not in known]
+
+    def _fetch_markets(self, tickers: list[str]) -> list[MarketRow]:
         rows: list[MarketRow] = []
         any_ok = False
-        for ticker in self.settings.markets.tickers:
-            symbol = "^GSPC" if ticker == "^SPX" else ticker  # yahoo's S&P symbol
+        for ticker in tickers:
+            symbol = _yahoo_symbol(ticker)
             row, errors = None, []
             for host in ("query1", "query2"):
                 try:

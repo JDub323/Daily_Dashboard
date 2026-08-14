@@ -31,3 +31,10 @@ dossiers/
 # ND proxy
 proxy.txt
 
+# brokerage positions export — the actual portfolio, read by the locked panel.
+# Never committed. The glob covers the dated filenames a download produces
+# (Portfolio_Positions_Aug-14-2026.csv) as well as the file the config names,
+# so a fresh export dropped in the directory is ignored before it is staged.
+positions.csv
+Portfolio_Positions*.csv
+

@@ -1826,6 +1826,55 @@ class Repository:
         ).fetchone()
         return d.TopicInfo(**_unpack(row, "textbook", "theorems"))
 
+    # -- portfolio credentials ----------------------------------------------
+    #
+    # Returns tuples rather than a Pydantic model, breaking this file's own
+    # rule that nothing above it sees a Row. The rule exists so that domain
+    # objects are validated in one place; a credential has no domain -- it is
+    # three opaque fields handed straight back to `webauthn` and never rendered,
+    # summed or rated. A model here would be a name for a tuple.
+
+    def credentials(self) -> list[tuple[str, bytes, int, int]]:
+        """`(id, public_key, alg, sign_count)` for every enrolled authenticator."""
+        return [
+            (row["id"], row["public_key"], row["alg"], row["sign_count"])
+            for row in self.conn.execute(
+                "SELECT id, public_key, alg, sign_count FROM webauthn_credential ORDER BY created"
+            )
+        ]
+
+    def credential(self, credential_id: str) -> tuple[str, bytes, int, int] | None:
+        row = self.conn.execute(
+            "SELECT id, public_key, alg, sign_count FROM webauthn_credential WHERE id = ?",
+            (credential_id,),
+        ).fetchone()
+        return (row["id"], row["public_key"], row["alg"], row["sign_count"]) if row else None
+
+    def credential_ids(self) -> list[str]:
+        return [row["id"] for row in self.conn.execute("SELECT id FROM webauthn_credential")]
+
+    def add_credential(
+        self, credential_id: str, public_key: bytes, alg: int, date: dt.date, label: str = ""
+    ) -> None:
+        self.conn.execute(
+            "INSERT INTO webauthn_credential (id, public_key, alg, label, created) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING",
+            (credential_id, public_key, alg, label, _iso(date)),
+        )
+
+    def touch_credential(self, credential_id: str, sign_count: int, date: dt.date) -> None:
+        """Record a successful unlock.
+
+        `MAX` rather than assignment: Hello reports a constant 0, and letting
+        that overwrite a real counter from another authenticator would disable
+        the clone check for the credential that actually had one.
+        """
+        self.conn.execute(
+            "UPDATE webauthn_credential "
+            "SET sign_count = MAX(sign_count, ?), last_used = ? WHERE id = ?",
+            (sign_count, _iso(date), credential_id),
+        )
+
     # -- import support -----------------------------------------------------
 
     def insert_rating_event(self, event: d.RatingEvent) -> d.RatingEvent:

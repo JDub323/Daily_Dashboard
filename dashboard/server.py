@@ -24,6 +24,7 @@ pretending otherwise on an async handler would stall the event loop.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
 import queue
@@ -42,7 +43,19 @@ from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import content, debate, feeds, interests, logs, scoring, spelling, spend, state
+from . import (
+    content,
+    debate,
+    feeds,
+    interests,
+    logs,
+    portfolio,
+    scoring,
+    spelling,
+    spend,
+    state,
+    webauthn,
+)
 from .config import Settings, load_env, settings
 from .content import ContentError
 from .db import Database, Repository
@@ -102,7 +115,21 @@ async def lifespan(app: FastAPI):
     load_env(cfg.root / ".env")
     app.state.db = Database(cfg.path("db"))
     app.state.feeds = Feeds(cfg)
+    # Both stores are per-process and in memory, so a restart re-locks the
+    # portfolio. That is the intent, not a limitation: nothing about a
+    # five-minute unlock should outlive the process that granted it.
+    app.state.rp = webauthn.for_settings(
+        cfg.server.host, cfg.server.port, cfg.portfolio.rp_id
+    )
+    app.state.challenges = webauthn.Challenges()
+    app.state.unlocks = webauthn.Unlocks(cfg.portfolio.unlock_seconds)
     log.info("dashboard ready on http://%s:%s", cfg.server.host, cfg.server.port)
+    if cfg.portfolio.enabled:
+        # Logged because the failure it prevents is silent and confusing: at
+        # any other origin the browser refuses the ceremony before the server
+        # is involved, so the panel's only symptom is a button that does
+        # nothing.
+        log.info("portfolio unlock requires %s", next(iter(app.state.rp.origins)))
     try:
         yield
     finally:
@@ -209,6 +236,27 @@ def _register_errors(app: FastAPI) -> None:
         # logged at info without a traceback, like the other client mistakes.
         log.info("%s: unusable ballot: %s", request.url.path, exc)
         return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.exception_handler(webauthn.WebAuthnError)
+    def _webauthn(request: Request, exc: webauthn.WebAuthnError) -> JSONResponse:
+        # 400 and no traceback. Every case here is either an expired challenge
+        # or a ceremony the user abandoned, both of which are ordinary; a real
+        # forgery attempt is indistinguishable from them at this layer and
+        # would only fill the log with stacks from the retry loop.
+        log.info("%s: unlock rejected: %s", request.url.path, exc)
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.exception_handler(PermissionError)
+    def _locked(request: Request, exc: PermissionError) -> JSONResponse:
+        # 403 rather than 401: 401 makes the browser offer its own credential
+        # dialog, and there is no scheme here that dialog could satisfy.
+        #
+        # Registered before LookupError only for readability -- but note it
+        # must come before the ValueError and Exception handlers, since
+        # PermissionError is an OSError and would otherwise be reported as an
+        # internal error by the catch-all.
+        log.info("%s: %s", request.url.path, exc)
+        return JSONResponse({"error": str(exc)}, status_code=403)
 
     @app.exception_handler(LookupError)
     def _missing(request: Request, exc: LookupError) -> JSONResponse:
@@ -347,6 +395,207 @@ def _register(app: FastAPI) -> None:
     def markets(fetch: Fetch) -> api.MarketsResponse:
         got = fetch.markets()
         return api.MarketsResponse(rows=got.value, feed=_feed_meta(got))
+
+    # -- the portfolio -----------------------------------------------------
+    #
+    # The gate is here rather than in the panel. Hiding a rendered panel
+    # client-side leaves the numbers in the response body, in devtools and in
+    # the back/forward cache -- it would look locked while the data had already
+    # been handed over. So: `/api/portfolio` is the only route that reads the
+    # positions file, and it refuses without a token minted by a verified
+    # assertion.
+    #
+    # See `dashboard/webauthn.py` for what the fingerprint does and does not
+    # prove. The short version is that Windows decides whether to accept a
+    # finger, a face or the PIN, and the page cannot narrow that.
+
+    def _challenge_from(client_data_json: str) -> str:
+        """The challenge the browser says it signed.
+
+        Read from the client's own data, which sounds like letting the caller
+        mark its own homework -- and would be, if this were the check. It is
+        not. `Challenges.take` is, and it accepts only a nonce this server
+        issued and has not yet consumed. Taking the value from here just says
+        *which* outstanding challenge to spend; a value we never issued, or one
+        already spent by an earlier request, fails there.
+
+        The alternative is a server-side "challenge currently in flight", which
+        is a single slot two tabs would fight over.
+        """
+        try:
+            data = json.loads(webauthn.b64url_decode(client_data_json))
+            return str(data["challenge"])
+        except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+            raise webauthn.WebAuthnError("malformed request")
+
+    def _unlock_token(request: Request) -> str | None:
+        """The caller's token, from the Authorization header.
+
+        A header and not a cookie, deliberately. A cookie would be attached by
+        the browser to every request to this origin including the static mount,
+        which puts an unlock token in the access log and makes it reachable
+        from any other page that can provoke a request here. This token is held
+        in one JavaScript closure and sent only where it is needed.
+        """
+        header = request.headers.get("authorization", "")
+        scheme, _, token = header.partition(" ")
+        return token.strip() if scheme.lower() == "bearer" and token.strip() else None
+
+    def _require_unlock(request: Request) -> str:
+        token = _unlock_token(request)
+        if not request.app.state.unlocks.valid(token):
+            # 403 rather than 401: 401 invites the browser's own auth dialog,
+            # and there is no scheme here it could satisfy.
+            raise PermissionError("locked — verify with Windows Hello first")
+        return token
+
+    @app.get("/api/portfolio/status")
+    def portfolio_status(request: Request, cfg: Cfg, repo: Repo) -> api.PortfolioStatus:
+        """What the locked panel draws itself from.
+
+        Unauthenticated, and so it must carry nothing worth locking: whether a
+        credential exists, whether this caller holds a live token, and where
+        the page needs to be loaded from. Not the symbols, not a count.
+        """
+        token = _unlock_token(request)
+        unlocked = request.app.state.unlocks.valid(token)
+        return api.PortfolioStatus(
+            enabled=cfg.portfolio.enabled,
+            enrolled=bool(repo.credential_ids()),
+            unlocked=unlocked,
+            expires_in=request.app.state.unlocks.remaining(token) if unlocked and token else 0,
+            present=cfg.path("positions").exists(),
+            origin=next(iter(request.app.state.rp.origins)),
+        )
+
+    @app.post("/api/portfolio/enroll/begin")
+    def portfolio_enroll_begin(request: Request, cfg: Cfg, repo: Repo) -> dict[str, Any]:
+        """Options for `navigator.credentials.create()`.
+
+        The *first* enrolment is unauthenticated, and that is a real gap worth
+        naming: someone sitting at this machine before you have enrolled can
+        register their own Hello credential and unlock the panel with it. There
+        is no way around it that is not theatre -- any secret the server could
+        demand would have to live on the same disk as the CSV, and anyone who
+        can reach that disk can read the CSV directly and skip the panel.
+        Enrol once, immediately, and the window closes.
+
+        Every enrolment *after* the first requires a live unlock, so adding a
+        second authenticator is something only the holder of the first can do.
+        """
+        if not cfg.portfolio.enabled:
+            raise LookupError("the portfolio panel is switched off in config.toml")
+        existing = repo.credential_ids()
+        if existing:
+            _require_unlock(request)
+        challenge = request.app.state.challenges.issue()
+        return webauthn.creation_options(
+            request.app.state.rp,
+            challenge,
+            # Stable, and derived rather than stored: there is exactly one user
+            # here, and a random handle would be one more row to keep.
+            user_id=hashlib.sha256(b"daily-dashboard:portfolio").digest()[:16],
+            # So Hello offers to *replace* rather than silently stacking a
+            # second credential for the same authenticator.
+            exclude=existing,
+        )
+
+    @app.post("/api/portfolio/enroll/finish")
+    def portfolio_enroll_finish(
+        request: Request, cfg: Cfg, repo: Repo, body: api.EnrollFinish
+    ) -> api.PortfolioStatus:
+        if not cfg.portfolio.enabled:
+            raise LookupError("the portfolio panel is switched off in config.toml")
+        if repo.credential_ids():
+            _require_unlock(request)
+        challenge = _challenge_from(body.client_data_json)
+        request.app.state.challenges.take(challenge)
+        registered = webauthn.verify_registration(
+            credential_id=body.credential_id,
+            client_data_json=body.client_data_json,
+            public_key=body.public_key,
+            alg=body.alg,
+            challenge=challenge,
+            rp=request.app.state.rp,
+        )
+        repo.add_credential(
+            registered.credential_id, registered.public_key, registered.alg, body.date, body.label
+        )
+        log.info("enrolled a portfolio credential (alg %s)", registered.alg)
+        return portfolio_status(request, cfg, repo)
+
+    @app.post("/api/portfolio/unlock/begin")
+    def portfolio_unlock_begin(request: Request, cfg: Cfg, repo: Repo) -> dict[str, Any]:
+        if not cfg.portfolio.enabled:
+            raise LookupError("the portfolio panel is switched off in config.toml")
+        allow = repo.credential_ids()
+        if not allow:
+            raise LookupError("no authenticator is enrolled yet")
+        return webauthn.request_options(
+            request.app.state.rp, request.app.state.challenges.issue(), allow
+        )
+
+    @app.post("/api/portfolio/unlock/finish")
+    def portfolio_unlock_finish(
+        request: Request, cfg: Cfg, repo: Repo, body: api.UnlockFinish
+    ) -> dict[str, Any]:
+        if not cfg.portfolio.enabled:
+            raise LookupError("the portfolio panel is switched off in config.toml")
+        record = repo.credential(body.credential_id)
+        if record is None:
+            raise webauthn.WebAuthnError("that authenticator is not enrolled")
+        _, public_key, alg, sign_count = record
+
+        challenge = _challenge_from(body.client_data_json)
+        request.app.state.challenges.take(challenge)
+        seen = webauthn.verify_assertion(
+            client_data_json=body.client_data_json,
+            authenticator_data=body.authenticator_data,
+            signature=body.signature,
+            public_key=public_key,
+            alg=alg,
+            challenge=challenge,
+            rp=request.app.state.rp,
+            stored_sign_count=sign_count,
+        )
+        repo.touch_credential(body.credential_id, seen, body.date)
+
+        token, ttl = request.app.state.unlocks.mint()
+        log.info("portfolio unlocked for %ss", ttl)
+        return {"token": token, "expires_in": ttl}
+
+    @app.post("/api/portfolio/lock")
+    def portfolio_lock(request: Request) -> dict[str, bool]:
+        """Hand the token back early.
+
+        Called by the panel when the countdown runs out and when the tab is
+        closed, so the five minutes are usually *shorter* than five minutes
+        rather than exactly it. The expiry in `Unlocks` is what guarantees the
+        ceiling; this lowers it whenever the browser is still around to ask.
+        """
+        request.app.state.unlocks.revoke(_unlock_token(request))
+        return {"locked": True}
+
+    @app.get("/api/portfolio")
+    def portfolio_holdings(request: Request, cfg: Cfg) -> api.PortfolioResponse:
+        """The holdings themselves. The only route that opens the file."""
+        if not cfg.portfolio.enabled:
+            raise LookupError("the portfolio panel is switched off in config.toml")
+        token = _require_unlock(request)
+        held = portfolio.load(cfg.path("positions"))
+        return api.PortfolioResponse(
+            positions=[api.PortfolioPosition(**vars(p)) for p in held.positions],
+            totals=api.PortfolioTotals(
+                value=held.total_value,
+                day_gain=held.total_day_gain,
+                day_gain_pct=held.day_gain_pct,
+                total_gain=held.total_gain,
+                total_gain_pct=held.total_gain_pct,
+            ),
+            warnings=held.warnings,
+            as_of=held.as_of,
+            expires_in=request.app.state.unlocks.remaining(token),
+        )
 
     @app.get("/api/calendar")
     def calendar(fetch: Fetch, date: Today) -> api.CalendarResponse:
@@ -1130,7 +1379,14 @@ def main() -> None:
         cfg.server.log_level, cfg.root / cfg.server.log_file if cfg.server.log_file else None
     )
     host, port = cfg.server.host, cfg.server.port
-    url = f"http://{host}:{port}"
+    # Bound to `host`, but *opened* at localhost when that host is loopback.
+    # WebAuthn's relying-party ID has to be a domain, and an IP literal is not
+    # one -- at `http://127.0.0.1:8502` the browser refuses the Hello ceremony
+    # before any of this server's code runs, so the portfolio panel simply
+    # never unlocks and says nothing useful about why. `localhost` is also a
+    # secure context over plain HTTP, which is the other thing WebAuthn needs
+    # and an IP on http cannot supply.
+    url = f"http://{'localhost' if host in webauthn.LOOPBACK else host}:{port}"
 
     if not port_is_free(host, port):
         # Historically this was a stale pre-rewrite `python3 dashboard.py`
