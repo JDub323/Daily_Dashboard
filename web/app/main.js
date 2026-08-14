@@ -8,7 +8,7 @@ import * as api from "./api.js";
 import { renderChips, todayPanel } from "./chips.js";
 import { $ } from "./dom.js";
 import { initKeys } from "./keys.js";
-import { resetToTab } from "./nav.js";
+import { initNav, resetToTab } from "./nav.js";
 import { mountAll, refreshLive, register, rerender, rerenderAll, resetCollapse } from "./panel.js";
 import calendar from "./panels/calendar.js";
 import chess from "./panels/chess.js";
@@ -190,6 +190,7 @@ function watchForNewDay() {
 async function boot() {
   initTabs();
   initModal();
+  initNav();
   onModalClose(renderChips);
   // The focus ring belongs to whichever section is showing; a switch parks it
   // on that tab's first panel rather than leaving it on a card you can no

@@ -8,13 +8,19 @@
 //
 //   - Off while a modal is open. You are doing the task, and `j` belongs in
 //     the sentence you are typing.
-//   - Off inside any editable element — with Esc as the deliberate exception,
-//     since it is the way back out of one.
-//   - Off whenever Ctrl/Alt/Cmd is held, so Cmd-1 still switches *browser*
-//     tabs. A shortcut layer that eats the browser's own keys is worse than
-//     no shortcut layer.
+//   - Off inside any editable element — with Esc and Tab as the deliberate
+//     exceptions, since they are the way out of one and the way across to the
+//     next one.
+//   - Off whenever Ctrl/Cmd is held, so Cmd-1 still switches *browser* tabs. A
+//     shortcut layer that eats the browser's own keys is worse than no
+//     shortcut layer.
 //
-// Shift is not in that list, because Shift-Tab is a binding.
+// Alt is the exception to the third gate, and only for h/j/k/l: moving between
+// panels is the one thing that has to work from inside a mode you did not mean
+// to enter, including with a text box holding the keyboard. Nothing in a
+// browser is bound to Alt-hjkl, so the cost is a menu shortcut nobody presses.
+//
+// Shift is not in that list either, because Shift-Tab is a binding.
 
 import { chipTasks, openNextUnfinished, required } from "./chips.js";
 import { $, el } from "./dom.js";
@@ -67,10 +73,29 @@ const BINDINGS = [
     run: (e) => nav.move(e.key),
   },
   {
+    keys: ["alt", "+", "hjkl"],
+    hint: "move between panels from any mode — even with a text box focused",
+    // Handled before every gate below; listed here so the sheet is the map.
+    match: () => false,
+    run: () => {},
+  },
+  {
     keys: ["enter"],
-    hint: "enter the focused panel, then open the focused link or press the button",
+    hint: "press the panel's only button, or step inside it · shift-enter always steps inside",
     match: (e) => e.key === "Enter",
-    run: () => nav.enter(),
+    run: (e) => nav.enter({ descend: e.shiftKey }),
+  },
+  {
+    keys: ["i"],
+    hint: "type in this panel's first text box · tab walks the rest of them",
+    match: (e) => e.key === "i",
+    run: () => nav.insert(),
+  },
+  {
+    keys: ["f"],
+    hint: "letter every link in this panel, then press its letter to open it",
+    match: (e) => e.key === "f",
+    run: () => nav.hint(),
   },
   {
     keys: ["gg", "G"],
@@ -110,11 +135,20 @@ const BINDINGS = [
   },
   {
     keys: ["esc"],
-    hint: "leave a panel, then drop the ring · also closes a modal or a text box",
+    hint: "back to the highlighted panel, in one press · also closes a modal",
     match: (e) => e.key === "Escape",
     run: () => nav.escape(),
   },
 ];
+
+/**
+ * Alt-hjkl, by physical key.
+ *
+ * `e.key` is the wrong side of the keyboard layout for this one: on macOS Alt
+ * is the compose modifier, so Alt-j arrives as "∆" and Alt-h as "˙". `e.code`
+ * is the key you actually pressed.
+ */
+const ALT_MOVE = { KeyH: "h", KeyJ: "j", KeyK: "k", KeyL: "l" };
 
 function openHelp() {
   // The required ones, matching the statusline. Two surfaces disagreeing about
@@ -124,7 +158,8 @@ function openHelp() {
   openModal("keyboard", (body) => {
     body.replaceChildren(
       el("div.faint.small", {
-        text: "active on the dashboard itself — not while a modal is open or a field is focused.",
+        text: "active on the dashboard itself — not while a modal is open. "
+          + "in a text box only esc, tab and alt-hjkl still answer.",
       }),
       el("div.keys", null,
         ...BINDINGS.flatMap((binding) => [
@@ -141,22 +176,48 @@ function openHelp() {
 
 export function initKeys() {
   document.addEventListener("keydown", (e) => {
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.ctrlKey || e.metaKey) return;
 
-    // Esc first, and ahead of both remaining gates: it is the way out of the
-    // text box, and ui.js owns it while a modal is up.
-    if (e.key === "Escape") {
-      if (modalOpen()) return;
-      if (isTyping(e.target)) {
-        e.target.blur();
-        e.preventDefault();
-        return;
-      }
-      if (nav.escape()) e.preventDefault();
+    // Alt-hjkl, ahead of every gate. This is the key that has to work when you
+    // are somewhere you did not mean to be — three fields deep in a form, or
+    // in item mode on the wrong card.
+    if (e.altKey) {
+      const key = ALT_MOVE[e.code];
+      if (!key || modalOpen()) return;
+      // The blur is what makes it a *move* and not a move-while-still-typing:
+      // nav returns to panel mode on the card it lands on.
+      if (isTyping(e.target)) e.target.blur();
+      e.preventDefault();
+      nav.move(key, { toPanels: true });
       return;
     }
 
-    if (modalOpen() || isTyping(e.target)) return;
+    // Esc next, and ahead of both remaining gates: it is the way out of the
+    // text box, and ui.js owns it while a modal is up.
+    if (e.key === "Escape") {
+      if (modalOpen()) return;
+      nav.escape();
+      e.preventDefault();
+      return;
+    }
+
+    if (modalOpen()) return;
+
+    // Inside a text box the keyboard belongs to the box, with one exception:
+    // Tab walks that panel's other boxes. See nav.cycleField.
+    if (isTyping(e.target)) {
+      if (e.key === "Tab" && nav.cycleField(e.shiftKey ? -1 : 1)) e.preventDefault();
+      return;
+    }
+
+    // The hint layer eats the next key whatever it is — that is what buys it
+    // the whole alphabet while `g`, `h` and `n` keep their normal meanings.
+    if (nav.inHints()) {
+      e.preventDefault();
+      if (/^[a-z]$/i.test(e.key)) nav.takeHint(e.key.toLowerCase());
+      else nav.exitHints();
+      return;
+    }
 
     const binding = BINDINGS.find((b) => b.match(e));
     if (!binding) return;

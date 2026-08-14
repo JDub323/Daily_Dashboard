@@ -7,9 +7,17 @@
 // would be twenty keystrokes.
 //
 //   panel mode (default)  h/j/k/l move between panels, geometrically.
-//                         Enter descends into the focused panel.
+//                         Enter presses the panel's only button, or descends.
+//                         i drops into its first text box; f paints link hints.
 //   item mode             j/k walk the links and controls inside that panel.
-//                         Enter activates one. Esc comes back up.
+//                         Enter activates one.
+//   insert mode           a text box has the keyboard. Tab walks the boxes of
+//                         that panel and nothing else.
+//
+// Esc from any of them returns to panel mode in one press, and Alt-hjkl moves
+// between panels from any of them too — the two escapes from a mode you did
+// not mean to be in. The ring is never dropped: losing your place is not a
+// state worth having a key for.
 //
 // Movement between panels is spatial rather than by DOM order, because the
 // panes are CSS grids whose column count changes with the viewport. Ordering
@@ -21,7 +29,11 @@ import { activeTab } from "./tabs.js";
 
 const ITEMS =
   "a[href], button:not(:disabled), input:not([disabled]), textarea, select, summary, .collapse-toggle";
+/** What `i` and Tab walk. Checkboxes and radios are controls, not text boxes. */
+const FIELDS =
+  "input:not([disabled]):not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]), textarea, select";
 
+/** panels | items | insert | hints */
 let mode = "panels";
 let itemIndex = -1;
 /** The focused panel's element id, not the node: panels re-render their
@@ -29,10 +41,11 @@ let itemIndex = -1;
 let panelId = null;
 
 const pane = () => $(`#pane-${activeTab()}`);
+const visible = (node) => node.offsetParent !== null;
 
 /** Every visible panel card in the active tab, in document order. */
 function panels() {
-  return $$(".panel", pane()).filter((card) => card.offsetParent !== null);
+  return $$(".panel", pane()).filter(visible);
 }
 
 function panelNode() {
@@ -43,7 +56,11 @@ function panelNode() {
 function items() {
   const card = panelNode();
   if (!card) return [];
-  return $$(ITEMS, card).filter((node) => node.offsetParent !== null);
+  return $$(ITEMS, card).filter(visible);
+}
+
+function fields(card) {
+  return card ? $$(FIELDS, card).filter(visible) : [];
 }
 
 // --- painting ---------------------------------------------------------------
@@ -56,6 +73,11 @@ function items() {
  * after every draw.
  */
 export function repaint() {
+  // A draw that replaced the hinted links took the hints with it — the list
+  // you were choosing from no longer exists, so the layer comes down rather
+  // than pointing at nodes that are no longer on screen.
+  if (hinted.length && hinted.some((node) => !node.isConnected)) exitHints();
+
   for (const card of $$(".panel")) card.classList.remove("nav-panel");
   for (const node of $$(".nav-item")) node.classList.remove("nav-item");
 
@@ -78,6 +100,11 @@ function setMode(next) {
 
 function show(node) {
   node?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+/** Back to the top of the page — where the tab bar and the date live. */
+function toTop() {
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 // --- panel mode -------------------------------------------------------------
@@ -112,6 +139,12 @@ const DIRECTIONS = {
  * it, so a card that is slightly down and far right loses to one directly
  * right. The half-cell threshold stops two cards whose centres differ by three
  * pixels — a grid row, in other words — from counting as "below" each other.
+ *
+ * h/l additionally demand that the candidate share some of the source's rows.
+ * Without that, `l` from a full-width hero — which has nothing beside it —
+ * scored the leftmost card of the row *below* as "right", because down-and-far-
+ * right still beats nothing at all. A sideways key that changes row is a key
+ * you stop trusting, so it now simply does nothing there.
  */
 function nearest(from, { axis, sign }) {
   const rects = panels().map((card) => [card, card.getBoundingClientRect()]);
@@ -120,12 +153,14 @@ function nearest(from, { axis, sign }) {
   const cy = (r) => r.top + r.height / 2;
   const along = axis === "x" ? cx : cy;
   const across = axis === "x" ? cy : cx;
+  const overlaps = (r) => r.bottom > here.top + 8 && r.top < here.bottom - 8;
   const threshold = 8;
 
   let best = null;
   let bestScore = Infinity;
   for (const [card, rect] of rects) {
     if (card === from) continue;
+    if (axis === "x" && !overlaps(rect)) continue;
     const delta = (along(rect) - along(here)) * sign;
     if (delta < threshold) continue;
     const score = delta + 2 * Math.abs(across(rect) - across(here));
@@ -148,7 +183,13 @@ function movePanel(key) {
     return;
   }
   const next = nearest(from, DIRECTIONS[key]);
-  if (!next) return;
+  if (!next) {
+    // `k` off the top panel is how you get back to the tab bar and the date.
+    // Without this the header was unreachable without the mouse: the ring
+    // simply stopped at the first card and the page stayed where it was.
+    if (key === "k") toTop();
+    return;
+  }
   panelId = next.id;
   repaint();
   show(next);
@@ -160,7 +201,8 @@ export function edge(which) {
   if (!card) return;
   panelId = card.id;
   setMode("panels");
-  show(card);
+  if (which === "first") toTop();
+  else show(card);
 }
 
 // --- item mode --------------------------------------------------------------
@@ -182,18 +224,42 @@ function moveItem(delta) {
 }
 
 /**
- * Act on the focused item.
+ * Hand the keyboard to a text box.
  *
- * A text box is focused rather than clicked, which hands the keyboard over to
- * it — every binding in keys.js is gated off while an editable element has
- * focus, so typing into it just works and Esc gives the keys back.
+ * Every binding in keys.js is gated off while an editable element has focus,
+ * so typing into it just works, Tab walks this panel's other boxes and Esc
+ * gives the keys back.
+ *
+ * `replace` is the difference between the two ways in. Enter on a field means
+ * "set this value" and selects what is there; `i` means insert and leaves the
+ * caret at the end, because a half-typed spelling answer must survive it.
  */
+function focusField(node, { replace = false } = {}) {
+  node.focus();
+  // Said here as well as in the focusin listener. That listener is what keeps
+  // the ring honest when the *mouse* moves focus, but a window that does not
+  // have the OS focus never fires it, and the statusline would then claim you
+  // were in panel mode with a caret blinking in a box.
+  if (mode !== "insert") setMode("insert");
+  if (!node.select) return;
+  if (replace && node.type !== "number") {
+    node.select();
+    return;
+  }
+  const end = node.value?.length ?? 0;
+  try {
+    node.setSelectionRange(end, end);
+  } catch {
+    // number and select inputs have no selection to place; focus is enough.
+  }
+}
+
+/** Act on the focused item. */
 function activateItem() {
   const node = items()[itemIndex];
   if (!node) return;
-  if (node.matches("input, textarea, select")) {
-    node.focus();
-    if (node.select && node.type !== "number") node.select();
+  if (node.matches(FIELDS)) {
+    focusField(node, { replace: true });
     return;
   }
   node.click();
@@ -202,36 +268,193 @@ function activateItem() {
   setTimeout(repaint, 0);
 }
 
+// --- link hints -------------------------------------------------------------
+//
+// `f` paints a letter on each link in the focused panel; that letter then
+// opens it. Two keystrokes rather than one, and in exchange the letters cost
+// nothing from the rest of the map — the hint layer swallows the next key, so
+// `g`, `h` and `n` can be hints here and still be themselves everywhere else.
+// One letter per link also means a headline list is not capped at the six
+// letters that happened to be free.
+
+const HINT_KEYS = "abcdefghijklmnopqrstuvwxyz";
+
+let hinted = [];
+/** The mode `f` was pressed from, so cancelling puts you back in it. */
+let hintReturn = "panels";
+
+function links() {
+  const card = panelNode();
+  return card ? $$("a[href]", card).filter(visible) : [];
+}
+
+export const inHints = () => mode === "hints";
+
+/** Paint the hints. False if this panel has no links to hint. */
+export function hint() {
+  const list = links().slice(0, HINT_KEYS.length);
+  if (!list.length) return false;
+  clearHints();
+  hintReturn = mode === "hints" ? hintReturn : mode;
+  hinted = list;
+  // A data attribute rather than an inserted badge node: the panels own their
+  // own markup and re-render it constantly, and an attribute on an existing
+  // link cannot end up orphaned in the middle of a sentence.
+  hinted.forEach((node, i) => {
+    node.dataset.navkey = HINT_KEYS[i];
+  });
+  mode = "hints";
+  $("#st-mode").textContent = `hints a–${HINT_KEYS[hinted.length - 1]}`;
+  return true;
+}
+
+function clearHints() {
+  for (const node of hinted) delete node.dataset.navkey;
+  hinted = [];
+}
+
+export function exitHints() {
+  clearHints();
+  setMode(hintReturn === "hints" ? "panels" : hintReturn);
+}
+
+/** Consume a key while the hints are up. True if it opened something. */
+export function takeHint(key) {
+  const node = hinted[HINT_KEYS.indexOf(key)];
+  exitHints();
+  if (!node) return false;
+  // click() rather than window.open: the anchor already carries target and
+  // rel, and the popup blocker allows this because a keypress is a gesture.
+  node.click();
+  return true;
+}
+
 // --- the public verbs -------------------------------------------------------
 
 export const inItems = () => mode === "items";
 
-export function move(key) {
-  if (mode === "items") {
+/**
+ * @param opts.toPanels  force a between-panel move — what Alt-hjkl does from
+ *                       inside item or insert mode.
+ */
+export function move(key, { toPanels = false } = {}) {
+  if (mode === "items" && !toPanels) {
     // h/l fall back to linear order inside a panel: "the previous control" is
     // what you mean there, and a row of buttons is as often vertical as not.
     moveItem(key === "j" || key === "l" ? 1 : -1);
     return;
   }
+  if (mode !== "panels") {
+    itemIndex = -1;
+    setMode("panels");
+  }
   movePanel(key);
 }
 
-export function enter() {
-  if (mode === "items") activateItem();
-  else enterItems();
+/**
+ * Enter.
+ *
+ * On a panel holding exactly one button, that button is unambiguously what
+ * Enter means — "get today's puzzle", "start the bee", "parse & log" — and
+ * making you press Enter, then j to the only control, then Enter again was
+ * ceremony around a single choice. Anything with two buttons still descends,
+ * and Shift-Enter descends regardless, which is the way into the heading of a
+ * collapsible panel whose body holds one button.
+ */
+export function enter({ descend = false } = {}) {
+  if (mode === "items") {
+    activateItem();
+    return;
+  }
+  if (!panelNode()) resetToTab();
+  const card = panelNode();
+  if (!card) return;
+  if (!descend) {
+    const only = $$("button:not(:disabled)", card).filter(visible);
+    if (only.length === 1) {
+      only[0].click();
+      setTimeout(repaint, 0);
+      return;
+    }
+  }
+  enterItems();
 }
 
-/** Esc: leave item mode, or drop the ring entirely if already out of it. */
+/** `i`: straight into the panel's first text box, from panel or item mode. */
+export function insert() {
+  if (!panelNode()) resetToTab();
+  const box = fields(panelNode())[0];
+  if (!box) return false;
+  focusField(box);
+  return true;
+}
+
+/**
+ * Tab inside a text box: the next box of the same panel, wrapping.
+ *
+ * Trapped on purpose. Tab's document order walks out of the panel and into
+ * every control below it — on a tabbed page, mostly ones that are not on
+ * screen — and Tab at the top level is the section switch, which is the last
+ * thing you want half way through filling in a form.
+ */
+export function cycleField(delta) {
+  const active = document.activeElement;
+  const card = active?.closest?.(".panel");
+  if (!card) return false;
+  const list = fields(card);
+  const i = list.indexOf(active);
+  if (i < 0) return false;
+  // One box still swallows the key rather than letting Tab change section.
+  if (list.length > 1) focusField(list[(i + delta + list.length) % list.length], { replace: true });
+  return true;
+}
+
+/**
+ * Esc: back to the panel ring, in one press, from wherever you are.
+ *
+ * It used to unwind one level at a time and then drop the ring entirely, which
+ * meant Esc twice put you nowhere and the third h/j/k/l started over from the
+ * first panel of the tab. Base state is a highlighted cell, and Esc is how you
+ * get there.
+ */
 export function escape() {
-  if (mode === "items") {
+  if (mode === "hints") {
+    exitHints();
+    return true;
+  }
+  const active = document.activeElement;
+  if (active?.blur && active !== document.body) active.blur();
+  if (mode !== "panels") {
     itemIndex = -1;
     setMode("panels");
     return true;
   }
-  if (panelId) {
-    panelId = null;
-    repaint();
-    return true;
-  }
   return false;
+}
+
+/**
+ * Keep the ring on whatever the browser's own focus is doing.
+ *
+ * Clicking into a box, and the spelling round autofocusing its first one, both
+ * move the keyboard without going through any verb here. Without this the ring
+ * still claimed the panel you were last on, so Esc and Alt-hjkl acted on a
+ * card you were not typing into.
+ */
+export function initNav() {
+  document.addEventListener("focusin", (e) => {
+    const card = e.target.closest?.(".panel");
+    if (!card) return;
+    panelId = card.id;
+    if (e.target.matches(FIELDS)) setMode("insert");
+  });
+
+  document.addEventListener("focusout", () => {
+    // After the event, because focus is on <body> during it and moving between
+    // two boxes of the same panel would otherwise flicker out of insert mode.
+    setTimeout(() => {
+      if (mode !== "insert") return;
+      if (document.activeElement?.matches?.(FIELDS)) return;
+      setMode("panels");
+    }, 0);
+  });
 }
