@@ -76,7 +76,14 @@ function draw(body) {
           put("word", await api.post("/api/word/today"));
           draw(body);
         } catch (error) {
-          mount(body, el("div.err", { text: error.message }));
+          // The button comes back with the error rather than being replaced by
+          // it. The panel is not live, so a body that is only an error message
+          // stayed one until the page was reloaded — and the server's own
+          // advice when the model will not stop repeating a word is to press
+          // this again.
+          button.disabled = false;
+          button.textContent = "get today's word";
+          mount(body, button, el("div.err", { text: error.message }));
         }
       },
     });

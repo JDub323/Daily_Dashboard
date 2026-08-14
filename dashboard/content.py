@@ -441,7 +441,68 @@ def _json_generation(
 # --- word of the day -------------------------------------------------------
 
 
-def word_of_day(settings: Settings, date: dt.date) -> d.WordOfDay:
+WORD_MEMORY_DAYS = 365
+"""How far back a word counts as already had.
+
+The whole list goes into the prompt, uncapped, unlike `SEEN_WINDOW` for math
+sources. A year of words is a few hundred short strings where a year of problem
+sources is a few hundred long ones, and truncating this one would quietly mean
+"no repeats, except the ones from eleven months ago" -- which is exactly the
+repeat you would not remember making and would be most annoyed to meet.
+"""
+
+WORD_ATTEMPTS = 2
+"""Generations to spend before giving up on a non-repeat.
+
+The model is handed the list and still occasionally picks off it. One resample
+is cheap and usually lands -- nothing here pins the temperature, so a second
+call is a genuinely different draw. Beyond that this stops rather than looping,
+on the same principle as `_store`: spending your money in a retry loop is not a
+decision this module gets to make on its own.
+"""
+
+
+def word_of_day(settings: Settings, repo: Repository, date: dt.date) -> d.WordOfDay:
+    """Today's word, chosen against the last year of them.
+
+    Takes the repository for the same reason `next_problem` does: the
+    do-not-repeat list is not an optional refinement a caller might forget to
+    pass, it is part of what picking a word *means*.
+    """
+    recent = repo.recent_words(date, WORD_MEMORY_DAYS)
+    had = {word.casefold() for word in recent}
+
+    for attempt in range(WORD_ATTEMPTS):
+        word = _one_word(settings, date, recent)
+        if word.word.casefold() not in had:
+            return word
+        log.warning(
+            "the model offered %r, which was the word of the day in the last %d days "
+            "(attempt %d of %d)",
+            word.word,
+            WORD_MEMORY_DAYS,
+            attempt + 1,
+            WORD_ATTEMPTS,
+        )
+
+    raise ContentError(
+        f"the model kept returning words you have already had ({word.word}) — press again to retry"
+    )
+
+
+def _one_word(settings: Settings, date: dt.date, recent: list[str]) -> d.WordOfDay:
+    """One generation. The repeat check is the caller's."""
+    # The old prompt asked for the choice to be derived from the date --
+    # "deterministic-ish" -- which bought nothing, since the word is fixed by
+    # being stored on the day it is drawn, and worked directly against this: a
+    # date-derived pick has no reason to avoid what the same rule picked last
+    # year, and rerolling it would land on the same word again.
+    do_not_use = (
+        f" You have already had these in the last {WORD_MEMORY_DAYS} days, so do NOT "
+        f"pick any of them: {json.dumps(recent)}"
+        if recent
+        else ""
+    )
     raw = _json_generation(
         settings,
         kind="word",
@@ -451,8 +512,8 @@ def word_of_day(settings: Settings, date: dt.date) -> d.WordOfDay:
         '"pronunciation":"IPA between slashes, e.g. /səˈsʌrəs/",'
         '"respelling":"the same sound without IPA, hyphenated, stressed '
         'syllable in CAPITALS, e.g. suh-SUR-us"}',
-        user=f"Pick an uncommon-but-usable English word of the day for {date.isoformat()}. "
-        f"Deterministic-ish: base the choice on that date.",
+        user=f"Pick an uncommon-but-usable English word of the day for {date.isoformat()}."
+        + do_not_use,
     )
     try:
         return d.WordOfDay(

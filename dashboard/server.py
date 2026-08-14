@@ -852,7 +852,7 @@ def _register(app: FastAPI) -> None:
         existing = repo.word(body.date)
         if existing:  # already paid for today
             return existing
-        return repo.upsert_word(content.word_of_day(cfg, body.date))
+        return repo.upsert_word(content.word_of_day(cfg, repo, body.date))
 
     @app.post("/api/word/sentences")
     def word_sentences(repo: Repo, body: api.WordSentencesRequest) -> api.WordOfDay:

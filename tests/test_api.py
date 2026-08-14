@@ -237,7 +237,7 @@ def test_the_three_self_report_buttons(client, repo, puzzle, outcome, score):
 def test_word_today_is_paid_for_once(client, monkeypatch, repo):
     calls = []
 
-    def fake(settings, date):
+    def fake(settings, repo_, date):
         calls.append(date)
         return d.WordOfDay(date=date, word="susurrus", pos="noun", definition="a whisper")
 

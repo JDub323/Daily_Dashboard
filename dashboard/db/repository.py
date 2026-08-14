@@ -1276,6 +1276,25 @@ class Repository:
         ).fetchone()
         return d.WordOfDay(**_unpack(row, "sentences", "grade")) if row else None
 
+    def recent_words(self, before: dt.date, days: int) -> list[str]:
+        """The words of the day in the `days` before `before`, oldest first.
+
+        The do-not-repeat list, and the counterpart of `seen_sources` for math.
+        Bounded by a window rather than "everything ever", because it is read
+        into a prompt and the useful claim -- you have not had this word in a
+        year -- is the one that stays a fixed size as the history grows.
+
+        `before` is excluded, so asking on a day that somehow already has a row
+        does not exclude that day's own word from itself.
+        """
+        return [
+            r[0]
+            for r in self.conn.execute(
+                "SELECT word FROM word_of_day WHERE date >= ? AND date < ? ORDER BY date",
+                (_iso(before - dt.timedelta(days=days)), _iso(before)),
+            )
+        ]
+
     def upsert_word(self, word: d.WordOfDay) -> d.WordOfDay:
         row = self.conn.execute(
             "INSERT INTO word_of_day "

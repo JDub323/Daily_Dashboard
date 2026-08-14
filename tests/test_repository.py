@@ -577,3 +577,30 @@ def test_regrading_a_word_does_not_drop_its_pronunciation(repo):
     after = repo.word(TODAY)
     assert (after.pronunciation, after.respelling) == ("/w/", "dubya")
     assert after.grade is not None
+
+
+# --- the do-not-repeat window ----------------------------------------------
+
+
+def _word(repo, days_ago: int, word: str) -> None:
+    repo.upsert_word(
+        d.WordOfDay(date=TODAY - dt.timedelta(days=days_ago), word=word, pos="n", definition="d")
+    )
+
+
+def test_recent_words_are_oldest_first_and_stop_at_the_window(repo):
+    _word(repo, 400, "ancient")
+    _word(repo, 365, "the-edge")  # 365 days back is inside a 365-day window
+    _word(repo, 366, "just-outside")
+    _word(repo, 2, "recent")
+    _word(repo, 0, "today")
+
+    assert repo.recent_words(TODAY, 365) == ["the-edge", "recent"]
+
+
+def test_recent_words_ignores_the_future(repo):
+    """A day generated ahead of time — the batch runs at 3am and the clock can
+    be anywhere — must not exclude itself from its own draw."""
+    _word(repo, -1, "tomorrow")
+    _word(repo, 1, "yesterday")
+    assert repo.recent_words(TODAY, 365) == ["yesterday"]

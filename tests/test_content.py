@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from typing import Any
 
 import pytest
 
 from dashboard import content, llm
+from dashboard.models import domain as d
 
 from .conftest import TODAY
 
@@ -29,18 +31,32 @@ def paid(monkeypatch):
     Fills the caller's `metrics` rather than only returning one — that is
     exactly the contract the cost log depends on, so a stub that skipped it
     would let the real regression through.
+
+    `paid["reply"]` answers every call. `paid["replies"]` is a queue for the
+    generations that can happen more than once — the word resamples when it
+    lands on one you have already had — and falls back to `reply` when it runs
+    dry. Every prompt sent is kept in `paid["prompts"]`, which is how the
+    do-not-repeat list is asserted on without reaching into the prompt string
+    from the module under test.
     """
-    payloads: dict[str, object] = {}
+    payloads: dict[str, Any] = {"prompts": []}
 
     def fake_call(settings, system, user, *, metrics=None, **kw):
         m = metrics if metrics is not None else llm.Metrics()
         m.input_tokens += 1_000
         m.output_tokens += 500
         m.web_searches += 1
-        return json.dumps(payloads["reply"]), m
+        payloads["prompts"].append(user)
+        queue = payloads.get("replies")
+        return json.dumps(queue.pop(0) if queue else payloads["reply"]), m
 
     monkeypatch.setattr(llm, "call", fake_call)
     return payloads
+
+
+def a_word(date, word: str) -> d.WordOfDay:
+    """A stored word of the day. Only the date and the word matter here."""
+    return d.WordOfDay(date=date, word=word, pos="noun", definition="d")
 
 
 def lines(settings) -> list[dict]:
@@ -50,9 +66,9 @@ def lines(settings) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
-def test_the_word_of_the_day_is_logged(settings, paid):
+def test_the_word_of_the_day_is_logged(settings, repo, paid):
     paid["reply"] = {"word": "eldritch", "pos": "adj.", "definition": "weird, otherworldly"}
-    content.word_of_day(settings, TODAY)
+    content.word_of_day(settings, repo, TODAY)
 
     (entry,) = lines(settings)
     assert entry["kind"] == "word"
@@ -236,7 +252,7 @@ def test_topic_links_are_logged_once_and_then_served_from_cache(settings, repo, 
     assert entry["kind"] == "topic"
 
 
-def test_a_failed_generation_is_logged_with_the_tokens_it_burned(settings, monkeypatch):
+def test_a_failed_generation_is_logged_with_the_tokens_it_burned(settings, repo, monkeypatch):
     """The expensive case. A call that spends 40k tokens and then dies is a
     real charge on the invoice; logging nothing is how the log and the console
     drift apart."""
@@ -249,7 +265,7 @@ def test_a_failed_generation_is_logged_with_the_tokens_it_burned(settings, monke
     monkeypatch.setattr(llm, "call", dies)
 
     with pytest.raises(llm.LlmError):
-        content.word_of_day(settings, TODAY)
+        content.word_of_day(settings, repo, TODAY)
 
     (entry,) = lines(settings)
     assert entry["ok"] is False
@@ -373,7 +389,7 @@ def test_a_weekday_still_serves_the_rung_nearest_the_rating(settings):
 # --- word pronunciation ----------------------------------------------------
 
 
-def test_the_word_prompt_asks_for_both_spellings_of_the_sound(settings, paid):
+def test_the_word_prompt_asks_for_both_spellings_of_the_sound(settings, repo, paid):
     paid["reply"] = {
         "word": "susurrus",
         "pos": "noun",
@@ -381,20 +397,20 @@ def test_the_word_prompt_asks_for_both_spellings_of_the_sound(settings, paid):
         "pronunciation": "/səˈsʌrəs/",
         "respelling": "suh-SUR-us",
     }
-    word = content.word_of_day(settings, TODAY)
+    word = content.word_of_day(settings, repo, TODAY)
     assert word.pronunciation == "/səˈsʌrəs/"
     assert word.respelling == "suh-SUR-us"
 
 
-def test_a_word_generation_without_a_pronunciation_still_succeeds(settings, paid):
+def test_a_word_generation_without_a_pronunciation_still_succeeds(settings, repo, paid):
     """A word with no pronunciation is a slightly poorer card. A word with no
     definition is not a card at all, and only the second is worth failing on."""
     paid["reply"] = {"word": "x", "pos": "n", "definition": "d"}
-    word = content.word_of_day(settings, TODAY)
+    word = content.word_of_day(settings, repo, TODAY)
     assert word.pronunciation is None and word.respelling is None
 
 
-def test_an_empty_pronunciation_string_is_stored_as_absent(settings, paid):
+def test_an_empty_pronunciation_string_is_stored_as_absent(settings, repo, paid):
     """`""` and None mean the same thing here, and the renderer only checks
     one of them."""
     paid["reply"] = {
@@ -404,5 +420,55 @@ def test_an_empty_pronunciation_string_is_stored_as_absent(settings, paid):
         "pronunciation": "",
         "respelling": "",
     }
-    word = content.word_of_day(settings, TODAY)
+    word = content.word_of_day(settings, repo, TODAY)
     assert word.pronunciation is None and word.respelling is None
+
+
+# --- no repeats within the year --------------------------------------------
+
+
+def test_the_last_year_of_words_goes_into_the_prompt(settings, repo, paid):
+    for i, word in enumerate(["susurrus", "eldritch"]):
+        repo.upsert_word(a_word(TODAY - dt.timedelta(days=i + 1), word))
+    paid["reply"] = {"word": "petrichor", "pos": "n", "definition": "d"}
+
+    assert content.word_of_day(settings, repo, TODAY).word == "petrichor"
+    (prompt,) = paid["prompts"]
+    assert "susurrus" in prompt and "eldritch" in prompt
+
+
+def test_a_word_older_than_the_window_is_available_again(settings, repo, paid):
+    """The rule is a year, not forever. A word from thirteen months ago is one
+    you have plausibly forgotten, which is the point of meeting it again."""
+    repo.upsert_word(a_word(TODAY - dt.timedelta(days=content.WORD_MEMORY_DAYS + 1), "susurrus"))
+    paid["reply"] = {"word": "susurrus", "pos": "n", "definition": "d"}
+
+    assert content.word_of_day(settings, repo, TODAY).word == "susurrus"
+    assert "susurrus" not in paid["prompts"][0]
+
+
+def test_a_repeat_is_resampled_rather_than_served(settings, repo, paid):
+    """The list is in the prompt and the model can still ignore it, so the
+    check is made here as well. Case-insensitively: `Susurrus` is the same
+    word you had in March."""
+    repo.upsert_word(a_word(TODAY - dt.timedelta(days=30), "Susurrus"))
+    paid["replies"] = [
+        {"word": "susurrus", "pos": "n", "definition": "d"},
+        {"word": "petrichor", "pos": "n", "definition": "d"},
+    ]
+
+    assert content.word_of_day(settings, repo, TODAY).word == "petrichor"
+    assert len(paid["prompts"]) == 2
+    # Both calls are on the invoice, so both are in the log.
+    assert [entry["kind"] for entry in lines(settings)] == ["word", "word"]
+
+
+def test_a_model_that_will_not_stop_repeating_fails_instead_of_looping(settings, repo, paid):
+    """Retrying forever spends real money on the model's mistake. Failing
+    hands the decision back: the panel's button is the retry."""
+    repo.upsert_word(a_word(TODAY - dt.timedelta(days=30), "susurrus"))
+    paid["reply"] = {"word": "susurrus", "pos": "n", "definition": "d"}
+
+    with pytest.raises(content.ContentError, match="already had"):
+        content.word_of_day(settings, repo, TODAY)
+    assert len(paid["prompts"]) == content.WORD_ATTEMPTS
