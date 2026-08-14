@@ -968,6 +968,93 @@ MIGRATIONS: list[tuple[int, str]] = [
         ) STRICT;
         """,
     ),
+    (
+        15,
+        """
+        -- The trick of the day: one identity or technique from the week's
+        -- topic, taught by a set of problems.
+        --
+        -- No rebuild of rating_event, and that is the design rather than an
+        -- economy. A trick result rates on the *math* track in the `tricks`
+        -- area, which is deliberately not one of the [math.areas] buckets --
+        -- the same move `ARGUMENT_AREA` makes on the debate track, for the same
+        -- two reasons. It keeps the result out of the per-area strip and the
+        -- retrospective chart, both of which iterate the configured areas; and
+        -- because `area IS NULL` is the pooled rating, writing only an area row
+        -- leaves the headline math rating untouched. Applying eight problems a
+        -- day to the number that means "how well do you solve competition
+        -- problems" would drive its K to the floor inside a fortnight and stop
+        -- the problems themselves from moving it, which is exactly the argument
+        -- migration 9 made about theorem recalls.
+
+        CREATE TABLE trick (
+            id         INTEGER PRIMARY KEY,
+            name       TEXT    NOT NULL,
+            statement  TEXT    NOT NULL,
+            idea       TEXT    NOT NULL DEFAULT '',
+            topic      TEXT    NOT NULL,
+
+            -- 'technique' is the fallback for a week whose topic has no
+            -- computational shortcut in it. Recorded rather than smoothed over,
+            -- so it is visible how often the coupling to the rotation is
+            -- costing the day its trick.
+            kind       TEXT    NOT NULL DEFAULT 'trick'
+                               CHECK (kind IN ('trick', 'technique')),
+            added      TEXT    NOT NULL
+                               CHECK (added IS strftime('%Y-%m-%d', added))
+        ) STRICT;
+
+        -- No repeats, ever. Case-insensitive because the do-not-repeat list is
+        -- a prompt payload and a model that has been told about "Vieta's
+        -- formulas" will happily offer "Vieta's Formulas" back.
+        CREATE UNIQUE INDEX trick_name ON trick (name COLLATE NOCASE);
+
+        -- One round a day, date-keyed like every other daily table here. That
+        -- matters more than usual: rerolling this one costs a generation, not
+        -- just a different puzzle.
+        --
+        -- `problems` is the whole set frozen at draw time -- prompts, answers,
+        -- accepted alternatives and worked lines -- for the reason
+        -- `spelling_round.words` is frozen: the round has to go on being marked
+        -- against what it was actually asked as.
+        CREATE TABLE trick_round (
+            date         TEXT    PRIMARY KEY
+                                 CHECK (date IS strftime('%Y-%m-%d', date)),
+            trick_id     INTEGER NOT NULL REFERENCES trick (id),
+
+            -- The older trick that one problem in the set reaches back to.
+            -- NULL on the first day and whenever the draw found nothing off
+            -- cooldown -- the set is then simply one problem shorter on the
+            -- new trick's own account.
+            callback_id  INTEGER REFERENCES trick (id),
+
+            problems     TEXT    NOT NULL,              -- JSON, frozen at draw
+            answers      TEXT    NOT NULL DEFAULT '[]', -- JSON, what you typed
+            correct      INTEGER CHECK (correct IS NULL OR correct >= 0),
+            status       TEXT    NOT NULL DEFAULT 'open'
+                                 CHECK (status IN ('open', 'done')),
+
+            -- The optional problem, kept apart from the marked set. It is
+            -- free text graded by a model rather than a string compare, and it
+            -- can be answered after the rest of the set is closed -- so it
+            -- cannot ride in `answers` without making "the round is done" mean
+            -- two different things.
+            challenge        TEXT,
+            challenge_ok     INTEGER CHECK (challenge_ok IS NULL
+                                            OR challenge_ok IN (0, 1)),
+            challenge_note   TEXT,
+
+            -- Open iff unscored, the invariant every attempt table here has.
+            CHECK ((status = 'open') = (correct IS NULL)),
+            -- A graded challenge has an answer behind it.
+            CHECK (challenge_ok IS NULL OR challenge IS NOT NULL)
+        ) STRICT;
+
+        -- "Which trick has gone longest without a callback" is the draw, and it
+        -- reads this column.
+        CREATE INDEX trick_round_callback ON trick_round (callback_id, date);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

@@ -226,6 +226,42 @@ tricky = 1350
 nasty = 1550
 brutal = 1750
 
+# ---------------------------------------------------------------------------
+# The trick of the day. One identity, shortcut or technique from the week's
+# topic, taught by a set of problems you work rather than a card you read.
+#
+# The one feature here with no free fallback: there is no curated pool of
+# tricks the way there is for math problems and spelling words, so a morning
+# the overnight task did not run costs a live generation (~$0.02-0.04 — one
+# call, no web search). Run `./batch.sh --trick-context` at 3am and the day is
+# free. The optional challenge costs a second, much smaller call, and only if
+# you actually attempt it.
+#
+# Coupled to [math].rotation on purpose: the trick is drawn from whatever this
+# week's topic is. Weeks whose topic has no computational shortcut in it get a
+# *technique* instead — the standard opening move, the canonical construction —
+# rather than a shortcut invented to fill the slot. Which one the day got is
+# recorded on the card.
+[tricks]
+# The graded set: four one-line applications, then four that need the trick
+# recognised rather than handed to you. On every day after the first, one of
+# the medium problems is a callback to an *older* trick instead — replacing a
+# medium rather than adding to the set, so the day is always the same size.
+# The optional challenge is always exactly one, and is not counted here.
+easy = 4
+medium = 4
+
+# Fixed elo anchors per band, exactly as [math.anchors] and [spelling.anchors]
+# work. A different scale from the math problem's: an `easy` trick problem is a
+# one-line application of an identity, which is a much smaller claim than an
+# AMC problem. Results rate on the math track in the `tricks` bucket, which is
+# deliberately not one of [math.areas] — so this moves a number of its own and
+# leaves the headline math rating to the problems.
+[tricks.anchors]
+easy = 1200
+medium = 1450
+challenge = 1750
+
 [theorems]
 cooldown_days = 1
 recency_exponent = 2.0

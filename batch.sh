@@ -9,6 +9,13 @@
 #   ./batch.sh --debate-context           tonight's debate jobs, and which are due
 #   ./batch.sh --validate-debate FILE     the same, for a motion or reading list
 #
+#   ./batch.sh --trick-context            tonight's trick set: topic, bands, callback
+#   ./batch.sh --validate-trick FILE      the same, for a generated trick set
+#
+# The trick is the one job here with no free fallback -- the math problem has a
+# curated pool behind it and the debate costs nothing to begin with -- so a
+# night this does not run is the one night that costs money in the morning.
+#
 # `--debate-context` reports two nullable jobs: `motion` on every debate day,
 # and `reading_list` only on the night before the reading day. The task writes
 # whichever it was given and validates each with the one --validate-debate,

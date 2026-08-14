@@ -42,9 +42,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from . import content, debate, llm, logs
+from . import content, debate, llm, logs, tricks
 from .config import Settings, load_settings
 from .db import Repository
+from .models import domain as d
 from .models.batch import DailyBatch
 
 log = logs.get(__name__)
@@ -156,6 +157,190 @@ def context_without_db(settings: Settings, date: dt.date, why: str) -> dict[str,
 
 def batch_path(settings: Settings, date: dt.date) -> Path:
     return settings.path("batches") / f"{date.isoformat()}.json"
+
+
+# --- the trick of the day --------------------------------------------------
+#
+# The batch matters more here than anywhere else in this file. The math problem
+# has a curated pool behind it and the debate costs nothing to begin with; the
+# trick has neither, so this file *is* the free path and the API path exists for
+# the mornings it did not run.
+
+TRICK_SCHEMA = (
+    "Write the file as JSON:\n"
+    '{"date":"YYYY-MM-DD, the date in this payload","topic":"the topic in this payload, '
+    'verbatim","name":"the standard name of the trick, plain text, no LaTeX",'
+    '"statement":"what it says, stated precisely, LaTeX delimited",'
+    '"idea":"when to reach for it and what it buys you — two or three sentences, and '
+    'name the situation that should trigger it","kind":"trick or technique",'
+    '"callback":"the name of the older trick given below, or null if none was",'
+    '"problems":[{"band":"easy|medium|callback|challenge","prompt":"the problem, LaTeX '
+    'delimited","answer":"the bare final answer","accept":["other spellings of the same '
+    'answer"],"solution":"one or two lines: the trick applied, and the answer"}]}'
+)
+"""The batch file's shape, which is the live response plus `date`, `topic` and
+`callback`.
+
+Those three are echoed back so `--validate-trick` can check the generator
+answered the day it was asked about -- the same job `DebateMotion` does with its
+issue and angle, and worth more here than there, because a trick set for the
+wrong week is not visibly wrong at 8am.
+"""
+
+
+def trick_context(settings: Settings, repo: Repository | None, date: dt.date) -> dict[str, Any]:
+    """Everything tonight's trick generation needs, as one JSON object.
+
+    The callback is chosen *here*, at 3am, rather than at serve time -- the
+    problem has to be written against a particular old trick, so the choice has
+    to precede the generation. `content.next_trick` resolves it back by name on
+    import, so the set and the card it reaches back to cannot disagree.
+
+    `repo` is optional and degrades the way `debate_context` does: without it
+    there is no do-not-repeat list and no callback, so the night produces a
+    trick that might duplicate one you have had -- caught on import by the
+    UNIQUE index, at the cost of the morning.
+    """
+    cfg = settings.tricks
+    if not cfg.enabled:
+        return {"date": date.isoformat(), "enabled": False}
+
+    topic = settings.math.topic_for(date)
+    path = content.trick_batch_path(settings, date)
+
+    callback = None
+    seen: list[str] = []
+    if repo is not None:
+        seen = repo.trick_names()
+        callback = tricks.pick_callback(
+            repo.tricks(),
+            repo.callback_dates(),
+            date,
+            cooldown=cfg.callback_cooldown_days,
+            exponent=cfg.callback_exponent,
+        )
+
+    wanted = tricks.wanted_bands(cfg.easy, cfg.medium, callback=callback is not None)
+    return {
+        "date": date.isoformat(),
+        "weekday": date.strftime("%A"),
+        "enabled": True,
+        "topic": topic,
+        "output_path": str(path),
+        "already_generated": path.exists(),
+        "bands": wanted,
+        "callback": (
+            {"name": callback.name, "statement": callback.statement} if callback else None
+        ),
+        # The rules and the instructions come back from here rather than living
+        # in the scheduled task's prompt, which is the whole reason this CLI
+        # exists: the prompt says "run this and read the answer", so anything
+        # that depends on the date, the rotation or the history has to arrive
+        # in the payload. It also means the free path is asking for exactly what
+        # the paid one asks for, from one copy of the words.
+        "rules": content.TRICK_RULES,
+        "instructions": content.trick_instructions(topic, wanted, seen, callback),
+        "schema": TRICK_SCHEMA,
+    }
+
+
+def validate_trick(
+    settings: Settings, raw: str, date: dt.date | None = None
+) -> tuple[Any | None, list[str]]:
+    """Parse and check a generated trick set.
+
+    The same extraction the API path runs -- `extract_json`, LaTeX repair and
+    all -- because a model asked for JSON full of LaTeX writes `\\frac` whether
+    it is answering over HTTPS or writing a file. See `validate` above.
+    """
+    from .models.batch import TrickSet
+
+    try:
+        parsed = llm.extract_json(raw)
+    except json.JSONDecodeError as e:
+        return None, [f"not JSON: {e}"]
+    if not isinstance(parsed, dict):
+        return None, ["expected a JSON object"]
+
+    try:
+        trick = TrickSet(**parsed)
+    except Exception as e:
+        return None, [f"does not match the trick schema: {e}"]
+
+    errors: list[str] = []
+    expected = settings.math.topic_for(trick.date)
+    if trick.topic.strip().casefold() != expected.casefold():
+        errors.append(f"topic {trick.topic!r}: {trick.date} is a {expected!r} week")
+    if date is not None and trick.date != date:
+        errors.append(f"dated {trick.date}, but this file is tonight's ({date})")
+
+    wanted = tricks.wanted_bands(
+        settings.tricks.easy,
+        settings.tricks.medium,
+        callback=any(p.band == "callback" for p in trick.problems),
+    )
+    errors += tricks.check_bands(
+        [d.TrickProblem(**p.model_dump()) for p in trick.problems], wanted
+    )
+
+    if any(p.band == "callback" for p in trick.problems) and not trick.callback:
+        # Without the name the import cannot link the problem to the card it is
+        # reinforcing, and the row renders as a problem that is inexplicably
+        # not about today's trick.
+        errors.append("a callback problem, but `callback` does not name the trick it is on")
+
+    prompts = [p.prompt.strip() for p in trick.problems]
+    if len(set(prompts)) != len(prompts):
+        errors.append("the same problem appears twice")
+    for i, problem in enumerate(trick.problems):
+        if problem.band != tricks.CHALLENGE and not problem.solution:
+            # Only the marked bands. The challenge's solution is what the grader
+            # reads, so it is checked below with a stronger word.
+            errors.append(f"problems[{i}] ({problem.band}): no solution — nothing to show back")
+        if problem.answer.strip().casefold() == problem.prompt.strip().casefold():
+            errors.append(f"problems[{i}]: the answer restates the problem")
+    challenge = next((p for p in trick.problems if p.band == tricks.CHALLENGE), None)
+    if challenge is not None and not challenge.solution:
+        errors.append("the challenge has no worked solution, and the grader is given one to read")
+
+    return trick, errors
+
+
+def _report_trick(settings: Settings, path: Path, date: dt.date) -> int:
+    """`--validate-trick`, printed. Same contract as the reports above: non-zero
+    and a list of reasons, or a one-line summary of what landed."""
+    if not path.exists():
+        print(f"no such file: {path}", file=sys.stderr)
+        return 2
+
+    parsed, errors = validate_trick(settings, path.read_text(encoding="utf-8"), date)
+
+    # The repeat check needs the database, and is the one check here that can
+    # only be answered by it. Degraded rather than fatal when it cannot be read:
+    # `trick.name` is UNIQUE, so a duplicate is rejected on import instead of
+    # served, which is a lost morning rather than a wrong one.
+    if parsed is not None:
+        try:
+            with snapshot(settings.path("db")) as repo:
+                if repo.trick_named(parsed.name) is not None:
+                    errors.append(f"you have already had {parsed.name!r}")
+        except (OSError, sqlite3.Error) as e:
+            print(f"note: could not check for repeats ({e})", file=sys.stderr)
+
+    if parsed is None or errors:
+        print(f"REJECTED {path}", file=sys.stderr)
+        for e in errors:
+            print(f"  - {e}", file=sys.stderr)
+        return 1
+
+    print(
+        f"OK {path}: {parsed.date} — {parsed.name} ({parsed.kind}, {parsed.topic}), "
+        f"{len(parsed.problems)} problem(s)"
+        + (f", callback to {parsed.callback}" if parsed.callback else "")
+    )
+    for problem in parsed.problems:
+        print(f"  {problem.band:>10}  {problem.prompt[:70]}  ->  {problem.answer[:24]}")
+    return 0
 
 
 # --- the debate ------------------------------------------------------------
@@ -482,8 +667,8 @@ def _report_debate(settings: Settings, path: Path) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="batch.sh",
-        description="Overnight hand-off: the math ladder, and the debate's "
-        "motion and reading list. See dashboard/batch.py.",
+        description="Overnight hand-off: the math ladder, the trick of the day, "
+        "and the debate's motion and reading list. See dashboard/batch.py.",
     )
     ap.add_argument("--context", action="store_true", help="print what the generator needs")
     ap.add_argument("--validate", metavar="FILE", type=Path, help="check a generated batch")
@@ -496,12 +681,28 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="check a generated motion or reading list",
     )
+    ap.add_argument(
+        "--trick-context", action="store_true", help="print what tonight's trick set needs"
+    )
+    ap.add_argument(
+        "--validate-trick", metavar="FILE", type=Path, help="check a generated trick set"
+    )
     ap.add_argument("--date", type=dt.date.fromisoformat, help="default: today, locally")
     args = ap.parse_args(argv)
 
-    wanted = [args.context, args.validate, args.debate_context, args.validate_debate]
+    wanted = [
+        args.context,
+        args.validate,
+        args.debate_context,
+        args.validate_debate,
+        args.trick_context,
+        args.validate_trick,
+    ]
     if not any(wanted):
-        ap.error("one of --context, --validate, --debate-context or --validate-debate is required")
+        ap.error(
+            "one of --context, --validate, --debate-context, --validate-debate, "
+            "--trick-context or --validate-trick is required"
+        )
 
     settings = load_settings()
     # See the module docstring: naming the day is the CLI's job, not the
@@ -538,6 +739,29 @@ def main(argv: list[str] | None = None) -> int:
             payload["degraded"] = f"could not read the database ({e}); dossier unavailable"
         print(json.dumps(payload, indent=2))
         return 0
+
+    if args.trick_context:
+        try:
+            with snapshot(settings.path("db")) as repo:
+                payload = trick_context(settings, repo, date)
+        except (OSError, sqlite3.Error) as e:
+            # Degraded like the two above, and the most consequential of the
+            # three: without the database there is no do-not-repeat list, so
+            # tonight's trick may be one you have already had. `trick.name` is
+            # UNIQUE, so that is caught on import rather than served -- a lost
+            # morning, not a wrong one. Generate anyway and say so.
+            log.exception("could not read %s", settings.path("db"))
+            payload = trick_context(settings, None, date)
+            payload["degraded"] = (
+                f"could not read the database ({e}). The do-not-repeat list and the "
+                f"callback are unavailable; generate anyway — a repeat is rejected on "
+                f"import, not served."
+            )
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    if args.validate_trick:
+        return _report_trick(settings, args.validate_trick, date)
 
     if args.validate_debate:
         return _report_debate(settings, args.validate_debate)

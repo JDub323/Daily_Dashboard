@@ -257,6 +257,26 @@ input.spell-box { flex: 1; min-width: 140px; }
 .recall-half { border-top: 1px solid var(--border-soft); padding: 7px 0 2px; }
 .recall-half > .row { margin: 0; }
 
+/* ---- trick of the day ----
+   Nine problems in one card, which is more rows than anything else in the app
+   shows at once — so the separators do the work the panel border does
+   elsewhere, and the prompt gets room to be a formula rather than a line of
+   text. The card at the top is the reference you are working *from*, boxed so
+   it reads as given rather than as the first question. */
+.trick-card {
+  margin: 6px 0 2px; padding: 8px 10px;
+  background: var(--bg); border: 1px solid var(--border-soft); border-radius: 6px;
+}
+.trick-card > .row { margin: 0 0 2px; }
+.trick-row { border-top: 1px solid var(--border-soft); padding: 7px 0 5px; }
+.trick-row > .row { margin: 0 0 3px; }
+/* The prompt is display maths as often as not, so it gets its own line and
+   wraps rather than being squeezed beside the band tag. */
+.trick-prompt { margin: 2px 0 5px; overflow-wrap: anywhere; }
+.trick-solution { margin-top: 3px; padding-left: 10px; border-left: 2px solid var(--border); }
+input.trick-box { max-width: 22em; }
+.trick-challenge { margin-top: 4px; }
+
 /* ---- debate ----
    The prompt is shown inside a <details> rather than always open: it is ~7000
    characters, and a panel that led with a wall of instructions would bury the

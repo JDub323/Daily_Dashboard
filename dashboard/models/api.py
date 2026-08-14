@@ -46,6 +46,7 @@ from .domain import (
     SpellingWord,
     TheoremCard,
     TopicInfo,
+    Trick,
     WordGrade,
     WordOfDay,
 )
@@ -265,6 +266,33 @@ class SpellingSubmitRequest(DateBody):
     """
 
     answers: list[str] = Field(max_length=20)
+
+
+class TrickNewRequest(DateBody):
+    pass
+
+
+class TrickSubmitRequest(DateBody):
+    """The marked set at once, in problem order.
+
+    Answers rather than a score, for the reason `SpellingSubmitRequest` gives:
+    the client never marks its own work. A blank is a wrong answer, which is
+    why the entries may be empty strings.
+    """
+
+    answers: list[str] = Field(max_length=20)
+
+
+class TrickChallengeRequest(DateBody):
+    """The optional problem, answered in prose.
+
+    Its own endpoint rather than a field on the submit above, because the two
+    are answered at different times: the challenge is the one you go away and
+    think about, and making it part of the set would mean either submitting the
+    day early or holding the other eight hostage to it.
+    """
+
+    answer: str = Field(min_length=3, max_length=4000)
 
 
 class WordleLogRequest(DateBody):
@@ -491,6 +519,103 @@ class SpellingPanel(Base):
     """Net rating change across today's five results."""
 
 
+class TrickPrompt(Base):
+    """One problem of the day's set, as the panel is allowed to see it.
+
+    [Invariant] `answer`, `accept` and `solution` are empty until the set has
+    been marked. The whole feature is worked by hand against a comparison the
+    server performs, so shipping the answers with the problems would make the
+    marking ceremonial -- the same rule `MathPanel.hints_visible` and
+    `TheoremsPanel.today` follow, and the reason this is a projection rather
+    than `domain.TrickProblem` sent as-is.
+
+    The trick's *statement* is not withheld, and that is not an inconsistency.
+    It is the thing being taught: the day is "here is the identity, now use it
+    eight times", not "recall the identity".
+    """
+
+    band: str
+    prompt: str
+
+    callback_of: str | None = None
+    """The older trick this problem is on, when it is the callback. The panel
+    labels the row with it -- an unlabelled callback is just a problem that
+    does not seem to be about today's trick."""
+
+    answer: str = ""
+    accept: list[str] = Field(default_factory=list)
+    solution: str = ""
+
+    typed: str = ""
+    """What was submitted for it. Empty while the set is open."""
+
+    correct: bool | None = None
+    """Null until marked."""
+
+
+class TricksPanel(Base):
+    """The trick of the day: the card, the set, and the rating it moves."""
+
+    enabled: bool = True
+    """False when `[tricks.anchors]` is empty. The panel says so rather than
+    erroring, the way an unconfigured spelling bee does."""
+
+    trick: Trick | None = None
+    """Null until the day's set is drawn, which is a POST of its own rather
+    than part of the boot payload -- drawing costs a generation on any morning
+    the overnight task did not run, so it cannot happen because a tab loaded."""
+
+    problems: list[TrickPrompt] = Field(default_factory=list)
+    challenge: TrickPrompt | None = None
+    """The optional problem, apart from the set: it is graded by a model rather
+    than compared, and it can be answered after the rest is closed."""
+
+    answers: list[str] = Field(default_factory=list)
+    correct: int | None = None
+    status: str = "open"
+
+    challenge_answer: str | None = None
+    challenge_ok: bool | None = None
+    challenge_note: str | None = None
+
+    callback_of: str | None = None
+    """The older trick today's set reaches back to, if any. Named on the panel
+    header as well as on the row, so the reinforcement is visible before you
+    have scrolled to the problem doing it."""
+
+    rating: Rating
+    """The trick rating: the math track's `tricks` bucket. Deliberately not one
+    of the areas and deliberately not the pooled math rating -- see
+    `TRICK_AREA`."""
+
+    events: int = 0
+    """Results behind that rating. Zero means it is the pooled math rating
+    standing in, not something earned."""
+
+    delta: int | None = None
+    """What today did to it, summed across the set and the challenge."""
+
+    total: int = 0
+    """Tricks learned, ever. The deck this accumulates."""
+
+
+class TrickArchiveEntry(Base):
+    """One past day, for the archive. Carries the whole set, answers and all --
+    a reading surface for work already done, on `MathArchiveEntry`'s reasoning."""
+
+    date: dt.date
+    trick: Trick
+    problems: list[TrickPrompt] = Field(default_factory=list)
+    challenge: TrickPrompt | None = None
+    correct: int | None = None
+    status: str = "open"
+    delta: int | None = None
+
+
+class TrickArchiveResponse(Base):
+    entries: list[TrickArchiveEntry] = Field(default_factory=list)
+
+
 class PatternsPanel(Base):
     """The argument deck: today's card, the deck, and the pattern rating.
 
@@ -684,6 +809,7 @@ class DashboardState(Base):
     debate: DebatePanel
     patterns: PatternsPanel
     spelling: SpellingPanel
+    tricks: TricksPanel
     word: WordOfDay | None = None
     games: GamesPanel
     theorems: TheoremsPanel

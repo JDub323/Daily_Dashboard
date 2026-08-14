@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import llm, logs
+from . import llm, logs, tricks
 from .config import Settings
 from .db.repository import Repository
 from .llm import LlmError
@@ -712,6 +712,361 @@ def theorem_from_prompt(settings: Settings, date: dt.date, prompt: str) -> d.The
         f"phrase is ambiguous, take the reading most common in competition "
         f"mathematics.",
     )
+
+
+# --- the trick of the day --------------------------------------------------
+#
+# One generation a day produces the whole cell: the trick, and every problem
+# that teaches it. That is the cost decision, and it is the reason the answers
+# are checked by string comparison rather than by a grader -- eight gradings a
+# day would cost more than the generation that produced the problems.
+#
+# The overnight batch is the other half of the same decision. Unlike the math
+# problem there is no curated pool to fall back on, so `batches/trick-<date>.json`
+# is the only free source there is; the paid path below exists for the mornings
+# the 3am task did not run.
+
+TRICK_MEMORY = 300
+"""How many past trick names go into the do-not-repeat list.
+
+Bounded, unlike `word_of_day`'s year of words, because these accumulate at one
+a day forever and the list is charged by the token. Three hundred is roughly
+ten months, which is longer than the rotation's ~six-month cycle -- so a topic
+coming round for the second time still knows what it taught the first.
+"""
+
+TRICK_RULES = (
+    "You design a single day of deliberate practice on ONE mathematical trick: an "
+    "identity, a shortcut, or a reusable technique. The user learns it by working the "
+    "problems, not by reading the card, so the problems are the deliverable and the "
+    "statement is the reference.\n\n"
+    "Rules that decide whether this is usable:\n"
+    "- The trick must be a *move*, not a fact. 'Multiply by the conjugate', "
+    "'differentiate under the integral sign', 'roots of unity filter', 'complete the "
+    "square in the exponent' — something that shortens work. Never a definition.\n"
+    "- Every problem must be solvable BY HAND in under five minutes using the trick, "
+    "and must have ONE unambiguous final answer.\n"
+    "- `answer` is a bare value, never a sentence and never a restatement of the "
+    "question. `accept` lists the other spellings a correct answer would plausibly be "
+    "typed as — decimal and fraction, LaTeX and plain, factored and expanded. This is "
+    "checked by string comparison, so an alternative you omit marks a right answer "
+    "wrong.\n"
+    "- The `challenge` problem must need more than applying the trick: a case where it "
+    "does not directly fit, has to be set up first, applied twice, or combined with "
+    "something else. If it is one more application of the identity, it is a medium.\n"
+    "- Wrap EVERY mathematical expression in LaTeX delimiters — $..$ inline, $$..$$ "
+    "display — in prompts, answers, statements and solutions alike. Never emit a bare "
+    "formula."
+)
+"""The rules, without the output schema.
+
+Public and separated from `_TRICK_SYSTEM` below because the overnight task
+needs exactly these instructions with a *different* schema attached -- the
+batch file carries the date and topic back for validation, the live response
+does not. Keeping one copy is what stops the free path and the paid path from
+slowly becoming two features. See `batch.trick_context`.
+"""
+
+_TRICK_SYSTEM = (
+    f"{TRICK_RULES}\n\n"
+    "Respond ONLY with JSON:\n"
+    '{"name":"the standard name of the trick, plain text, no LaTeX",'
+    '"statement":"what it says, stated precisely, LaTeX delimited",'
+    '"idea":"when to reach for it and what it buys you — two or three sentences, and '
+    'name the situation that should trigger it",'
+    '"kind":"trick or technique",'
+    '"problems":[{"band":"easy|medium|callback|challenge","prompt":"the problem, LaTeX '
+    'delimited","answer":"the bare final answer","accept":["other spellings of the same '
+    'answer"],"solution":"one or two lines: the trick applied, and the answer"}]}'
+)
+
+
+def trick_instructions(
+    topic: str,
+    wanted: dict[str, int],
+    seen: list[str],
+    callback: d.Trick | None,
+) -> str:
+    """What today's set has to be, in words.
+
+    Public and built from primitives so the overnight task can be handed the
+    identical instructions -- `batch.trick_context` puts this in its payload,
+    which is what keeps the free path and the paid path asking for the same
+    thing rather than drifting into two features.
+    """
+    lines = [
+        f"Topic of the week: {topic}. Give me today's trick from this topic, and its "
+        f"practice set.",
+        # The technique route, and the reason the coupling to the rotation is
+        # survivable. Stated as a fallback rather than an alternative so the
+        # model reaches for it only when it has to.
+        f"If '{topic}' genuinely has no computational trick in it — some topics are "
+        f"structural rather than computational — then give a TECHNIQUE instead: the "
+        f"standard opening move on problems of this kind, the canonical construction, "
+        f"the thing an experienced solver does first. Set `kind` to 'technique' and say "
+        f"so plainly. Do NOT invent a shortcut to fill the slot; a made-up identity is "
+        f"the one outcome worse than a technique.",
+        f"Exactly {wanted['easy']} problems with band 'easy' (one-line applications, "
+        f"the trick handed to you) and {wanted['medium']} with band 'medium' (the trick "
+        f"has to be recognised first, or applied to something that does not look like "
+        f"the identity).",
+        "Exactly 1 problem with band 'challenge'.",
+    ]
+    if wanted.get("callback"):
+        assert callback is not None  # `wanted_bands` only asks for one when there is one
+        lines.append(
+            f"Exactly 1 problem with band 'callback': a medium-difficulty problem on a "
+            f"DIFFERENT, older trick — {callback.name}, which says: {callback.statement} "
+            f"It is a spaced-repetition problem on that trick and has nothing to do with "
+            f"today's; do not try to combine the two."
+        )
+    if seen:
+        lines.append(
+            f"Do NOT give any trick you have already taught: {json.dumps(seen[-TRICK_MEMORY:])}"
+        )
+    return "\n".join(lines)
+
+
+def _to_trick(
+    raw: dict[str, Any], settings: Settings, date: dt.date
+) -> tuple[d.Trick, list[d.TrickProblem]]:
+    """Validate one generated set into the two models it becomes.
+
+    The same boundary `to_problem` is, and for the same reason: `extra="forbid"`
+    turns a drifted prompt into a loud error here rather than a half-drawn panel
+    in the browser.
+    """
+    try:
+        problems = [d.TrickProblem(**p) for p in raw["problems"]]
+    except (KeyError, TypeError) as e:
+        raise ContentError(f"the trick generation was missing {e}") from e
+
+    if not tricks.marked_problems(problems):
+        # Every problem is the challenge, or there are none. A set with nothing
+        # to mark cannot be finished, so it cannot be served.
+        raise ContentError("the trick generation produced no gradeable problems")
+
+    try:
+        trick = d.Trick(
+            name=raw["name"],
+            statement=_ensure_delimited(raw["statement"]),
+            idea=raw.get("idea") or "",
+            topic=raw.get("topic") or settings.math.topic_for(date),
+            kind=raw.get("kind") if raw.get("kind") in ("trick", "technique") else "trick",
+            added=date,
+        )
+    except (KeyError, TypeError) as e:
+        raise ContentError(f"the trick generation was missing {e}") from e
+    return trick, problems
+
+
+def generate_trick(
+    settings: Settings,
+    date: dt.date,
+    wanted: dict[str, int],
+    seen: list[str],
+    callback: d.Trick | None,
+) -> tuple[d.Trick, list[d.TrickProblem]]:
+    """One paid generation of the day's trick and its problems.
+
+    No web search, unlike the math problem: nothing here is a claim about a
+    real past competition that could be got factually wrong, so there is
+    nothing to verify and no reason to pay for four searches. What can go
+    wrong is a stated identity that is false, and a search would not catch
+    that either -- the problems are the check, since a wrong identity produces
+    answers that do not survive being worked by hand.
+    """
+    raw = _json_generation(
+        settings,
+        kind="trick",
+        date=date,
+        topic=settings.math.topic_for(date),
+        system=_TRICK_SYSTEM,
+        user=trick_instructions(settings.math.topic_for(date), wanted, seen, callback),
+    )
+    if not isinstance(raw, dict):
+        raise ContentError("the trick generation did not return an object")
+    trick, problems = _to_trick(raw, settings, date)
+
+    # Logged rather than rejected. A set with three easy problems instead of
+    # four is a slightly short morning; refusing it would mean paying for a
+    # second generation over a missing rung, and `_store`'s rule applies --
+    # spending your money on a retry is not a decision this module makes on
+    # its own.
+    for complaint in tricks.check_bands(problems, wanted):
+        log.warning("today's trick set is misshapen: %s", complaint)
+    return trick, problems
+
+
+def _trick_from_batch(
+    settings: Settings, date: dt.date
+) -> tuple[d.Trick, list[d.TrickProblem], str | None] | None:
+    """Tonight's generated set, or None.
+
+    None rather than an exception for every failure mode -- no file, bad JSON,
+    a set that does not validate -- on `_from_batch`'s reasoning: a batch is an
+    optimisation, and an optimisation that can take the panel down is not one.
+    The caller falls through to a paid generation.
+    """
+    path = trick_batch_path(settings, date)
+    if not path.exists():
+        return None
+
+    # Imported here rather than at module scope, exactly as `_from_batch` does:
+    # `batch` imports this module, and the models package is the shared bottom.
+    from .models.batch import TrickSet
+
+    try:
+        batch = TrickSet(**json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError, ValueError):
+        log.exception("unusable trick batch at %s; falling through to a generation", path)
+        return None
+
+    try:
+        trick, problems = _to_trick(
+            {
+                "name": batch.name,
+                "statement": batch.statement,
+                "idea": batch.idea,
+                "kind": batch.kind,
+                "topic": batch.topic,
+                "problems": [p.model_dump() for p in batch.problems],
+            },
+            settings,
+            date,
+        )
+    except ContentError:
+        log.exception("trick batch at %s did not validate; falling through", path)
+        return None
+    return trick, problems, batch.callback
+
+
+def trick_batch_path(settings: Settings, date: dt.date) -> Path:
+    """Where the overnight task drops the day's set.
+
+    Prefixed rather than sharing `<date>.json` with the math ladder: they are
+    two files from the same night for the same day, and one of them is not the
+    other's shape.
+    """
+    return settings.path("batches") / f"trick-{date.isoformat()}.json"
+
+
+def next_trick(settings: Settings, repo: Repository, date: dt.date) -> d.TrickRound:
+    """Today's trick round, from the cheapest source that has one.
+
+    Idempotent: a day that already has a round gets it back untouched. That is
+    load-bearing here in a way it is not for the theorem draw -- rerolling this
+    one spends money.
+
+    The callback is chosen *before* the generation, because the generator has to
+    be told which old trick to write a problem on. On the batch path it was
+    chosen at 3am and is resolved back by name, so the set and the card it
+    reaches back to cannot disagree.
+    """
+    existing = repo.trick_round(date)
+    if existing is not None:
+        return existing
+
+    callback = tricks.pick_callback(
+        repo.tricks(),
+        repo.callback_dates(),
+        date,
+        cooldown=settings.tricks.callback_cooldown_days,
+        exponent=settings.tricks.callback_exponent,
+    )
+
+    batched = _trick_from_batch(settings, date)
+    if batched is not None:
+        trick, problems, name = batched
+        log.info("serving the trick %r from the overnight batch (no LLM call)", trick.name)
+        # The batch's own callback wins: its problem was written against that
+        # trick, and re-picking here would label it with a different one.
+        resolved = repo.trick_named(name) if name else None
+        if name and resolved is None:
+            log.warning(
+                "the batch's callback trick %r is not in the deck; leaving it unlabelled", name
+            )
+        return _store_trick(repo, date, trick, problems, resolved)
+
+    wanted = tricks.wanted_bands(
+        settings.tricks.easy, settings.tricks.medium, callback=callback is not None
+    )
+    trick, problems = generate_trick(
+        settings, date, wanted, repo.trick_names(), callback
+    )
+    return _store_trick(repo, date, trick, problems, callback)
+
+
+def _store_trick(
+    repo: Repository,
+    date: dt.date,
+    trick: d.Trick,
+    problems: list[d.TrickProblem],
+    callback: d.Trick | None,
+) -> d.TrickRound:
+    try:
+        stored = repo.add_trick(trick)
+    except sqlite3.IntegrityError as e:
+        # `name` is UNIQUE: the model ignored the do-not-repeat list. Not
+        # retried automatically, on `_store`'s rule -- a retry is another paid
+        # generation and the click that asks for one should be the user's.
+        raise ContentError(
+            f"the model returned a trick you have already had ({trick.name}) — press again to retry"
+        ) from e
+    assert stored.id is not None
+    return repo.open_trick_round(
+        date, stored.id, problems, callback.id if callback else None
+    )
+
+
+def grade_challenge(
+    settings: Settings,
+    date: dt.date,
+    trick: d.Trick,
+    problem: d.TrickProblem,
+    answer: str,
+) -> d.TrickGrade:
+    """Grade the optional problem, which is the one that cannot be compared.
+
+    The other eight are marked by string comparison against a canonical answer.
+    This one is deliberately a problem where applying the trick is not enough,
+    so the interesting failures are in the reasoning rather than in the final
+    value -- and a bare comparison would mark a right answer reached by luck
+    the same as a right answer reached by the argument the day was about.
+
+    The grader is told the reference answer and the worked solution, so this is
+    a comparison rather than a solve of its own, which is what lets it run on a
+    small model.
+    """
+    raw = _json_generation(
+        settings,
+        kind="trick-grade",
+        date=date,
+        topic=trick.topic,
+        system=(
+            "You grade one answer to a mathematics problem against a reference answer "
+            "and its worked solution. Be generous about form -- an equivalent expression, "
+            "a decimal instead of a fraction, plain English instead of LaTeX are all "
+            "fine -- and strict about the mathematics: a different value, a dropped case, "
+            "or an answer with no argument behind it fails. Respond ONLY with JSON: "
+            '{"correct":bool,"note":"one line — name what was missing, or confirm what '
+            'was right and say what the intended route was"}'
+        ),
+        user=(
+            f"The trick of the day: {trick.name} — {trick.statement}\n\n"
+            f"Problem: {problem.prompt}\n"
+            f"Reference answer: {problem.answer}\n"
+            f"Worked solution: {problem.solution or '(none given)'}\n\n"
+            f"They answered:\n{answer}\n\n"
+            "`correct`: does their answer agree with the reference? If they showed "
+            "working, does it hold up? A right value reached by a wrong argument is "
+            "not correct; a right value with no working shown is."
+        ),
+    )
+    try:
+        return d.TrickGrade(correct=bool(raw["correct"]), note=str(raw.get("note") or ""))
+    except (KeyError, TypeError) as e:
+        raise ContentError("the challenge grader did not return the expected shape") from e
 
 
 # --- argument patterns -----------------------------------------------------

@@ -13,6 +13,7 @@ makes them a philosophy rather than a knob.
 from __future__ import annotations
 
 import datetime as dt
+import math
 import os
 import tomllib
 from functools import lru_cache
@@ -389,6 +390,88 @@ class SpellingSettings(Base):
         return by_value[len(by_value) // 2] if by_value else 1400
 
 
+class TrickSettings(Base):
+    """The trick of the day: one identity or technique from the week's topic,
+    taught by a set of problems.
+
+    The only feature here that pays for a generation *and* has no free source
+    to fall back on -- there is no curated pool of tricks the way there is for
+    math problems and spelling words. So the overnight batch matters more here
+    than anywhere else: `./batch.sh --trick-context` produces the same set on a
+    subscription, and the live path exists for the mornings the task did not
+    run. See `dashboard/batch.py`.
+    """
+
+    easy: int = Field(default=4, ge=0, le=10)
+    medium: int = Field(default=4, ge=0, le=10)
+    """The two graded rungs. The optional challenge is always exactly one --
+    it is the problem that asks for more than applying the trick, and there is
+    no such thing as two of those in one morning."""
+
+    anchors: dict[str, Rating] = Field(default_factory=dict)
+    """band -> elo opponent. `easy` and `medium` are averaged over the set the
+    day actually asked, so a day with a callback in it is rated against what it
+    contained; `challenge` is its own event and its own anchor.
+
+    Fixed here rather than derived from `[math.anchors]` because these are a
+    different scale entirely: an `easy` trick problem is a one-line application
+    of an identity, which is not the same claim about you as an AMC problem.
+    """
+
+    callback_cooldown_days: int = Field(default=3, ge=0, le=60)
+    """How recent a trick has to be before it stops being worth calling back.
+    Three, because a set already spends most of its problems on today's trick
+    and reaching back to Tuesday is barely reaching back."""
+
+    callback_exponent: float = Field(default=1.5, ge=0.0, le=6.0)
+    """How sharply the callback favours a long-unvisited trick. Gentler than
+    `[theorems].recency_exponent` on purpose -- see `tricks.pick_callback`."""
+
+    @property
+    def enabled(self) -> bool:
+        """No anchors means the feature is off, and the panel says so rather
+        than erroring. The courtesy `[spelling]` and `[debate]` already get."""
+        return bool(self.anchors) and (self.easy + self.medium) > 0
+
+    @model_validator(mode="after")
+    def _bands_have_anchors(self) -> TrickSettings:
+        if not self.anchors:
+            return self
+        missing = [b for b in ("easy", "medium", "challenge") if b not in self.anchors]
+        if missing:
+            raise ValueError(
+                f"[tricks.anchors] is missing {missing} — every band a set can "
+                f"contain needs an anchor, or its results rate against nothing"
+            )
+        return self
+
+    def anchor_for(self, band: str) -> int:
+        """The elo opponent for one band. A `callback` rates as a medium: it is
+        a medium-difficulty problem, and the only thing different about it is
+        which trick it is on."""
+        if band == "callback":
+            band = "medium"
+        if band in self.anchors:
+            return self.anchors[band]
+        by_value = sorted(self.anchors.values())
+        return by_value[len(by_value) // 2] if by_value else 1400
+
+    def set_anchor(self, bands: list[str]) -> int:
+        """The elo opponent for a whole marked set: the mean of its bands.
+
+        Computed from the bands the set *actually contained* rather than from
+        the configured counts, so a generation that came back one medium short
+        is rated as the easier day it was. Clamped to the `Rating` range the
+        column enforces, and defaulting to the medium anchor for an empty set
+        -- which cannot be marked anyway, but must not divide by zero on the
+        way to finding that out.
+        """
+        if not bands:
+            return self.anchor_for("medium")
+        mean = sum(self.anchor_for(b) for b in bands) / len(bands)
+        return max(100, min(4000, math.floor(mean + 0.5)))
+
+
 class TheoremSettings(Base):
     """How the day's theorem is drawn. See `scoring.draw_weight`."""
 
@@ -727,6 +810,7 @@ class Settings(Base):
     math: MathSettings
     debate: DebateSettings = Field(default_factory=DebateSettings)
     spelling: SpellingSettings = Field(default_factory=SpellingSettings)
+    tricks: TrickSettings = Field(default_factory=TrickSettings)
     theorems: TheoremSettings = Field(default_factory=TheoremSettings)
     markets: MarketSettings = Field(default_factory=MarketSettings)
     portfolio: PortfolioSettings = Field(default_factory=PortfolioSettings)

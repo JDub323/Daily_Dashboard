@@ -79,6 +79,50 @@ class DailyBatch(Base):
 # so a night the task did not run is a less current morning, not a broken one.
 
 
+class BatchTrickProblem(Base):
+    """One problem of a generated trick set.
+
+    Mirrors `domain.TrickProblem` exactly, and exists separately for the reason
+    `BatchProblem` does: this is the wire format a model writes at 3am with
+    nobody watching, and `extra="forbid"` on it is the cheapest signal that the
+    prompt and the schema have drifted apart.
+    """
+
+    band: str = Field(pattern=r"^(easy|medium|callback|challenge)$")
+    prompt: str = Field(min_length=3)
+    answer: str = Field(min_length=1)
+    accept: list[str] = Field(default_factory=list, max_length=6)
+    solution: str = Field(default="", max_length=2000)
+
+
+class TrickSet(Base):
+    """One day's trick and its problems, from the overnight task.
+
+    Unlike `DailyBatch` this is not a ladder to choose a rung from -- every
+    problem in it is served. The batch buys the same thing it buys for the math
+    problem and nothing more: the generation happens on a subscription instead
+    of on the API, so the day is free.
+    """
+
+    date: dt.date
+    topic: str = Field(min_length=1)
+    """Echoed back so `--validate-trick` can check the generator answered the
+    week it was asked about rather than a different one."""
+
+    name: str = Field(min_length=2, max_length=120)
+    statement: str = Field(min_length=3)
+    idea: str = Field(default="", max_length=1200)
+    kind: str = Field(default="trick", pattern=r"^(trick|technique)$")
+
+    callback: str | None = None
+    """The name of the older trick the `callback` problem is on, echoed back so
+    the import can find the card it belongs to. None when the context named no
+    trick to reach back to."""
+
+    problems: list[BatchTrickProblem] = Field(min_length=2, max_length=20)
+    generated_at: dt.datetime | None = None
+
+
 class DebateMotion(Base):
     """Tonight's resolution, sharpened against the news.
 

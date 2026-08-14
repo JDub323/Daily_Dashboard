@@ -61,6 +61,16 @@ function tasks() {
       optional: true,
     },
     {
+      // Done means the *marked set* is submitted. The challenge is optional
+      // and deliberately not part of this: a chip that only went gold when you
+      // had also done the hard one would make it not optional, and a perfect
+      // day is counted off exactly these.
+      id: "tricks",
+      label: "math trick",
+      done: s.tricks.status === "done",
+      panel: "tricks",
+    },
+    {
       // Done means answered, not merely drawn. The boot payload never draws,
       // so an unopened day shows `today: null` — which is correctly not done.
       id: "theorem",
@@ -106,7 +116,8 @@ function tasks() {
     (task) =>
       (task.id !== "debate" || s.debate.enabled)
       && (task.id !== "patterns" || s.patterns.deck_size > 0)
-      && (task.id !== "spelling" || s.spelling.enabled),
+      && (task.id !== "spelling" || s.spelling.enabled)
+      && (task.id !== "tricks" || s.tricks.enabled),
   );
 }
 

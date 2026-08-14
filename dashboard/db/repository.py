@@ -57,6 +57,19 @@ place, the argument deck's own panel, which is where "do I actually know my
 patterns" is the question being asked.
 """
 
+TRICK_AREA = "tricks"
+"""The bucket a trick-of-the-day result rates into, on the math track.
+
+`ARGUMENT_AREA`'s move, made for the same two reasons and one more. It is not
+one of the `[math.areas]` buckets, so it stays out of the per-area strip and
+the retrospective chart, both of which iterate `cfg.math.area_names`. And
+because the pooled rating is `area IS NULL`, writing only an area row leaves
+the headline math rating untouched -- which is the important one: this fires
+every day, and a daily drill on an identity is not evidence about solving
+competition problems under time pressure. Confidence in that number has to be
+bought with problems.
+"""
+
 NOT_ATTEMPTS = (Provenance.lapsed, Provenance.unlapsed, Provenance.theorem)
 """Rows that move the rating without anybody having attempted a *problem*.
 
@@ -874,6 +887,240 @@ class Repository:
     # miss counts it read are still kept and still matter -- they are what
     # decides which word gets the day's one relearn slot -- they are just not
     # something the panel says out loud any more.
+
+    # -- tricks -------------------------------------------------------------
+
+    def add_trick(self, trick: d.Trick) -> d.Trick:
+        """Insert one trick. Raises `sqlite3.IntegrityError` on a repeat --
+        `name` is UNIQUE, case-insensitively, and that index *is* the
+        no-repeats rule rather than a check somewhere above this."""
+        row = self.conn.execute(
+            "INSERT INTO trick (name, statement, idea, topic, kind, added) "
+            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+            (trick.name, trick.statement, trick.idea, trick.topic, trick.kind, _iso(trick.added)),
+        ).fetchone()
+        return d.Trick(**dict(row))
+
+    def trick(self, trick_id: int) -> d.Trick | None:
+        row = self.conn.execute("SELECT * FROM trick WHERE id = ?", (trick_id,)).fetchone()
+        return d.Trick(**dict(row)) if row else None
+
+    def trick_named(self, name: str) -> d.Trick | None:
+        row = self.conn.execute(
+            "SELECT * FROM trick WHERE name = ? COLLATE NOCASE", (name,)
+        ).fetchone()
+        return d.Trick(**dict(row)) if row else None
+
+    def tricks(self) -> list[d.Trick]:
+        """Every trick ever taught, oldest first. What the callback draws from."""
+        rows = self.conn.execute("SELECT * FROM trick ORDER BY id").fetchall()
+        return [d.Trick(**dict(r)) for r in rows]
+
+    def trick_names(self) -> list[str]:
+        """The do-not-repeat list, oldest first. The counterpart of
+        `seen_sources` for math and `recent_words` for the word of the day."""
+        return [r[0] for r in self.conn.execute("SELECT name FROM trick ORDER BY id")]
+
+    def callback_dates(self) -> dict[int, dt.date]:
+        """`trick_id -> the last day it was called back`, for those that have.
+
+        One aggregate for the whole list rather than a query per trick, exactly
+        as `last_drawn` is: the weights are computed together and a per-row
+        MAX() would make the draw's cost scale with how long you have been
+        doing this.
+        """
+        rows = self.conn.execute(
+            "SELECT callback_id, MAX(date) FROM trick_round "
+            "WHERE callback_id IS NOT NULL GROUP BY callback_id"
+        ).fetchall()
+        return {r[0]: dt.date.fromisoformat(r[1]) for r in rows}
+
+    def trick_round(self, date: dt.date) -> d.TrickRound | None:
+        row = self.conn.execute(
+            "SELECT * FROM trick_round WHERE date = ?", (_iso(date),)
+        ).fetchone()
+        return self._round(row) if row else None
+
+    @staticmethod
+    def _round(row: sqlite3.Row) -> d.TrickRound:
+        """`t_`-prefixed columns are dropped: `trick_rounds` joins the trick in
+        under aliases, and `TrickRound` forbids extras. Prefixing rather than
+        listing the round's own columns keeps the two from having to be edited
+        together every time the table gains one."""
+        data = {k: v for k, v in _unpack(row, "problems", "answers").items()
+                if not k.startswith("t_")}
+        if data.get("challenge_ok") is not None:
+            data["challenge_ok"] = bool(data["challenge_ok"])
+        return d.TrickRound(**data)
+
+    def open_trick_round(
+        self,
+        date: dt.date,
+        trick_id: int,
+        problems: list[d.TrickProblem],
+        callback_id: int | None = None,
+    ) -> d.TrickRound:
+        """Claim the day for a set, or hand back the one it already has.
+
+        `ON CONFLICT DO NOTHING` and a re-read, the shape `record_draw` and
+        `open_spelling_round` both use. It matters more here than in either:
+        the loser of a two-tab race would otherwise get an IntegrityError
+        having *already paid* for the generation behind it.
+        """
+        self.conn.execute(
+            "INSERT INTO trick_round (date, trick_id, callback_id, problems) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT (date) DO NOTHING",
+            (
+                _iso(date),
+                trick_id,
+                callback_id,
+                _json([p.model_dump(mode="json") for p in problems]),
+            ),
+        )
+        opened = self.trick_round(date)
+        assert opened is not None  # just inserted, or already there
+        return opened
+
+    def finish_trick(
+        self, date: dt.date, answers: list[str], marks: list[bool], opponent: int
+    ) -> tuple[d.TrickRound, d.RatingEvent]:
+        """Close the marked set and rate it, atomically.
+
+        One event for the whole set rather than one per problem, which is the
+        opposite of what `finish_spelling` does, and the difference is what is
+        being measured. Five spelling words are five independent trials of the
+        same skill against five different anchors. Eight problems on one trick
+        are eight readings of a single question -- do you have this trick --
+        and rating them separately would move the number eight times a day on
+        one morning's evidence, taking K to its floor inside a fortnight.
+
+        `opponent` is the anchor, computed by the caller from the bands the set
+        actually contained. Passed in rather than read here for this module's
+        standing reason: it is the only one that knows SQL, and the price is
+        that it is not allowed to know about config either.
+
+        `WHERE status = 'open'` is the double-submit guard, as everywhere else.
+        """
+        with transaction(self.conn):
+            existing = self.trick_round(date)
+            if existing is None:
+                raise LookupError(f"no trick round on {date}")
+            if existing.status != "open":
+                raise ValueError(f"the trick round on {date} is already done")
+
+            row = self.conn.execute(
+                "UPDATE trick_round SET status = 'done', answers = ?, correct = ? "
+                "WHERE date = ? AND status = 'open' RETURNING *",
+                (_json(answers), sum(marks), _iso(date)),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"the trick round on {date} was closed concurrently")
+
+            trick = self.trick(existing.trick_id)
+            assert trick is not None  # the round references it by foreign key
+            score = round(sum(marks) / len(marks), 4) if marks else 0.0
+            return self._round(row), self._rate_trick(date, trick.name, opponent, score)
+
+    def record_challenge(
+        self, date: dt.date, answer: str, grade: d.TrickGrade, opponent: int
+    ) -> tuple[d.TrickRound, d.RatingEvent]:
+        """Store the optional problem's answer and rate it. Atomic.
+
+        Its own event against its own anchor, separate from the set above.
+        Folding it in would mean either that skipping it capped the day below
+        1.0 -- which is not what optional means -- or that attempting it could
+        only help, which is not what a challenge means.
+
+        `WHERE challenge_ok IS NULL` is the double-submit guard, and it is the
+        guard rather than a check-then-write: two tabs posting the same answer
+        would otherwise each write a rating event.
+        """
+        with transaction(self.conn):
+            row = self.conn.execute(
+                "UPDATE trick_round SET challenge = ?, challenge_ok = ?, challenge_note = ? "
+                "WHERE date = ? AND challenge_ok IS NULL RETURNING *",
+                (answer, int(grade.correct), grade.note, _iso(date)),
+            ).fetchone()
+            if row is None:
+                if self.trick_round(date) is None:
+                    raise LookupError(f"no trick round on {date}")
+                raise ValueError(f"the challenge on {date} was already graded")
+
+            closed = self._round(row)
+            trick = self.trick(closed.trick_id)
+            assert trick is not None
+            event = self._rate_trick(
+                date, f"{trick.name} · challenge", opponent, 1.0 if grade.correct else 0.0
+            )
+            return closed, event
+
+    def _rate_trick(
+        self, date: dt.date, ref: str, opponent: int, score: float
+    ) -> d.RatingEvent:
+        """One elo row in the `tricks` bucket. Caller holds the transaction.
+
+        One row, against the area, where a solved math problem writes two
+        (pooled and area). Deliberately not two, and for `record_recall`'s
+        reason applied to a busier feature: this fires every single day, and
+        letting it into the pooled math rating would mean the number that says
+        "how well do you solve competition problems" was mostly measuring
+        whether you had done your drills. `TRICK_AREA` is not one of the
+        configured areas, so nothing that iterates those picks it up either.
+        """
+        n = self.event_count(Track.math, TRICK_AREA)
+        before = self.current_rating(Track.math, TRICK_AREA)
+        k = scoring.k_factor(n)
+        after = scoring.elo_update(before, opponent, score, n)
+        row = self.conn.execute(
+            "INSERT INTO rating_event "
+            "(track, date, ref, opponent, score, k, rating_before, rating_after, "
+            "provenance, area) "
+            "VALUES ('math', ?, ?, ?, ?, ?, ?, ?, 'measured', ?) RETURNING *",
+            (_iso(date), ref, opponent, score, k, before, after, TRICK_AREA),
+        ).fetchone()
+        return d.RatingEvent(**dict(row))
+
+    def trick_delta(self, on: dt.date) -> int | None:
+        """Net change to the trick rating on one day, or None if it did not move.
+
+        Summed rather than read off one row: a day where the challenge was also
+        answered carries two events, and what happened that day is their net.
+        """
+        row = self.conn.execute(
+            "SELECT SUM(rating_after - rating_before) FROM rating_event "
+            "WHERE track = 'math' AND area = ? AND date = ?",
+            (TRICK_AREA, _iso(on)),
+        ).fetchone()
+        return row[0]
+
+    def trick_rounds(self, limit: int = 60) -> list[tuple[d.TrickRound, d.Trick]]:
+        """Past rounds with their tricks, newest first -- what the archive reads.
+
+        Joined here rather than looped in the caller, on `math_history`'s
+        reasoning: N+1 selects over sixty days is the shape that turns a modal
+        into a spinner.
+        """
+        rows = self.conn.execute(
+            "SELECT r.*, t.name AS t_name, t.statement AS t_statement, t.idea AS t_idea, "
+            "t.topic AS t_topic, t.kind AS t_kind, t.added AS t_added "
+            "FROM trick_round r JOIN trick t ON t.id = r.trick_id "
+            "ORDER BY r.date DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        out = []
+        for row in rows:
+            data = dict(row)
+            trick = d.Trick(
+                id=data["trick_id"],
+                name=data["t_name"],
+                statement=data["t_statement"],
+                idea=data["t_idea"],
+                topic=data["t_topic"],
+                kind=data["t_kind"],
+                added=data["t_added"],
+            )
+            out.append((self._round(row), trick))
+        return out
 
     # -- debate -------------------------------------------------------------
     #

@@ -37,6 +37,8 @@ dashboard/            the server
   config.py     config.toml -> validated settings
   logs.py       logging setup
   scoring.py    elo, the theorem draw, streaks — pure, no DB/network/clock
+  spelling.py   the bee: the pool, the draw, the marking — pure
+  tricks.py     the trick of the day: the marking, the callback — pure
   llm.py        one streaming Anthropic client + cost accounting
   feeds.py      RSS, Yahoo, arXiv, lichess, gcalcli + the stale-tolerant cache
   content.py    prompts; the only module that both calls the LLM and persists
@@ -61,7 +63,7 @@ web/                  the front end — native ES modules, no build step
     nav.js      the focus ring — what h/j/k/l actually move
     keys.js     the bindings, as data; the cheatsheet is generated from them
     panels/     one file per panel
-    modals/     theorems (the archive), math (the archive)
+    modals/     theorems, math, tricks (the archives)
   data/         piano.json — scale/chord content, out of the logic file
   vendor/katex  see PROVENANCE.txt
 

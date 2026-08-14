@@ -8,6 +8,7 @@ import * as api from "./api.js";
 import { renderChips, todayPanel } from "./chips.js";
 import { $ } from "./dom.js";
 import { initKeys } from "./keys.js";
+import { invalidateTrickArchive } from "./modals/tricks.js";
 import { initNav, resetToTab } from "./nav.js";
 import { mountAll, refreshLive, register, rerender, rerenderAll, resetCollapse } from "./panel.js";
 import calendar from "./panels/calendar.js";
@@ -30,6 +31,7 @@ import reading from "./panels/reading.js";
 import spelling from "./panels/spelling.js";
 import { activity, archive, areas, invalidateHistory } from "./panels/stats.js";
 import theorem from "./panels/theorem.js";
+import tricks from "./panels/tricks.js";
 import word from "./panels/word.js";
 import { dayHasTurned, loadState, store, subscribe } from "./store.js";
 import { initTabs, onTabChange } from "./tabs.js";
@@ -75,8 +77,9 @@ const PANELS = [
   // The bee sits beside the word of the day: both are vocabulary, and the two
   // chips are adjacent for the same reason.
   todayPanel, activity, word, spelling, calendar, daylog, areas, archive,
-  // math
-  math, theorem, deck, mathElo,
+  // math — the problem is the hero; the trick and the deck are the two things
+  // that make the next one easier.
+  math, tricks, theorem, deck, mathElo,
   // politics
   debate, patterns, debateStats, politics,
   // newsletters
@@ -148,6 +151,7 @@ async function rollOver() {
   await loadState();
   invalidateHistory();
   invalidateDebateHistory();
+  invalidateTrickArchive();
   resetCollapse();
   rerenderAll();
   await renderChips();
@@ -218,6 +222,9 @@ async function boot() {
     if (checkDay()) return;
     renderChips();
     if (keys.some((key) => HISTORY_KEYS.includes(key))) invalidateHistory();
+    // The archive caches past sets for the session, and today's row is one of
+    // them the moment the set is marked.
+    if (keys.includes("tricks")) invalidateTrickArchive();
     // Dropped before the WATCHES redraw below, so the trends panel re-fetches
     // rather than redrawing the numbers it already had.
     if (keys.includes("debate")) invalidateDebateHistory();

@@ -344,6 +344,117 @@ class TheoremDraw(Base):
     note: str | None = None
 
 
+# --- tricks -----------------------------------------------------------------
+
+
+class TrickProblem(Base):
+    """One problem in the day's set, frozen onto the round.
+
+    `answer` is canonical and `accept` holds the other spellings of the same
+    answer -- `1/2` and `0.5`, `n(n+1)/2` and `\\frac{n(n+1)}{2}`. The marking
+    is a string comparison (see `dashboard/tricks.py`), so a right answer
+    written the other obvious way has to be listed or it marks wrong, and the
+    generator is asked for those alternatives rather than the marker being
+    taught algebra.
+    """
+
+    band: str = Field(pattern=r"^(easy|medium|callback|challenge)$")
+    """Which rung. `callback` is a medium-difficulty problem on an *older*
+    trick, which is the whole reinforcement mechanism -- it is a band rather
+    than a flag so it can carry its own label in the panel."""
+
+    prompt: str = Field(min_length=3)
+    answer: str = Field(min_length=1)
+    accept: list[str] = Field(default_factory=list, max_length=6)
+    solution: str = ""
+    """One or two lines, shown after the set is marked. The point of the day is
+    the trick, so getting a problem wrong and not being told why would leave
+    the one thing worth learning unsaid."""
+
+
+class Trick(Base):
+    """One trick, identity or technique. The deck this feature accumulates.
+
+    Kept in its own table rather than as a third `Deck` on `theorem_card`,
+    which was the near miss. The theorem deck's whole machinery is a
+    recency-weighted *draw for recall* -- adding tricks to it would put them in
+    the theorem panel's rotation and ask you to recite them, which is not what
+    this is for. What a past trick is drawn for here is a problem, and that is a
+    different question with a different answer.
+    """
+
+    id: int | None = None
+
+    name: str = Field(min_length=2, max_length=120)
+    """UNIQUE, case-insensitively. This is also the do-not-repeat list: "have
+    I had this trick" is `SELECT name FROM trick`, the rule `math_problem.source`
+    already follows."""
+
+    statement: str = Field(min_length=3)
+    """The identity or rule itself, with every formula in LaTeX delimiters."""
+
+    idea: str = Field(default="", max_length=1200)
+    """When to reach for it, and what it buys -- the half that makes it a
+    *trick* rather than a fact. A statement you can recite and never recognise
+    an occasion for is the failure mode this field exists against."""
+
+    topic: str
+    """The rotation topic it was drawn for, frozen at generation time for the
+    reason `MathProblem.topic` is: the rotation is config and can be edited."""
+
+    kind: str = Field(default="trick", pattern=r"^(trick|technique)$")
+    """The fallback that makes topic-coupling survivable. Most weeks yield a
+    computational shortcut; a week on measure theory or topology does not, and
+    the honest answer there is a reusable *technique* -- the standard opening
+    move, the canonical construction -- rather than a shortcut invented to fill
+    the slot. Recorded so it is visible which the day got."""
+
+    added: dt.date
+
+
+class TrickRound(Base):
+    """One day's trick and the set of problems that teach it.
+
+    Date-keyed like every other daily table here, which is what makes a reload
+    idempotent rather than a reroll -- and this one costs a generation to
+    reroll, so it matters more than usual.
+    """
+
+    date: dt.date
+    trick_id: int
+    callback_id: int | None = None
+    """The older trick one problem in the set reaches back to, when there was
+    one to reach for. NULL on the first day, and on any day the draw found
+    nothing off cooldown."""
+
+    problems: list[TrickProblem] = Field(default_factory=list, max_length=20)
+    """Frozen at draw time, the challenge last. `answers` is positional against
+    the non-challenge entries."""
+
+    answers: list[str] = Field(default_factory=list, max_length=20)
+    correct: int | None = None
+    """NULL while open. Derived server-side from `answers`; the client never
+    sends a score, exactly as it never sends a math outcome's."""
+
+    status: str = "open"
+
+    challenge: str | None = None
+    """What was written for the optional problem. NULL means not attempted,
+    which is a legitimate way to finish the day -- it is optional."""
+
+    challenge_ok: bool | None = None
+    challenge_note: str | None = None
+    """One line from the grader. The challenge asks for more than applying the
+    trick, so "wrong" without saying where teaches nothing."""
+
+
+class TrickGrade(Base):
+    """What the grader made of a challenge answer."""
+
+    correct: bool
+    note: str
+
+
 # --- spelling ---------------------------------------------------------------
 
 

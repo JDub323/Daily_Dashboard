@@ -16,9 +16,9 @@ from __future__ import annotations
 import datetime as dt
 from typing import NamedTuple
 
-from . import debate, scoring, spelling
+from . import debate, scoring, spelling, tricks
 from .config import Settings
-from .db.repository import ARGUMENT_AREA, Repository
+from .db.repository import ARGUMENT_AREA, TRICK_AREA, Repository
 from .models import api
 from .models import domain as d
 from .models.common import Deck, Game, HealthMetric, MathOutcome, Track
@@ -376,6 +376,155 @@ def spelling_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.Spell
     )
 
 
+def trick_prompts(
+    round_: d.TrickRound,
+    callback_name: str | None,
+    *,
+    marked: bool,
+    reveal_challenge: bool | None = None,
+) -> tuple[list[api.TrickPrompt], api.TrickPrompt | None]:
+    """The day's set as the panel is allowed to see it, plus its challenge.
+
+    [Invariant] The answers do not cross the wire until the set has been
+    marked. The old shape of this mistake is in `TheoremsPanel.today`'s comment:
+    a panel that receives the answer and merely declines to render it has been
+    trusted to ask you a question about a value it is already holding. Here
+    that would be worse than ceremonial, because the marking is a string
+    comparison the server performs -- so the answers being in the page is
+    exactly the answer key.
+
+    Applied to `solution` as well, which is the half that is easy to miss: a
+    worked solution is an answer with the route attached.
+
+    The challenge is decided separately from the set, because the two close at
+    different times: submitting the eight does not answer the ninth. `None`
+    means "graded", which is the live panel's rule; the archive passes True for
+    a day that is over, since a challenge nobody answered would otherwise stay
+    hidden for ever -- there is nothing left to protect once the day it belongs
+    to has gone.
+    """
+    marks = tricks.mark(round_.problems, round_.answers) if marked else []
+    if reveal_challenge is None:
+        reveal_challenge = round_.challenge_ok is not None
+
+    def shown(problem: d.TrickProblem, i: int | None) -> api.TrickPrompt:
+        graded = marked if i is not None else reveal_challenge
+        return api.TrickPrompt(
+            band=problem.band,
+            prompt=problem.prompt,
+            callback_of=callback_name if problem.band == "callback" else None,
+            answer=problem.answer if graded else "",
+            accept=problem.accept if graded else [],
+            solution=problem.solution if graded else "",
+            typed=(
+                (round_.answers[i] if i is not None and i < len(round_.answers) else "")
+                if i is not None
+                else (round_.challenge or "")
+            ),
+            correct=(
+                (marks[i] if i is not None and i < len(marks) else None)
+                if i is not None
+                else round_.challenge_ok
+            ),
+        )
+
+    prompts = [shown(p, i) for i, p in enumerate(tricks.marked_problems(round_.problems))]
+    challenge = tricks.challenge_of(round_.problems)
+    return prompts, shown(challenge, None) if challenge else None
+
+
+def tricks_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.TricksPanel:
+    """Today's trick.
+
+    Read-only, like everything here: this reports the round, it does not draw
+    one. Drawing is a POST, and here that is not merely a verb preference --
+    on a morning the overnight task did not run, drawing spends money, and a
+    boot payload that could spend money is one you cannot afford to reload.
+    """
+    base = {
+        "enabled": cfg.tricks.enabled,
+        "rating": repo.current_rating(Track.math, TRICK_AREA),
+        "events": repo.event_count(Track.math, TRICK_AREA),
+        "total": len(repo.trick_names()),
+    }
+    round_ = repo.trick_round(today)
+    if round_ is None:
+        return api.TricksPanel(**base)
+
+    trick = repo.trick(round_.trick_id)
+    if trick is None:
+        # The round's FK guarantees this cannot happen; treating it as "no
+        # trick today" rather than asserting keeps a corrupted row from taking
+        # the whole dashboard down, which is `math_panel`'s call in the same
+        # spot.
+        return api.TricksPanel(**base)
+
+    callback = repo.trick(round_.callback_id) if round_.callback_id else None
+    marked = round_.status != "open"
+    problems, challenge = trick_prompts(round_, callback.name if callback else None, marked=marked)
+    return api.TricksPanel(
+        **base,
+        trick=trick,
+        problems=problems,
+        challenge=challenge,
+        answers=round_.answers,
+        correct=round_.correct,
+        status=round_.status,
+        challenge_answer=round_.challenge,
+        challenge_ok=round_.challenge_ok,
+        challenge_note=round_.challenge_note,
+        callback_of=callback.name if callback else None,
+        delta=repo.trick_delta(today),
+    )
+
+
+TRICK_ARCHIVE_LIMIT = 60
+"""Past sets sent to the archive. Two months, matching `ARCHIVE_LIMIT` -- and
+the payload is the reason there is a limit, since every prompt and every worked
+solution ships whole."""
+
+
+def trick_archive(repo: Repository, today: dt.date) -> api.TrickArchiveResponse:
+    """Every past set, newest first, answers and solutions included.
+
+    Dated only for the challenge. Everything else here is a record of work
+    already done and means the same thing whichever day you open it on -- but
+    "can this still be attempted" is relative to today, and it is the one
+    question that decides whether an answer may be shown.
+    """
+    entries = []
+    for round_, trick in repo.trick_rounds(TRICK_ARCHIVE_LIMIT):
+        callback = repo.trick(round_.callback_id) if round_.callback_id else None
+        # `marked=True` regardless of status: this is a record of work already
+        # done, and withholding the answer the way the live panel does would
+        # mean the one thing you came to the archive for is the one thing it
+        # will not show. An open round can only be today's, and today's panel
+        # is on screen anyway.
+        #
+        # The challenge is revealed on any day but today, and that is the fix
+        # for a real hole rather than a nicety: nothing in the app offers a
+        # past day's challenge, so one you never answered would otherwise be
+        # hidden by a rule that can no longer be satisfied.
+        problems, challenge = trick_prompts(
+            round_,
+            callback.name if callback else None,
+            marked=True,
+            reveal_challenge=round_.challenge_ok is not None or round_.date < today,
+        )
+        entries.append(
+            api.TrickArchiveEntry(
+                date=round_.date,
+                trick=trick,
+                problems=problems,
+                challenge=challenge,
+                correct=round_.correct,
+                status=round_.status,
+                delta=repo.trick_delta(round_.date),
+            )
+        )
+    return api.TrickArchiveResponse(entries=entries)
+
+
 def games_panel(repo: Repository, today: dt.date) -> api.GamesPanel:
     wordle = repo.wordle(today)
     pokedoku = repo.pokedoku(today)
@@ -568,6 +717,7 @@ def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.Dash
         debate=debate_panel(cfg, repo, today),
         patterns=patterns_panel(repo, today),
         spelling=spelling_panel(cfg, repo, today),
+        tricks=tricks_panel(cfg, repo, today),
         word=repo.word(today),
         games=games_panel(repo, today),
         theorems=theorems_panel(repo, today),

@@ -54,6 +54,7 @@ from . import (
     spelling,
     spend,
     state,
+    tricks,
     webauthn,
 )
 from .config import Settings, load_env, settings
@@ -925,6 +926,96 @@ def _register(app: FastAPI) -> None:
             events[-1].rating_after if events else "-",
         )
         return state.spelling_panel(cfg, repo, body.date)
+
+    # -- the trick of the day ----------------------------------------------
+    #
+    # One generation buys the whole cell, and the marking is a string compare
+    # rather than eight gradings -- see `dashboard/tricks.py`. The only other
+    # paid call here is the challenge grader, and only when the challenge is
+    # actually attempted.
+
+    @app.post("/api/trick/new")
+    def trick_new(cfg: Cfg, repo: Repo, body: api.TrickNewRequest) -> api.TricksPanel:
+        """Draw today's trick, or hand back the one already drawn.
+
+        A POST rather than a GET-that-writes, unlike the theorem draw and for a
+        stronger reason than the spelling bee's: on a morning the overnight task
+        did not run this spends money, and a GET that spends money is one a
+        reload can spend twice. `next_trick` is idempotent per day regardless,
+        so the verb is the second lock rather than the only one.
+        """
+        if not cfg.tricks.enabled:
+            raise LookupError(
+                "the trick of the day is not configured — see [tricks] in config.toml"
+            )
+        content.next_trick(cfg, repo, body.date)
+        return state.tricks_panel(cfg, repo, body.date)
+
+    @app.post("/api/trick/submit")
+    def trick_submit(cfg: Cfg, repo: Repo, body: api.TrickSubmitRequest) -> api.TricksPanel:
+        """Mark the set and rate it.
+
+        Marking is server-side and the answers were never sent: the panel posts
+        what was typed, and until this call returns it has not seen a single
+        canonical answer. That is the difference from the spelling bee, whose
+        words have to be in the payload for the browser to say them out loud --
+        here there is no such bargain to strike.
+        """
+        round_ = repo.trick_round(body.date)
+        if round_ is None:
+            raise LookupError(f"no trick round on {body.date}")
+        marks = tricks.mark(round_.problems, body.answers)
+        anchor = cfg.tricks.set_anchor([p.band for p in tricks.marked_problems(round_.problems)])
+        closed, event = repo.finish_trick(body.date, body.answers, marks, anchor)
+        log.info(
+            "trick %s (%s): %d/%d, %s -> %s",
+            body.date,
+            event.ref,
+            closed.correct,
+            len(marks),
+            event.rating_before,
+            event.rating_after,
+        )
+        return state.tricks_panel(cfg, repo, body.date)
+
+    @app.post("/api/trick/challenge")
+    def trick_challenge(cfg: Cfg, repo: Repo, body: api.TrickChallengeRequest) -> api.TricksPanel:
+        """Grade the optional problem, and let it move the trick rating.
+
+        The grading happens before the transaction, as `/api/theorem/recall`
+        does: it is a network call of a few seconds, and holding SQLite's write
+        lock across one would block every other write in the app for its
+        duration. The double-submit guard is in the UPDATE's WHERE clause, so
+        the worst a concurrent second post can do is pay for a grading whose
+        result is then rejected.
+        """
+        round_ = repo.trick_round(body.date)
+        if round_ is None:
+            raise LookupError(f"no trick round on {body.date}")
+        if round_.challenge_ok is not None:
+            raise ValueError(f"the challenge on {body.date} was already graded")
+        problem = tricks.challenge_of(round_.problems)
+        if problem is None:
+            raise LookupError(f"the set on {body.date} has no challenge problem")
+        trick = repo.trick(round_.trick_id)
+        if trick is None:
+            raise LookupError(f"trick {round_.trick_id} is missing")
+
+        grade = content.grade_challenge(cfg, body.date, trick, problem, body.answer)
+        repo.record_challenge(
+            body.date, body.answer, grade, cfg.tricks.anchor_for(tricks.CHALLENGE)
+        )
+        return state.tricks_panel(cfg, repo, body.date)
+
+    @app.get("/api/trick/archive")
+    def trick_archive(repo: Repo, date: Today) -> api.TrickArchiveResponse:
+        """Past sets, with their answers and worked solutions.
+
+        Dated for one reason: a challenge is answerable on the day it is set,
+        so its answer is withheld on today's row and shown on every other. Only
+        the browser knows which row is today's.
+        """
+        return state.trick_archive(repo, date)
 
     # -- games -------------------------------------------------------------
 
