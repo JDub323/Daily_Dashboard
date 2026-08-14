@@ -32,10 +32,24 @@ export function svg(spec, props = null, ...children) {
   return node;
 }
 
+/**
+ * Attributes whose `false` has to be written down.
+ *
+ * `false` is otherwise treated as "leave it out", which is right for the
+ * boolean attributes — an absent `disabled` *is* enabled, and `disabled:
+ * cond` reads exactly as intended. These are not boolean attributes though.
+ * They are enumerated ones, where absent means "inherit" and inheriting
+ * `spellcheck` from the document means on: `spellcheck: false` on the spelling
+ * bee's boxes was silently dropped, and the browser underlined every misspelt
+ * word in red — which in a spelling test is not a typo hint, it is the answer.
+ */
+const TRISTATE = new Set(["spellcheck", "contenteditable", "draggable", "translate"]);
+
 function apply(node, props, isSvg = false) {
   if (!props) return;
   for (const [key, value] of Object.entries(props)) {
-    if (value == null || value === false) continue;
+    if (value == null) continue;
+    if (value === false && !TRISTATE.has(key)) continue;
     if (key === "class") {
       // Empty tokens are dropped rather than passed on: `classList.add("")`
       // throws a SyntaxError, so `class: cond ? "read" : ""` — which reads as
