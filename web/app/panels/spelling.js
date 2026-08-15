@@ -14,6 +14,7 @@
 // What is not conceded is the marking, which happens on the server.
 
 import * as api from "../api.js";
+import { opener } from "../daily.js";
 import { el, mount } from "../dom.js";
 import { put, store } from "../store.js";
 
@@ -54,28 +55,15 @@ function header(panel) {
   );
 }
 
-function undrawn(body, panel) {
+function undrawn(panel) {
   if (!panel.enabled) {
     return el("div.faint", { text: "not configured — see [spelling] in config.toml" });
   }
-  const start = el("button.primary", {
-    text: "start today's bee",
-    onclick: async () => {
-      start.disabled = true;
-      start.textContent = "drawing…";
-      try {
-        put("spelling", await api.post("/api/spelling/new"));
-        render(body);
-      } catch (error) {
-        start.disabled = false;
-        start.textContent = "start today's bee";
-        body.append(el("div.err", { text: error.message }));
-      }
-    },
-  });
+  // Drawn at boot by `daily.js`. The round is fixed once drawn, so arriving to
+  // find it already on screen changes nothing about the test.
   return el("div", null,
     el("div.faint", { text: "five words, spoken · easiest first" }),
-    el("div.row", null, start),
+    opener("spelling"),
   );
 }
 
@@ -152,9 +140,13 @@ function open(body, panel) {
     },
   });
 
-  // Autofocus is deliberate and only here: the round has just been drawn by a
-  // press, so the cursor belongs in the first box rather than one click away.
-  queueMicrotask(() => inputs[0]?.focus());
+  // The first box used to be focused from here, on the grounds that the round
+  // had just been drawn by a press and the cursor belonged in it. It is drawn
+  // at boot now, and nobody pressed anything: focusing a text box would put
+  // the caret in the spelling bee on every page load, and `keys.js` stands
+  // down while you are typing — so the tab digits and the whole focus ring
+  // would be dead until you clicked elsewhere. `i` is the way in, and it is on
+  // the cheatsheet.
 
   return el("div", null,
     // Printed rather than left in the cheatsheet, for the reason the tab
@@ -206,7 +198,7 @@ function marked(panel) {
 function render(body) {
   const panel = store.state.spelling;
   let main;
-  if (!panel.words.length) main = undrawn(body, panel);
+  if (!panel.words.length) main = undrawn(panel);
   else if (panel.status === "done") main = marked(panel);
   else main = open(body, panel);
 

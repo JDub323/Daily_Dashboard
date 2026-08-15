@@ -355,11 +355,11 @@ export function move(key, { toPanels = false } = {}) {
  * Enter.
  *
  * On a panel holding exactly one button, that button is unambiguously what
- * Enter means — "get today's puzzle", "start the bee", "parse & log" — and
- * making you press Enter, then j to the only control, then Enter again was
- * ceremony around a single choice. Anything with two buttons still descends,
- * and Shift-Enter descends regardless, which is the way into the heading of a
- * collapsible panel whose body holds one button.
+ * Enter means — "parse & log", "check", "submit" — and making you press Enter,
+ * then j to the only control, then Enter again was ceremony around a single
+ * choice. Anything with two buttons still descends, and Shift-Enter descends
+ * regardless, which is the way into the heading of a collapsible panel whose
+ * body holds one button.
  */
 export function enter({ descend = false } = {}) {
   if (mode === "items") {

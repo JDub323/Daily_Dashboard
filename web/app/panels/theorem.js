@@ -12,12 +12,14 @@
 // getting one is a draw rather than a loss: +3 / 0 / -3 on the area rating.
 //
 // [Invariant] The draw is a GET that *writes* — it stamps the card as seen and
-// puts it on cooldown — so there is a button here rather than a draw on
-// render. As a modal this was safe by construction: a day you never came
-// looking was a day nothing appeared. A panel that drew on mount would quietly
-// burn a card every morning the math tab was rendered, which is every morning.
+// puts it on cooldown — so it does not happen on render. Rendering is not an
+// event: this panel is redrawn whenever anything at all lands in the store, so
+// a draw in `render` would burn cards by the handful. The draw is a boot-time
+// gather in `daily.js` now, which fires once a day and only on a day you
+// opened the page — the property this panel had as a modal, kept.
 
 import * as api from "../api.js";
+import { opener } from "../daily.js";
 import { el, mount } from "../dom.js";
 import { put, store } from "../store.js";
 import { typeset } from "../ui.js";
@@ -48,7 +50,7 @@ function draw(body) {
   const theorems = store.state.theorems;
 
   if (!theorems.today) {
-    mount(body, undrawn(body, theorems));
+    mount(body, undrawn(theorems));
     return;
   }
   if (theorems.written) {
@@ -59,28 +61,13 @@ function draw(body) {
 }
 
 /** Before the draw: nothing has been claimed for today yet. */
-function undrawn(body, theorems) {
+function undrawn(theorems) {
   if (!theorems.deck_size) {
     return el("div.faint", { text: "deck is empty · add a theorem in the panel below" });
   }
-  const button = el("button.primary", {
-    text: "draw today's theorem",
-    onclick: async () => {
-      button.disabled = true;
-      button.textContent = "drawing…";
-      try {
-        put("theorems", await api.get("/api/theorem/today", { date: api.today() }));
-        draw(body);
-      } catch (error) {
-        button.disabled = false;
-        button.textContent = "draw today's theorem";
-        body.append(el("div.err", { text: error.message }));
-      }
-    },
-  });
   return el("div", null,
     el("div.faint", { text: `${theorems.deck_size} cards in rotation` }),
-    el("div.row", null, button),
+    opener("theorems"),
   );
 }
 

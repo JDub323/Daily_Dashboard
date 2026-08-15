@@ -9,6 +9,7 @@
 // did not: it is still the elo opponent.
 
 import * as api from "../api.js";
+import { opener } from "../daily.js";
 import { el, link, mount } from "../dom.js";
 import { put, store } from "../store.js";
 import { lastDelta, summaryRow } from "./math.js";
@@ -40,17 +41,12 @@ export default {
     const chess = store.state.chess;
     const head = summaryRow(chess.summary);
 
+    // Fetched at boot by `daily.js`. The gather is guarded on `puzzle_id`
+    // being absent, and has to be: `open_chess_attempt` upserts on the date,
+    // so a second fetch would replace a puzzle you are part way through with
+    // a different one and keep the rating it was opened against.
     if (!chess.puzzle_id) {
-      const button = el("button.primary", {
-        text: `get today's puzzle (near ${chess.summary.rating})`,
-        onclick: async () => {
-          button.disabled = true;
-          button.textContent = "fetching…";
-          put("chess", await api.post("/api/chess/new"));
-          await this.render(node);
-        },
-      });
-      mount(node, head, el("div.row", null, button));
+      mount(node, head, opener("chess"));
       return;
     }
 

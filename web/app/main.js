@@ -3,9 +3,15 @@
 // One HTTP round trip fills the whole dashboard: GET /api/state?date=<local>
 // returns a projection assembled server-side. The panels below read from that
 // snapshot and never compute a rating, a score, or a streak themselves.
+//
+// The snapshot is a read, though, and some of the day's cells do not exist
+// until something is written — a puzzle fetched, a card drawn, a word paid
+// for. Those are `daily.js`, kicked off here beside the state load and landing
+// in the same store a moment later.
 
 import * as api from "./api.js";
 import { renderChips, todayPanel } from "./chips.js";
+import { gatherDailies } from "./daily.js";
 import { $ } from "./dom.js";
 import { initKeys } from "./keys.js";
 import { invalidateTrickArchive } from "./modals/tricks.js";
@@ -154,6 +160,10 @@ let rolling = null;
 async function rollOver() {
   await loadConfig();
   await loadState();
+  // Before the redraw, as at boot: the new day's cells go straight to their
+  // busy line rather than showing a button for the second it takes the answer
+  // to arrive. This is also the retry for a gather that failed yesterday.
+  gatherDailies();
   invalidateHistory();
   invalidateDebateHistory();
   invalidateTrickArchive();
@@ -213,6 +223,12 @@ async function boot() {
   }
 
   await loadState();
+
+  // Before the panels mount, so the first paint of each x-of-the-day cell is
+  // already its busy line. Deliberately not awaited: the word is a generation
+  // of a few seconds and the puzzle is a round trip to lichess, and neither is
+  // a reason for the rest of the dashboard to sit blank.
+  gatherDailies();
 
   register(...PANELS);
   mountAll();
