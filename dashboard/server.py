@@ -238,6 +238,19 @@ def _register_errors(app: FastAPI) -> None:
         log.info("%s: unusable ballot: %s", request.url.path, exc)
         return JSONResponse({"error": str(exc)}, status_code=400)
 
+    @app.exception_handler(tricks.TrickError)
+    def _trick(request: Request, exc: tricks.TrickError) -> JSONResponse:
+        # 400 for `DebateError`'s reason: nothing upstream failed. A trick set
+        # pasted out of the Claude app that will not parse is a paste that went
+        # wrong, and the message says which way — so it is logged at info
+        # without a traceback, like the other client mistakes.
+        #
+        # Registered before the ValueError handler matters: `TrickError` is a
+        # ValueError, and Starlette resolves handlers by walking the MRO, so
+        # without this entry a bad paste would be reported as a conflict.
+        log.info("%s: unusable trick set: %s", request.url.path, exc)
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
     @app.exception_handler(webauthn.WebAuthnError)
     def _webauthn(request: Request, exc: webauthn.WebAuthnError) -> JSONResponse:
         # 400 and no traceback. Every case here is either an expired challenge
@@ -934,15 +947,45 @@ def _register(app: FastAPI) -> None:
     # paid call here is the challenge grader, and only when the challenge is
     # actually attempted.
 
+    @app.post("/api/trick/paste")
+    def trick_paste(cfg: Cfg, repo: Repo, body: api.TrickPasteRequest) -> api.TricksPanel:
+        """Store a set written in the Claude app. The free path, and the default.
+
+        Nothing here can reach `llm`, which is the whole point: the generation
+        happens on a subscription in another window and the dashboard's job is
+        to hand over a prompt and read what comes back. The same split that
+        makes the daily debate cost $0.
+
+        A 400 for a paste that will not parse or is for another week -- nothing
+        upstream failed, so it is not a 502.
+        """
+        if not cfg.tricks.enabled:
+            raise LookupError(
+                "the trick of the day is not configured — see [tricks] in config.toml"
+            )
+        round_ = content.trick_from_paste(cfg, repo, body.date, body.text)
+        trick = repo.trick(round_.trick_id)
+        log.info(
+            "trick %s: stored %r from a paste (no LLM call), %d problem(s)",
+            body.date,
+            trick.name if trick else "?",
+            len(round_.problems),
+        )
+        return state.tricks_panel(cfg, repo, body.date)
+
     @app.post("/api/trick/new")
     def trick_new(cfg: Cfg, repo: Repo, body: api.TrickNewRequest) -> api.TricksPanel:
-        """Draw today's trick, or hand back the one already drawn.
+        """Draw today's trick from the overnight batch, or generate one.
 
         A POST rather than a GET-that-writes, unlike the theorem draw and for a
         stronger reason than the spelling bee's: on a morning the overnight task
         did not run this spends money, and a GET that spends money is one a
         reload can spend twice. `next_trick` is idempotent per day regardless,
         so the verb is the second lock rather than the only one.
+
+        This is the *paid* fallback now. The panel offers the copyable prompt
+        first and reaches for this only when asked, so the button that costs
+        something is a button you pressed on purpose.
         """
         if not cfg.tricks.enabled:
             raise LookupError(

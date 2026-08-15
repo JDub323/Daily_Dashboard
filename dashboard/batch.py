@@ -45,7 +45,6 @@ from typing import Any
 from . import content, debate, llm, logs, tricks
 from .config import Settings, load_settings
 from .db import Repository
-from .models import domain as d
 from .models.batch import DailyBatch
 
 log = logs.get(__name__)
@@ -212,13 +211,10 @@ def trick_context(settings: Settings, repo: Repository | None, date: dt.date) ->
     seen: list[str] = []
     if repo is not None:
         seen = repo.trick_names()
-        callback = tricks.pick_callback(
-            repo.tricks(),
-            repo.callback_dates(),
-            date,
-            cooldown=cfg.callback_cooldown_days,
-            exponent=cfg.callback_exponent,
-        )
+        # The same pick the panel's copyable prompt makes, and seeded by the
+        # day so the two agree -- a night's file and a morning's paste must not
+        # be reinforcing different tricks.
+        callback = content.today_callback(settings, repo, date)
 
     wanted = tricks.wanted_bands(cfg.easy, cfg.medium, callback=callback is not None)
     return {
@@ -247,63 +243,19 @@ def trick_context(settings: Settings, repo: Repository | None, date: dt.date) ->
 def validate_trick(
     settings: Settings, raw: str, date: dt.date | None = None
 ) -> tuple[Any | None, list[str]]:
-    """Parse and check a generated trick set.
+    """Parse and check a generated trick set, for the CLI.
 
-    The same extraction the API path runs -- `extract_json`, LaTeX repair and
-    all -- because a model asked for JSON full of LaTeX writes `\\frac` whether
-    it is answering over HTTPS or writing a file. See `validate` above.
+    The reading itself is `content.parse_trick_set`, shared with the serving
+    path and the paste box -- three ways the same document arrives, and a second
+    set of rules for any of them would be a set that drifts.
+
+    What is local to here is the *strictness*: warnings are folded in with the
+    errors, so a set one easy problem short is rejected. At 3am regenerating is
+    free and the alternative is a morning that is quietly thinner than it should
+    be. The paste path makes the opposite trade, and says why.
     """
-    from .models.batch import TrickSet
-
-    try:
-        parsed = llm.extract_json(raw)
-    except json.JSONDecodeError as e:
-        return None, [f"not JSON: {e}"]
-    if not isinstance(parsed, dict):
-        return None, ["expected a JSON object"]
-
-    try:
-        trick = TrickSet(**parsed)
-    except Exception as e:
-        return None, [f"does not match the trick schema: {e}"]
-
-    errors: list[str] = []
-    expected = settings.math.topic_for(trick.date)
-    if trick.topic.strip().casefold() != expected.casefold():
-        errors.append(f"topic {trick.topic!r}: {trick.date} is a {expected!r} week")
-    if date is not None and trick.date != date:
-        errors.append(f"dated {trick.date}, but this file is tonight's ({date})")
-
-    wanted = tricks.wanted_bands(
-        settings.tricks.easy,
-        settings.tricks.medium,
-        callback=any(p.band == "callback" for p in trick.problems),
-    )
-    errors += tricks.check_bands(
-        [d.TrickProblem(**p.model_dump()) for p in trick.problems], wanted
-    )
-
-    if any(p.band == "callback" for p in trick.problems) and not trick.callback:
-        # Without the name the import cannot link the problem to the card it is
-        # reinforcing, and the row renders as a problem that is inexplicably
-        # not about today's trick.
-        errors.append("a callback problem, but `callback` does not name the trick it is on")
-
-    prompts = [p.prompt.strip() for p in trick.problems]
-    if len(set(prompts)) != len(prompts):
-        errors.append("the same problem appears twice")
-    for i, problem in enumerate(trick.problems):
-        if problem.band != tricks.CHALLENGE and not problem.solution:
-            # Only the marked bands. The challenge's solution is what the grader
-            # reads, so it is checked below with a stronger word.
-            errors.append(f"problems[{i}] ({problem.band}): no solution — nothing to show back")
-        if problem.answer.strip().casefold() == problem.prompt.strip().casefold():
-            errors.append(f"problems[{i}]: the answer restates the problem")
-    challenge = next((p for p in trick.problems if p.band == tricks.CHALLENGE), None)
-    if challenge is not None and not challenge.solution:
-        errors.append("the challenge has no worked solution, and the grader is given one to read")
-
-    return trick, errors
+    parsed, errors, warnings = content.parse_trick_set(settings, raw, date)
+    return parsed, errors + warnings
 
 
 def _report_trick(settings: Settings, path: Path, date: dt.date) -> int:

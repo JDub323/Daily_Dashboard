@@ -258,24 +258,56 @@ input.spell-box { flex: 1; min-width: 140px; }
 .recall-half > .row { margin: 0; }
 
 /* ---- trick of the day ----
-   Nine problems in one card, which is more rows than anything else in the app
-   shows at once — so the separators do the work the panel border does
-   elsewhere, and the prompt gets room to be a formula rather than a line of
-   text. The card at the top is the reference you are working *from*, boxed so
-   it reads as given rather than as the first question. */
-.trick-card {
-  margin: 6px 0 2px; padding: 8px 10px;
-  background: var(--bg); border: 1px solid var(--border-soft); border-radius: 6px;
-}
-.trick-card > .row { margin: 0 0 2px; }
+   The panel is a summary — name, topic, where you got to — and carries no maths
+   at all. Everything that is a formula lives in the sheet (`.paper` below),
+   because a displayed product wraps over four lines in a 311px column and takes
+   the card to three times its neighbours' height. */
 .trick-row { border-top: 1px solid var(--border-soft); padding: 7px 0 5px; }
 .trick-row > .row { margin: 0 0 3px; }
-/* The prompt is display maths as often as not, so it gets its own line and
-   wraps rather than being squeezed beside the band tag. */
 .trick-prompt { margin: 2px 0 5px; overflow-wrap: anywhere; }
 .trick-solution { margin-top: 3px; padding-left: 10px; border-left: 2px solid var(--border); }
-input.trick-box { max-width: 22em; }
-.trick-challenge { margin-top: 4px; }
+
+/* ---- the trick sheet ----
+   The set as a typeset handout, in the modal. Everything here is about giving
+   the maths room: the modal is already `min(680px, 100%)` and scrolls, so what
+   this adds is vertical rhythm and a hierarchy that reads as a document rather
+   than as a form — a title, a rule, numbered problems, and answers set in from
+   the margin.
+
+   Line-height is looser than the rest of the app on purpose. Elsewhere the
+   type is dense because it is scanned; here it is read, and a displayed
+   fraction needs the room above and below or it collides with the line. */
+.paper { line-height: 1.65; padding-bottom: 4px; }
+.paper-head { text-align: center; margin: 2px 0 14px; }
+.paper-title { font-size: 17px; font-weight: 700; color: var(--gold); margin: 0 0 3px; letter-spacing: .3px; }
+.paper-by { font-size: 11.5px; color: var(--faint); letter-spacing: .5px; }
+/* The rule the trick is stated in, given the weight of an abstract: indented
+   from both margins the way a displayed quotation is, so it reads as the thing
+   the sheet is *about* rather than as its first question. */
+.paper-statement {
+  margin: 0 auto; padding: 10px 14px; max-width: 54em;
+  background: var(--bg); border: 1px solid var(--border-soft); border-radius: 6px;
+  overflow-x: auto;
+}
+.paper-idea { margin: 8px 2px 2px; color: var(--dim); font-size: 12.5px; }
+.paper-rule { border-top: 1px solid var(--border); margin: 16px 0 4px; }
+
+.paper-problem { margin: 14px 0; }
+.paper-num { display: flex; gap: 8px; align-items: baseline; margin-bottom: 2px; }
+.paper-n { color: var(--gold-dim); font-weight: 700; min-width: 1.4em; }
+/* Wide maths scrolls inside its own problem rather than pushing the sheet
+   sideways — a modal that scrolls horizontally is one you cannot read at all. */
+.paper-prompt { margin: 2px 0 6px 1.9em; overflow-x: auto; }
+.paper-verdict { margin: 2px 0 0 1.9em; }
+.paper-solution {
+  margin: 5px 0 0 1.9em; padding-left: 10px; border-left: 2px solid var(--border);
+  color: var(--dim); font-size: 12px; overflow-x: auto;
+}
+input.paper-box { margin-left: 1.9em; width: calc(100% - 1.9em); max-width: 22em; }
+.paper-problem > textarea { margin-left: 1.9em; width: calc(100% - 1.9em); }
+.paper-problem > .row { margin-left: 1.9em; }
+.paper-score { margin: 2px 0 6px; }
+.paper-challenge { margin-top: 6px; }
 
 /* ---- debate ----
    The prompt is shown inside a <details> rather than always open: it is ~7000

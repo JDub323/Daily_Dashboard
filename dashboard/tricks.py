@@ -36,6 +36,16 @@ from .models import domain as d
 
 log = logs.get(__name__)
 
+
+class TrickError(ValueError):
+    """A trick set that cannot be used as given.
+
+    Its own type, and a 400 rather than a 502, for `DebateError`'s reason:
+    nothing upstream failed. A set pasted out of the Claude app that will not
+    parse is a paste that went wrong, and the message says which way.
+    """
+
+
 CHALLENGE = "challenge"
 """The band whose problem is optional and graded by a model rather than
 compared. Named once here because three modules test for it."""
@@ -146,6 +156,22 @@ def mark(problems: list[d.TrickProblem], answers: list[str]) -> list[bool]:
 # --- which old trick comes back --------------------------------------------
 
 
+def day_rng(date: dt.date) -> random.Random:
+    """A generator seeded by the day.
+
+    So "which trick does today call back to" has one answer however many times
+    it is asked. It is asked more than once: the panel builds a prompt naming
+    the callback, and the set is stored later against whatever the paste echoes
+    back -- and a fresh sample per request would name a different trick on every
+    reload, which reads as the page changing its mind.
+
+    Not a substitute for the echo. The paste still resolves the callback by
+    name, because a prompt copied yesterday and pasted today has to mean what it
+    said when it was copied.
+    """
+    return random.Random(date.toordinal())
+
+
 def pick_callback(
     tricks: list[d.Trick],
     last_used: dict[int, dt.date],
@@ -193,7 +219,7 @@ def pick_callback(
         # *something* beats showing nothing) and wrong here: the callback is a
         # bonus, and the set stands on its own without one.
         return None
-    return eligible[scoring.weighted_draw(weights, rng)]
+    return eligible[scoring.weighted_draw(weights, rng or day_rng(today))]
 
 
 # --- the shape of a set ----------------------------------------------------

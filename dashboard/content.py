@@ -898,6 +898,100 @@ def generate_trick(
     return trick, problems
 
 
+def parse_trick_set(
+    settings: Settings, raw: str, date: dt.date | None = None
+) -> tuple[Any | None, list[str], list[str]]:
+    """Read a written trick set, and say what is wrong with it.
+
+    One parser for all three ways a set can arrive -- the overnight batch file,
+    a paste out of the Claude app, and `./batch.sh --validate-trick` -- because
+    they are the same document produced by the same instructions, and a second
+    reading of it is a second set of rules to keep in step.
+
+    Returns `(set, errors, warnings)`, and the split is what lets the three
+    callers disagree about strictness without disagreeing about the rules.
+    **Errors** make the set unusable: it will not parse, it is for another week,
+    it repeats a problem. **Warnings** are shape complaints -- one easy problem
+    short, a missing worked line. The CLI treats both as fatal, because at 3am
+    regenerating is free; the paste path accepts a warned set, because by then
+    you have already done the work of getting it.
+
+    Runs `extract_json`, LaTeX repair and all: a model asked for JSON full of
+    LaTeX writes `\\frac` whether it is answering over HTTPS, writing a file, or
+    being copied out of a chat window. See EXPLAINER §5.7.
+    """
+    # Imported here rather than at module scope, exactly as `_from_batch` does:
+    # `batch` imports this module, and the models package is the shared bottom.
+    from .models.batch import TrickSet
+
+    try:
+        parsed = llm.extract_json(raw)
+    except json.JSONDecodeError as e:
+        return None, [f"not JSON: {e}"], []
+    if not isinstance(parsed, dict):
+        return None, ["expected a JSON object"], []
+
+    try:
+        trick = TrickSet(**parsed)
+    except Exception as e:
+        return None, [f"does not match the trick schema: {e}"], []
+
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    expected = settings.math.topic_for(trick.date)
+    if trick.topic.strip().casefold() != expected.casefold():
+        errors.append(f"topic {trick.topic!r}: {trick.date} is a {expected!r} week")
+    if date is not None and trick.date != date:
+        errors.append(f"dated {trick.date}, but this is for {date}")
+
+    has_callback = any(p.band == "callback" for p in trick.problems)
+    if has_callback and not trick.callback:
+        # Without the name the import cannot link the problem to the card it is
+        # reinforcing, and the row renders as a problem that is inexplicably not
+        # about today's trick.
+        errors.append("a callback problem, but `callback` does not name the trick it is on")
+
+    prompts = [p.prompt.strip() for p in trick.problems]
+    if len(set(prompts)) != len(prompts):
+        errors.append("the same problem appears twice")
+    if not any(p.band != tricks.CHALLENGE for p in trick.problems):
+        errors.append("nothing to mark — every problem is the challenge")
+
+    warnings += tricks.check_bands(
+        [d.TrickProblem(**p.model_dump()) for p in trick.problems],
+        tricks.wanted_bands(settings.tricks.easy, settings.tricks.medium, callback=has_callback),
+    )
+    for i, p in enumerate(trick.problems):
+        if not p.solution:
+            # The challenge's worked line is what the grader reads; the others'
+            # are what you read when you got it wrong. Both are worth having and
+            # neither is worth refusing a set over.
+            warnings.append(f"problems[{i}] ({p.band}): no worked solution")
+        if p.answer.strip().casefold() == p.prompt.strip().casefold():
+            warnings.append(f"problems[{i}]: the answer restates the problem")
+
+    return trick, errors, warnings
+
+
+def _from_trick_set(
+    settings: Settings, trick: Any, date: dt.date
+) -> tuple[d.Trick, list[d.TrickProblem]]:
+    """One parsed `TrickSet` -> the two models it becomes."""
+    return _to_trick(
+        {
+            "name": trick.name,
+            "statement": trick.statement,
+            "idea": trick.idea,
+            "kind": trick.kind,
+            "topic": trick.topic,
+            "problems": [p.model_dump() for p in trick.problems],
+        },
+        settings,
+        date,
+    )
+
+
 def _trick_from_batch(
     settings: Settings, date: dt.date
 ) -> tuple[d.Trick, list[d.TrickProblem], str | None] | None:
@@ -906,39 +1000,31 @@ def _trick_from_batch(
     None rather than an exception for every failure mode -- no file, bad JSON,
     a set that does not validate -- on `_from_batch`'s reasoning: a batch is an
     optimisation, and an optimisation that can take the panel down is not one.
-    The caller falls through to a paid generation.
+    The caller falls through.
     """
     path = trick_batch_path(settings, date)
     if not path.exists():
         return None
 
-    # Imported here rather than at module scope, exactly as `_from_batch` does:
-    # `batch` imports this module, and the models package is the shared bottom.
-    from .models.batch import TrickSet
-
     try:
-        batch = TrickSet(**json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, json.JSONDecodeError, ValueError):
-        log.exception("unusable trick batch at %s; falling through to a generation", path)
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        log.exception("could not read the trick batch at %s; falling through", path)
         return None
 
+    parsed, errors, warnings = parse_trick_set(settings, raw, date)
+    if parsed is None or errors:
+        log.warning("unusable trick batch at %s; falling through: %s", path, "; ".join(errors))
+        return None
+    for complaint in warnings:
+        log.warning("the batch at %s is misshapen: %s", path, complaint)
+
     try:
-        trick, problems = _to_trick(
-            {
-                "name": batch.name,
-                "statement": batch.statement,
-                "idea": batch.idea,
-                "kind": batch.kind,
-                "topic": batch.topic,
-                "problems": [p.model_dump() for p in batch.problems],
-            },
-            settings,
-            date,
-        )
+        trick, problems = _from_trick_set(settings, parsed, date)
     except ContentError:
         log.exception("trick batch at %s did not validate; falling through", path)
         return None
-    return trick, problems, batch.callback
+    return trick, problems, parsed.callback
 
 
 def trick_batch_path(settings: Settings, date: dt.date) -> Path:
@@ -949,6 +1035,99 @@ def trick_batch_path(settings: Settings, date: dt.date) -> Path:
     other's shape.
     """
     return settings.path("batches") / f"trick-{date.isoformat()}.json"
+
+
+def today_callback(settings: Settings, repo: Repository, date: dt.date) -> d.Trick | None:
+    """The trick today's set reaches back to. One answer, however often asked.
+
+    Asked twice on a normal day -- once to build the prompt you carry off to the
+    Claude app, once when the paste comes back -- and `tricks.day_rng` is what
+    makes the two agree. The paste still echoes the name, because a prompt
+    copied last night has to mean what it said when it was copied.
+    """
+    return tricks.pick_callback(
+        repo.tricks(),
+        repo.callback_dates(),
+        date,
+        cooldown=settings.tricks.callback_cooldown_days,
+        exponent=settings.tricks.callback_exponent,
+    )
+
+
+def trick_prompt(settings: Settings, repo: Repository, date: dt.date) -> str:
+    """The whole generation, as one message to paste into the Claude app.
+
+    This is the free path, and it is the same split that makes the debate cost
+    nothing: the model runs on a subscription rather than on the API, and the
+    dashboard's job is to assemble a prompt and read what comes back. The
+    difference from the debate is that here it is a *fallback as well as* a
+    plan -- the overnight task does the same job unattended, and this is what
+    you reach for on a morning it did not run and you would rather not pay.
+
+    Self-contained on purpose: the rules, the day's shape, the do-not-repeat
+    list and the output schema all in one block, because what is copied is the
+    whole of what the model will see. Anything left implicit here is something
+    that only works when *you* remember to say it.
+    """
+    # Imported here rather than at module scope: `batch` imports this module,
+    # and `TRICK_SCHEMA` is the batch file's shape, which is what a paste is.
+    from .batch import TRICK_SCHEMA
+
+    callback = today_callback(settings, repo, date)
+    wanted = tricks.wanted_bands(
+        settings.tricks.easy, settings.tricks.medium, callback=callback is not None
+    )
+    return "\n\n".join(
+        [
+            TRICK_RULES,
+            f"Today is {date.isoformat()} ({date.strftime('%A')}).",
+            trick_instructions(
+                settings.math.topic_for(date), wanted, repo.trick_names(), callback
+            ),
+            TRICK_SCHEMA.replace("Write the file as JSON:", "Reply with ONLY this JSON:"),
+            f'Set "date" to "{date.isoformat()}" and "topic" to '
+            f'"{settings.math.topic_for(date)}" exactly. '
+            + (
+                f'Set "callback" to "{callback.name}".'
+                if callback
+                else 'Set "callback" to null.'
+            ),
+        ]
+    )
+
+
+def trick_from_paste(
+    settings: Settings, repo: Repository, date: dt.date, raw: str
+) -> d.TrickRound:
+    """Store a set written elsewhere. No API call, and that is the point.
+
+    Warnings are logged rather than refused. By the time this is reached the
+    work of getting the set has already been done in another window, and
+    bouncing it back over one missing worked line would mean doing that again --
+    which is a trade the 3am task can afford to make and a person at breakfast
+    cannot.
+    """
+    existing = repo.trick_round(date)
+    if existing is not None:
+        raise tricks.TrickError(f"a trick set is already stored for {date}")
+
+    parsed, errors, warnings = parse_trick_set(settings, raw, date)
+    if parsed is None or errors:
+        raise tricks.TrickError("; ".join(errors) or "that is not a trick set")
+    for complaint in warnings:
+        log.warning("the pasted set is misshapen: %s", complaint)
+
+    trick, problems = _from_trick_set(settings, parsed, date)
+    # Resolved by name, exactly as the batch path does: the set's callback
+    # problem was written against whichever trick the prompt named, and picking
+    # again here could label it with a different one.
+    callback = repo.trick_named(parsed.callback) if parsed.callback else None
+    if parsed.callback and callback is None:
+        log.warning(
+            "the pasted callback trick %r is not in the deck; leaving it unlabelled",
+            parsed.callback,
+        )
+    return _store_trick(repo, date, trick, problems, callback)
 
 
 def next_trick(settings: Settings, repo: Repository, date: dt.date) -> d.TrickRound:
@@ -967,13 +1146,7 @@ def next_trick(settings: Settings, repo: Repository, date: dt.date) -> d.TrickRo
     if existing is not None:
         return existing
 
-    callback = tricks.pick_callback(
-        repo.tricks(),
-        repo.callback_dates(),
-        date,
-        cooldown=settings.tricks.callback_cooldown_days,
-        exponent=settings.tricks.callback_exponent,
-    )
+    callback = today_callback(settings, repo, date)
 
     batched = _trick_from_batch(settings, date)
     if batched is not None:

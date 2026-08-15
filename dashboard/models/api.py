@@ -283,6 +283,18 @@ class TrickSubmitRequest(DateBody):
     answers: list[str] = Field(max_length=20)
 
 
+class TrickPasteRequest(DateBody):
+    """A set written in the Claude app, pasted back whole.
+
+    The raw text rather than parsed JSON from the browser, exactly as
+    `DebateVerdictRequest` is: this is a document whose reading decides what
+    nine problems say and what counts as answering them, so it is parsed where
+    the rules live and where the tests are.
+    """
+
+    text: str = Field(min_length=2, max_length=40000)
+
+
 class TrickChallengeRequest(DateBody):
     """The optional problem, answered in prose.
 
@@ -564,6 +576,19 @@ class TricksPanel(Base):
     """Null until the day's set is drawn, which is a POST of its own rather
     than part of the boot payload -- drawing costs a generation on any morning
     the overnight task did not run, so it cannot happen because a tab loaded."""
+
+    prompt: str | None = None
+    """The whole generation, assembled and ready to paste into the Claude app.
+
+    Sent with the panel rather than fetched on click, exactly as
+    `DebatePanel.prompt` is: the copy button should be instant, and what you
+    copy should be what you were looking at. Null once the day has a set, since
+    there is then nothing left to generate.
+    """
+
+    batched: bool = False
+    """Whether tonight's file is already on disk. What lets the panel say the
+    set is free before you press anything."""
 
     problems: list[TrickPrompt] = Field(default_factory=list)
     challenge: TrickPrompt | None = None

@@ -61,6 +61,11 @@ const WATCHES = {
   // …and it names the patterns the argument deck offers to add, so that panel
   // has to redraw when a ballot lands too.
   patterns: ["debate"],
+  // The trick panel is the one that watches its *own* slice. The work happens
+  // in a modal, so the write that changes the panel's progress line comes from
+  // outside it — without this the sheet says 6/8 and the card behind it still
+  // says the set is untouched.
+  tricks: ["tricks"],
 };
 
 /** Store keys whose writes make the cached /api/history fetch stale. */

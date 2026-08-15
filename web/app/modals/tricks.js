@@ -10,8 +10,8 @@
 
 import * as api from "../api.js";
 import { el, mount } from "../dom.js";
-import { focusPanel } from "../panel.js";
-import { closeModal, openModal, typeset } from "../ui.js";
+import { openModal, typeset } from "../ui.js";
+import { backToSet } from "./trickset.js";
 
 /** Cached for the session: past sets never change, so a second open is free. */
 let archive = null;
@@ -40,10 +40,9 @@ export function openTrickArchive() {
   });
 }
 
-function backToToday() {
-  closeModal();
-  focusPanel("tricks");
-}
+/** Back to the sheet rather than to the panel: the panel is a summary now, and
+ *  the thing you left to come here was the document. */
+const backToToday = backToSet;
 
 function draw(body) {
   if (!archive.entries.length) {

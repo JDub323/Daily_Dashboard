@@ -55,6 +55,7 @@ web/                  the front end — native ES modules, no build step
     api.js      fetch + ndjson, and the definition of "today"
     store.js    a cache of the server's read model, never pushed back whole
     panel.js    mount / render / retry / refresh harness
+    clipboard.js  copying a long prompt, and the two fallbacks it needs
     freshness.js  "as of 09:14", and when a live panel refetches
     charts.js   sparkline + line chart
     parsers.js  Wordle & Pokedoku share text — pure functions
@@ -63,7 +64,7 @@ web/                  the front end — native ES modules, no build step
     nav.js      the focus ring — what h/j/k/l actually move
     keys.js     the bindings, as data; the cheatsheet is generated from them
     panels/     one file per panel
-    modals/     theorems, math, tricks (the archives)
+    modals/     theorems, math, tricks (the archives) + trickset (the sheet)
   data/         piano.json — scale/chord content, out of the logic file
   vendor/katex  see PROVENANCE.txt
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import NamedTuple
 
-from . import debate, scoring, spelling, tricks
+from . import content, debate, scoring, spelling, tricks
 from .config import Settings
 from .db.repository import ARGUMENT_AREA, TRICK_AREA, Repository
 from .models import api
@@ -449,7 +449,18 @@ def tricks_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.TricksP
     }
     round_ = repo.trick_round(today)
     if round_ is None:
-        return api.TricksPanel(**base)
+        if not cfg.tricks.enabled:
+            return api.TricksPanel(**base)
+        # The two free ways to get today's set, both reported before anything is
+        # pressed: the file the 3am task may have left, and the prompt you carry
+        # off to the Claude app yourself. Assembling the prompt here costs three
+        # small queries and no API call, and it is what makes the copy button
+        # instant.
+        return api.TricksPanel(
+            **base,
+            prompt=content.trick_prompt(cfg, repo, today),
+            batched=content.trick_batch_path(cfg, today).exists(),
+        )
 
     trick = repo.trick(round_.trick_id)
     if trick is None:

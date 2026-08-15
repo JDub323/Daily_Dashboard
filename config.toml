@@ -230,12 +230,13 @@ brutal = 1750
 # The trick of the day. One identity, shortcut or technique from the week's
 # topic, taught by a set of problems you work rather than a card you read.
 #
-# The one feature here with no free fallback: there is no curated pool of
-# tricks the way there is for math problems and spelling words, so a morning
-# the overnight task did not run costs a live generation (~$0.02-0.04 — one
-# call, no web search). Run `./batch.sh --trick-context` at 3am and the day is
-# free. The optional challenge costs a second, much smaller call, and only if
-# you actually attempt it.
+# Costs nothing per day if you let it. Three ways in, cheapest first: the
+# overnight file (`./batch.sh --trick-context` at 3am, unattended); the prompt
+# the panel hands you to paste into the Claude app, which runs on the
+# subscription rather than the API — the same split that makes the daily debate
+# free; and, last and only if you press it, a live generation at ~$0.02-0.04.
+# The optional challenge is graded by a much smaller call, and only if you
+# actually attempt it.
 #
 # Coupled to [math].rotation on purpose: the trick is drawn from whatever this
 # week's topic is. Weeks whose topic has no computational shortcut in it get a

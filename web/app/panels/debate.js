@@ -18,6 +18,7 @@
 // drawn — which is every morning. Same rule as the theorem draw.
 
 import * as api from "../api.js";
+import { promptBlock as copyBlock } from "../clipboard.js";
 import { el, link, mount } from "../dom.js";
 import { put, store } from "../store.js";
 import { toast } from "../ui.js";
@@ -338,59 +339,10 @@ function unopened(panel, redraw) {
   );
 }
 
-/** The prompt, and the button that puts it on the clipboard. */
+/** The prompt, and the button that puts it on the clipboard.
+ *  The fallback chain lives in `clipboard.js` — the trick panel needs it too. */
 function promptBlock(panel) {
-  const pre = el("pre.prompt", { text: panel.prompt });
-  const details = el("details.archive-item", null,
-    el("summary", { text: "read the prompt" }),
-    pre,
-  );
-
-  const done = () => {
-    copy.textContent = "copied ✓";
-    setTimeout(() => { copy.textContent = "copy the prompt"; }, 2000);
-  };
-
-  /**
-   * The old `document.execCommand` path, kept as the second attempt.
-   *
-   * Deprecated, and still the one that works when the async Clipboard API is
-   * refused — which it is more often than "localhost is a secure context"
-   * suggests, because the write also needs the clipboard-write permission and
-   * a browser is free to withhold it. Verified: the embedded preview browser
-   * refuses `writeText` outright, and this succeeds there.
-   */
-  const legacyCopy = () => {
-    details.open = true;  // execCommand cannot copy from a display:none subtree
-    const selection = getSelection();
-    selection?.selectAllChildren(pre);
-    const copied = document.execCommand?.("copy");
-    selection?.removeAllRanges();
-    return copied;
-  };
-
-  const copy = el("button.primary", {
-    text: "copy the prompt",
-    onclick: async () => {
-      try {
-        await navigator.clipboard.writeText(panel.prompt);
-        done();
-        return;
-      } catch {
-        /* fall through — the permission was refused, not the page */
-      }
-      if (legacyCopy()) {
-        done();
-        return;
-      }
-      // Both refused. Leave the prompt open and selected so there is still a
-      // way through that does not require reading an error message.
-      getSelection()?.selectAllChildren(pre);
-      toast("could not reach the clipboard — the prompt is selected, press Ctrl-C", "info");
-    },
-  });
-
-  return el("div", null, el("div.row", null, copy), details);
+  return copyBlock(panel.prompt).node;
 }
 
 function prep(panel, redraw) {

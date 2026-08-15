@@ -548,6 +548,105 @@ def test_a_generated_repeat_is_a_loud_error_rather_than_a_silent_one(
         content.next_trick(settings, repo, TODAY)
 
 
+# --- the free path: a set written in the Claude app -------------------------
+
+
+def test_the_prompt_is_self_contained(settings, repo):
+    """What is copied is the whole of what the model will see, so anything left
+    implicit is something that only works when you remember to say it."""
+    repo.add_trick(a_trick("Telescoping", added=TODAY - dt.timedelta(days=90)))
+    prompt = content.trick_prompt(settings, repo, TODAY)
+    assert settings.math.topic_for(TODAY) in prompt
+    assert "Telescoping" in prompt  # the callback it must write a problem on
+    assert '"problems"' in prompt  # the output schema
+    assert "band" in prompt and "accept" in prompt
+    assert TODAY.isoformat() in prompt
+
+
+def test_the_prompt_names_the_same_callback_twice_running(settings, repo):
+    """Asked once to build the prompt and again when the paste arrives. A fresh
+    sample each time would name a different trick on every reload."""
+    for i in range(6):
+        repo.add_trick(a_trick(f"trick {i}", added=TODAY - dt.timedelta(days=30 + i * 20)))
+    first = content.today_callback(settings, repo, TODAY)
+    assert first is not None
+    assert all(content.today_callback(settings, repo, TODAY).id == first.id for _ in range(5))
+
+
+def test_a_pasted_set_costs_nothing_and_lands(settings, repo):
+    """No API key exists in the tests, so anything reaching `llm` would raise."""
+    round_ = content.trick_from_paste(settings, repo, TODAY, json.dumps(a_batch(settings)))
+    assert repo.trick(round_.trick_id).name == "Conjugate multiplication"
+    assert len(round_.problems) == settings.tricks.easy + settings.tricks.medium + 1
+
+
+def test_a_pasted_set_survives_the_chat_wrapping_it_in_prose(settings, repo):
+    """`extract_json` takes the object out of whatever it is sitting in, which
+    is what a copy out of a chat window looks like."""
+    wrapped = (
+        f"Sure — here's today's set:\n\n```json\n{json.dumps(a_batch(settings))}\n```\n"
+        f"Hope it helps!"
+    )
+    round_ = content.trick_from_paste(settings, repo, TODAY, wrapped)
+    assert repo.trick(round_.trick_id).name == "Conjugate multiplication"
+
+
+def test_a_paste_for_another_week_is_refused(settings, repo):
+    with pytest.raises(tricks.TrickError, match="week"):
+        content.trick_from_paste(
+            settings, repo, TODAY, json.dumps(a_batch(settings, topic="knot theory"))
+        )
+
+
+def test_a_paste_that_is_not_json_says_so(settings, repo):
+    with pytest.raises(tricks.TrickError, match=r"not JSON|not a trick set"):
+        content.trick_from_paste(settings, repo, TODAY, "I'm afraid I can't do that")
+
+
+def test_a_paste_cannot_overwrite_a_set_you_have_already_started(settings, repo):
+    opened(repo)
+    with pytest.raises(tricks.TrickError, match="already stored"):
+        content.trick_from_paste(settings, repo, TODAY, json.dumps(a_batch(settings)))
+
+
+def test_a_misshapen_paste_is_accepted_where_the_cli_would_reject_it(settings, repo):
+    """The two callers disagree about strictness on purpose: at 3am regenerating
+    is free, and at breakfast you have already done the work of getting it."""
+    payload = a_batch(settings)
+    payload["problems"] = payload["problems"][2:]  # two easy problems short
+    _, errors, warnings = content.parse_trick_set(settings, json.dumps(payload), TODAY)
+    assert errors == []
+    assert any("easy" in w for w in warnings)
+    _, cli_errors = batch.validate_trick(settings, json.dumps(payload), TODAY)
+    assert cli_errors
+    assert content.trick_from_paste(settings, repo, TODAY, json.dumps(payload))
+
+
+def test_a_paste_resolves_its_callback_by_name(settings, repo):
+    old = repo.add_trick(a_trick("Telescoping", added=TODAY - dt.timedelta(days=90)))
+    payload = a_batch(settings, callback="Telescoping")
+    payload["problems"][-2]["band"] = "callback"
+    round_ = content.trick_from_paste(settings, repo, TODAY, json.dumps(payload))
+    assert round_.callback_id == old.id
+
+
+def test_the_panel_carries_the_prompt_until_there_is_a_set(settings, repo):
+    """Shipped with the panel rather than fetched on click, so the copy button
+    is instant and what you copy is what you were looking at."""
+    before = state.tricks_panel(settings, repo, TODAY)
+    assert before.prompt and before.batched is False
+    opened(repo)
+    assert state.tricks_panel(settings, repo, TODAY).prompt is None
+
+
+def test_the_panel_says_when_tonights_file_is_already_there(settings, repo):
+    settings.path("batches").mkdir(parents=True, exist_ok=True)
+    content.trick_batch_path(settings, TODAY).write_text(
+        json.dumps(a_batch(settings)), encoding="utf-8"
+    )
+    assert state.tricks_panel(settings, repo, TODAY).batched is True
+
+
 def test_a_set_with_nothing_to_mark_is_refused(settings):
     with pytest.raises(content.ContentError, match="no gradeable"):
         content._to_trick(
