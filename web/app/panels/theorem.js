@@ -181,6 +181,7 @@ export default {
   title: "theorem recall",
   tab: "math",
   slot: "grid",
+  span: 2,
 
   async render(node) {
     draw(node);

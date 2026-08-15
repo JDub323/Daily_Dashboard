@@ -177,6 +177,19 @@ export async function renderChips() {
 
   if (target) {
     mount(target,
+      // What the home tab is for, said once at the size of the answer. The
+      // statusline carries the same count, but the statusline is a thing you
+      // consult; this is a thing you see.
+      el("div.figure-row", null,
+        el("span.figure", null,
+          String(done),
+          el("span.figure-unit", { text: `/${counted.length}` }),
+        ),
+        el("span.figure-label", {
+          text: done === counted.length ? "perfect day ✦" : "done today",
+        }),
+        extra ? el("span.figure-label", { text: `+${extra} optional` }) : null,
+      ),
       el("div.chips", null,
         ...list.map((task) =>
           el(`div.chip${task.done ? ".done" : ""}${task.optional ? ".optional" : ""}`, {

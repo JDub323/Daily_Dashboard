@@ -51,6 +51,7 @@ export function newsPanel(spec) {
     title: spec.title,
     tab: spec.tab,
     slot: spec.slot,
+    span: spec.span,
     hero: spec.hero,
     live: true,
 
@@ -94,6 +95,7 @@ export const politics = newsPanel({
   title: "headlines",
   tab: "politics",
   slot: "grid",
+  span: 2,
   cats: ["uspolitics", "world"],
 });
 
@@ -102,6 +104,7 @@ export const finance = newsPanel({
   title: "money pages",
   tab: "markets",
   slot: "grid",
+  span: 3,
   cats: ["finance"],
 });
 
@@ -110,5 +113,7 @@ export const misc = newsPanel({
   title: "elsewhere",
   tab: "papers",
   slot: "grid",
+  // The only card on the tab, under a hero — so it takes the row.
+  span: 6,
   cats: null,
 });

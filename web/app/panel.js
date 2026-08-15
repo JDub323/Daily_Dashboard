@@ -80,6 +80,16 @@ export function refreshLive() {
 export function mountAll() {
   for (const def of registry.values()) {
     const card = el(`section.panel${def.hero ? ".hero" : ""}`, { id: `panel-${def.id}` });
+
+    // How many of the grid's six columns this card is worth. Set as a custom
+    // property rather than `grid-column` directly so the narrow-screen media
+    // queries can override it — an inline `grid-column` would beat them and
+    // there would be no way back but `!important`.
+    //
+    // Hero panels ignore it: the hero is a flex column, and what a hero is
+    // worth is the whole width by definition.
+    if (!def.hero) card.style.setProperty("--span", def.span ?? 2);
+
     const head = el("h2", { text: def.title });
 
     // A collapsible panel's heading is also its toggle. No separate chevron

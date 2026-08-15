@@ -87,6 +87,7 @@ export default {
   title: "theorem deck",
   tab: "math",
   slot: "grid",
+  span: 2,
 
   async render(node) {
     draw(node);

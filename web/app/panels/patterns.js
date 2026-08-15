@@ -280,6 +280,7 @@ export default {
   title: "⚑ argument patterns",
   tab: "politics",
   slot: "grid",
+  span: 2,
 
   async render(node) {
     render(node);

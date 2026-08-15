@@ -12,6 +12,7 @@ export default {
   title: "calendar",
   tab: "home",
   slot: "grid",
+  span: 2,
   live: true,
 
   async render(node) {

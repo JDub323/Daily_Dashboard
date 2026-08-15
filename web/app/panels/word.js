@@ -159,6 +159,7 @@ export default {
   title: "word of the day",
   tab: "home",
   slot: "grid",
+  span: 2,
 
   async render(node) {
     draw(node);

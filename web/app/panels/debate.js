@@ -74,9 +74,10 @@ function header(panel) {
     : null;
 
   return [
-    el("div.row", null,
-      el("span.rating", { text: rating }),
-      el("span.faint", { text: detail.join(" · ") }),
+    // The hero figure, as on math and chess — see `summaryRow` in math.js.
+    el("div.figure-row", null,
+      el("span.figure", { text: rating }),
+      el("span.figure-label", { text: detail.join(" · ") }),
     ),
     strip,
   ];

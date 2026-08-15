@@ -32,6 +32,7 @@ export default {
   // you actually own; the index and the majors are the frame it is read
   // against, which is a supporting role and reads better as one.
   slot: "grid",
+  span: 3,
   live: true,
 
   async render(node) {

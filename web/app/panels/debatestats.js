@@ -73,6 +73,7 @@ export default {
   title: "what the ballot keeps saying",
   tab: "politics",
   slot: "grid",
+  span: 2,
   collapsible: true,
 
   async render(node) {

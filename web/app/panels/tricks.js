@@ -226,6 +226,11 @@ export default {
   title: "◆ trick of the day",
   tab: "math",
   slot: "grid",
+  // Wide, because everything in it is a formula. This is the card whose
+  // contents were being blamed on the panel: a displayed product wrapped over
+  // four lines in a 311px column, which is what sent the maths to the sheet in
+  // the first place.
+  span: 6,
   collapsible: true,
 
   /** The one line the panel keeps when it is folded. */

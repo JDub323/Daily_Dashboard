@@ -214,6 +214,7 @@ export default {
   title: "🐝 spelling bee",
   tab: "home",
   slot: "grid",
+  span: 2,
 
   async render(node) {
     render(node);

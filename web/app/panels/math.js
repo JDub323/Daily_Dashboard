@@ -15,14 +15,21 @@ function archiveLink() {
   );
 }
 
-/** The elo header both hero panels share. */
+/**
+ * The elo header both hero panels share.
+ *
+ * The rating is the number each of these tabs exists to move, so it is drawn at
+ * the size that says so. It used to render at 20px — four pixels off the app
+ * title and six off body text, which made the one figure worth looking at from
+ * the doorway indistinguishable from the sentence next to it.
+ */
 export function summaryRow(summary) {
   const { rating, k_next, measured_count, success_rate } = summary;
   const detail = [`elo · K=${k_next}`];
   if (success_rate !== null) detail.push(`${success_rate}% last ${Math.min(measured_count, 10)}`);
-  return el("div.row", null,
-    el("span.rating", { text: rating }),
-    el("span.faint", { text: detail.join(" · ") }),
+  return el("div.figure-row", null,
+    el("span.figure", { text: rating }),
+    el("span.figure-label", { text: detail.join(" · ") }),
   );
 }
 

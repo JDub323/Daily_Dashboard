@@ -19,6 +19,8 @@ export default {
   title: "streaks",
   tab: "games",
   slot: "grid",
+  // The only card on the tab, under a hero — so it takes the row.
+  span: 6,
 
   async render(node) {
     const games = store.state.games;

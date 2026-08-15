@@ -211,17 +211,15 @@ function holdingsTable(positions) {
 }
 
 function totalsRow(totals) {
-  return el("div.row.spread", null,
-    el("span", null,
-      el("span.big", { text: totals.value == null ? "—" : money.format(totals.value) }),
-      el("span.faint", { text: " total" }),
+  // What the tab is worth, at the size the question deserves — the two gain
+  // figures are read against it rather than beside it as equals.
+  return el("div.figure-row", null,
+    el("span.figure", { text: totals.value == null ? "—" : money.format(totals.value) }),
+    el("span.figure-label", null,
+      "today ", signed(totals.day_gain), " ", pct(totals.day_gain_pct),
     ),
-    el("span", null,
-      el("span.faint", { text: "today " }), signed(totals.day_gain), " ", pct(totals.day_gain_pct),
-    ),
-    el("span", null,
-      el("span.faint", { text: "all time " }), signed(totals.total_gain), " ",
-      pct(totals.total_gain_pct),
+    el("span.figure-label", null,
+      "all time ", signed(totals.total_gain), " ", pct(totals.total_gain_pct),
     ),
   );
 }

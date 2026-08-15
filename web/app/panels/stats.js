@@ -274,6 +274,11 @@ export const areas = {
   title: "elo by area",
   tab: "home",
   slot: "grid",
+  // Two of a kind with everything else on the tab. A wider card was tried and
+  // measured: it shortens this one, but only by pushing a third row onto the
+  // tab, and the home grid is 460px taller that way. Six cards, two rows of
+  // three, is the shortest home tab there is.
+  span: 2,
 
   async render(node) {
     node.replaceChildren(el("div.faint", { text: "loading…" }));
@@ -319,6 +324,10 @@ export const archive = {
   title: "day logs",
   tab: "home",
   slot: "grid",
+  // Still the tallest card on the tab, and it is what sets the second row's
+  // height. Full width does shorten it — but see `areas` above: it costs a
+  // whole extra row to do it, which is a worse trade than the slack it saves.
+  span: 2,
 
   async render(node) {
     node.replaceChildren(el("div.faint", { text: "loading…" }));

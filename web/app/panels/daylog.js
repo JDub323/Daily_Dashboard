@@ -21,6 +21,7 @@ export default {
   title: "day log",
   tab: "home",
   slot: "grid",
+  span: 2,
 
   async render(node) {
     const message = el("div.faint.gap", { text: store.state.daylog ? "saved ✓" : "" });

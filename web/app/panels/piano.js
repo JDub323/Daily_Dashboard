@@ -170,6 +170,9 @@ export default {
   title: "♪ piano of the day",
   tab: "hobbies",
   slot: "grid",
+  // The keyboard diagram is the picture on this tab; the rating chart beside it
+  // is a footnote to it.
+  span: 4,
 
   async render(node) {
     const { notes, scales, chords } = await load();

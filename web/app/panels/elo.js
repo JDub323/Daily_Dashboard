@@ -34,6 +34,7 @@ function eloPanel({ track, tab, title, label, color }) {
     title,
     tab,
     slot: "grid",
+    span: 2,
 
     async render(node) {
       node.replaceChildren(
