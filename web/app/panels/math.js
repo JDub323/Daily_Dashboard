@@ -96,15 +96,22 @@ function answerLine(problem, ...extra) {
   );
 }
 
-async function generate(node, panel) {
-  const status = el("span.dim", { text: "starting…" });
-  mount(node, el("div.row", null, el("span.spinner"), status));
-  await api.stream("/api/math/new", {}, (message) => {
-    status.textContent = message;
-  });
-  // The stream returns the problem, but the panel wants the whole slice —
-  // hints_visible, status and the refreshed summary all move together.
-  put("math", await api.get("/api/state", { date: api.today() }).then((s) => s.math));
+/**
+ * Claim today's problem.
+ *
+ * This used to read an ndjson stream and narrate a multi-minute generation
+ * — "verifying against AoPS… (search 3)" — because that is what was happening
+ * behind it, at $0.15–0.80 a morning. There is no generation any more: the
+ * problem comes from the overnight batch or the curated pool, and both are a
+ * file read. So it is one POST that returns the panel.
+ *
+ * Still a button rather than a boot gather, and not for cost reasons. Drawing
+ * opens an attempt, and an unmarked attempt lapses at 0.0 — pressing this is
+ * the act that puts the day on the record.
+ */
+async function draw(node, panel) {
+  mount(node, el("div.row", null, el("span.spinner"), el("span.dim", { text: "fetching…" })));
+  put("math", await api.post("/api/math/new"));
   await panel.render(node);
 }
 
@@ -143,7 +150,7 @@ export default {
           text: "get today's problem",
           onclick: (e) => {
             e.target.disabled = true;
-            generate(node, this).catch((error) => {
+            draw(node, this).catch((error) => {
               mount(node, head,
                 el("div.err", { text: error.message }),
                 el("div.row", null, el("button", { text: "retry", onclick: () => this.render(node) })),
@@ -151,7 +158,7 @@ export default {
             });
           },
         }),
-        el("div.faint", { text: `topic: ${store.config.topic} · verified against AoPS via web search` }),
+        el("div.faint", { text: `topic: ${store.config.topic} · from the overnight batch` }),
         archiveLink(),
       );
       return;

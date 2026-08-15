@@ -27,20 +27,18 @@ import datetime as dt
 import hashlib
 import json
 import os
-import queue
 import random
 import socket
 import subprocess
 import threading
 import time
 import webbrowser
-from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 import pydantic
 from fastapi import Depends, FastAPI, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (
@@ -623,19 +621,18 @@ def _register(app: FastAPI) -> None:
     # -- math --------------------------------------------------------------
 
     @app.post("/api/math/new")
-    def math_new(request: Request, body: api.MathNewRequest) -> StreamingResponse:
-        """ndjson: `{"status":…}` lines while it runs, then the problem.
+    def math_new(cfg: Cfg, repo: Repo, body: api.MathNewRequest) -> api.MathPanel:
+        """Serve today's problem from the batch, or the pool, or fail.
 
-        The generation is a multi-minute agentic run with web search; the
-        status lines are what keep the panel from looking hung.
+        This was an ndjson stream: the generation behind it was a multi-minute
+        agentic run with web search, and the status lines were what kept the
+        panel from looking hung. Nothing here is paid or slow any more -- both
+        remaining sources are a local file read -- so it is an ordinary POST
+        that hands back the panel, and the browser gets the problem in the
+        same shape every other daily arrives in.
         """
-        cfg: Settings = request.app.state.settings
-        db: Database = request.app.state.db
-        return StreamingResponse(
-            _ndjson(_generate(cfg, db, body.date)),
-            media_type="application/x-ndjson",
-            headers={"Cache-Control": "no-store"},
-        )
+        content.next_problem(cfg, repo, body.date)
+        return state.math_panel(cfg, repo, body.date)
 
     @app.post("/api/math/hint")
     def math_hint(cfg: Cfg, repo: Repo, body: api.MathHintRequest) -> api.MathPanel:
@@ -1439,44 +1436,6 @@ def _draw_card(
         for c in cards
     ]
     repo.record_draw(date, cards[scoring.weighted_draw(weights, rng)].id, deck)
-
-
-def _generate(cfg: Settings, db: Database, date: dt.date) -> Iterator[dict[str, Any]]:
-    """Run the generation on a worker thread, yielding status events.
-
-    The worker gets its own repository -- and so its own connection, via
-    `Database` -- because it is not the request's thread.
-    """
-    events: queue.Queue[dict[str, Any] | None] = queue.Queue()
-    result: dict[str, Any] = {}
-
-    def work() -> None:
-        try:
-            repo = Repository(db.conn)
-            problem = content.next_problem(
-                cfg, repo, date, on_status=lambda s: events.put({"status": s})
-            )
-            result["problem"] = problem
-        except Exception as e:
-            log.exception("math generation failed")
-            result["error"] = str(e)
-        finally:
-            events.put(None)
-
-    threading.Thread(target=work, daemon=True).start()
-
-    while (event := events.get()) is not None:
-        yield event
-
-    if "problem" in result:
-        yield api.MathDoneEvent(problem=result["problem"]).model_dump(mode="json")
-    else:
-        yield {"error": result.get("error", "unknown error")}
-
-
-def _ndjson(events: Iterator[dict[str, Any]]) -> Iterator[bytes]:
-    for event in events:
-        yield (json.dumps(event, default=str) + "\n").encode()
 
 
 # --- entry point -----------------------------------------------------------

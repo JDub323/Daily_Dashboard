@@ -5,9 +5,15 @@ This is where the prompts live. It is deliberately the only module that both
 talks to `llm` and writes through `Repository`, so that "what a generation
 costs" and "what it is allowed to persist" are answerable by reading one file.
 
-Every paid call goes through `_generate_problem` or `_json_generation`, and
-both append a line to metrics.jsonl. That is the invariant that makes the log
-worth reading: if a call is not in the file, it did not happen.
+Every paid call goes through `_json_generation`, which appends a line to
+metrics.jsonl. That is the invariant that makes the log worth reading: if a
+call is not in the file, it did not happen.
+
+The math problem is not among them. It used to have a paid path of its own --
+an agentic run with web search, $0.15-0.80 a morning, reached by a button in
+the panel. It is now served from the overnight batch or the curated pool or
+not at all: there is no prompt in this file that produces a problem, and
+therefore no way for opening the dashboard to bill for one.
 
 `problems.json` is resolved here. It was tracked in git *and* appended to on
 every generation, so it churned on every commit while claiming to be
@@ -30,7 +36,6 @@ from typing import Any
 from . import llm, logs, tricks
 from .config import Settings
 from .db.repository import Repository
-from .llm import LlmError
 from .models import domain as d
 from .models.api import TopicResponse
 from .models.common import Deck
@@ -52,21 +57,6 @@ class ContentError(RuntimeError):
 
 # --- the math problem ------------------------------------------------------
 
-PROBLEM_SYSTEM = (
-    "You select real competition math problems and VERIFY them with web search before "
-    "answering. Steps: pick a candidate problem, then search (Art of Problem Solving wiki "
-    "or official archives) to confirm (a) the problem really appeared in the cited "
-    "competition, (b) your statement matches the original exactly, and (c) the answer is "
-    "correct. If verification fails, pick another problem and verify again. After "
-    "verifying, respond ONLY with JSON:\n"
-    '{"source":"e.g. Putnam 1998 B3","tier":one of the tier keys,'
-    '"statement":"problem in LaTeX ($..$ inline, $$..$$ display), matching the original",'
-    '"answer":"final answer, LaTeX ok",'
-    '"hint1":"direction, under five words","hint2":"minor hint","hint3":"major hint",'
-    '"verified_url":"the URL where you confirmed the problem"}'
-)
-
-
 SHOWCASE_WEEKDAY = 5
 """Saturday, in `date.weekday()` terms (0 = Monday).
 
@@ -78,48 +68,6 @@ falls where a capstone belongs rather than interrupting the ramp.
 def is_showcase(date: dt.date) -> bool:
     """Is this a day for a famous problem rather than a calibrated one?"""
     return date.weekday() == SHOWCASE_WEEKDAY
-
-
-def _problem_prompt(settings: Settings, rating: int, date: dt.date, seen: list[str]) -> str:
-    topic = settings.math.topic_for(date)
-    do_not_use = (
-        f"Must be from a real past competition. Do NOT use any of these "
-        f"already-seen problems: {json.dumps(seen[-SEEN_WINDOW:])}"
-    )
-
-    if is_showcase(date):
-        # Saturday asks a different question. Every other day the target is a
-        # 30-70% solve chance, which is the right target for *learning* and the
-        # wrong one for the thing this is for: the problems worth meeting are
-        # famous because of the idea in them, and how hard they happen to be is
-        # not something they can be selected on without losing most of them.
-        #
-        # The rating is deliberately absent from this prompt. Naming it would
-        # invite the model to reach for it, and "beautiful, at about 1500" is a
-        # much smaller set than "beautiful" -- usually an empty one.
-        #
-        # The tier is still reported honestly, so the result still rates: a
-        # famous olympiad problem anchored at 1900 is a cheap loss and a large
-        # win against a 1500 rating, which is the correct shape for a stretch.
-        return (
-            f"Topic of the week: {topic}. Today is Saturday, which is the showcase "
-            f"day: give me a CLASSIC, BEAUTIFUL problem on this topic — one of the "
-            f"famous ones, the kind with a named trick or a one-line solution that "
-            f"is remembered decades later. Ignore difficulty entirely and ignore how "
-            f"hard the rest of the week has been; pick on elegance and fame alone. "
-            f"Olympiad, Putnam and IMO shortlist problems are all fair game. Report "
-            f"the tier that honestly matches its difficulty — do not soften it to "
-            f"make the problem look approachable. {do_not_use}"
-        )
-
-    return (
-        f"Topic of the week: {topic}. Today is weekday "
-        f"{date.weekday()} (0=Mon: ramp difficulty through the week, but vary sub-skills "
-        f"to teach the topic broadly; Saturday is a separate showcase day and is not "
-        f"part of this ramp). My rating: {rating}. Tier anchors: "
-        f"{json.dumps(settings.math.anchors)}. Pick a tier whose anchor gives me a "
-        f"30-70% solve chance, adjusted for weekday. {do_not_use}"
-    )
 
 
 def load_pool(path: Path) -> list[dict[str, Any]]:
@@ -185,25 +133,22 @@ def to_problem(
     )
 
 
-def next_problem(
-    settings: Settings,
-    repo: Repository,
-    date: dt.date,
-    on_status: llm.StatusFn = None,
-) -> d.MathProblem:
-    """Today's problem, from the cheapest source that has one.
-
-    Three sources, tried in order, and the ordering is the cost control:
+def next_problem(settings: Settings, repo: Repository, date: dt.date) -> d.MathProblem:
+    """Today's problem. Both sources are free, and there is no third one.
 
     1. The overnight batch, dropped by the scheduled task. Free -- it was
        generated against a subscription rather than the API.
-    2. The hand-curated pool in problems.json. Free.
-    3. A paid generation, $0.15-0.80. (The old figure here was $0.02-0.04,
-       taken from a metrics log that was undercounting web-search input
-       tokens by ~5x.)
+    2. The hand-curated pool in problems.json. Free, and never written by the
+       server.
 
-    Every step degrades to the next rather than failing, so a night the task
-    did not run is a more expensive morning, not a broken one.
+    There used to be a third step: a paid generation, $0.15-0.80, run when the
+    other two had nothing. It is gone. The morning after a night the task did
+    not run is now a morning with no problem rather than a billed one, which
+    is the trade this is for -- the failure is visible and costs nothing,
+    where the old one was invisible and cost the most of any call in the app.
+
+    So this raises where it used to spend. `ContentError` says what to do
+    about it, because the answer is a real one: run the batch by hand.
     """
     seen = set(repo.seen_sources())
     rating = target_rating(settings, repo, date)
@@ -219,7 +164,11 @@ def next_problem(
             problem = to_problem(raw, settings, HAND_CURATED, date)
             return _store(repo, problem, date)
 
-    return _store(repo, _generate_problem(settings, date, sorted(seen), rating, on_status), date)
+    raise ContentError(
+        f"no problem for {date.isoformat()}: the overnight batch has not landed and "
+        f"every problem in the curated pool has been served. Run the batch for today "
+        f"in the Claude app and import it — the dashboard no longer generates one."
+    )
 
 
 def target_rating(settings: Settings, repo: Repository, date: dt.date) -> int:
@@ -313,72 +262,15 @@ def _store(repo: Repository, problem: d.MathProblem, date: dt.date) -> d.MathPro
     try:
         stored = repo.add_problem(problem)
     except sqlite3.IntegrityError as e:
-        # `source` is UNIQUE: the model ignored the do-not-repeat list.
-        # Not retried automatically -- a retry is another paid generation,
-        # and the click that asks for one should be the user's.
+        # `source` is UNIQUE. From the batch this means the generator ignored
+        # the do-not-repeat list it was handed; from the pool, that the file
+        # lists a problem the log already has.
         raise ContentError(
-            f"the model returned a problem you have already seen ({problem.source})"
+            f"the problem for today has been served already ({problem.source})"
         ) from e
     assert stored.id is not None
     repo.open_math_attempt(date, stored.id)
     return stored
-
-
-def _generate_problem(
-    settings: Settings,
-    date: dt.date,
-    seen: list[str],
-    rating: int,
-    on_status: llm.StatusFn,
-) -> d.MathProblem:
-    """`rating` is passed in rather than read here: `next_problem` resolves it
-    once so the batch, the pool and this all pitch at the same number."""
-    started = time.time()
-    # Owned here rather than taken from the return value: a generation that
-    # dies on its third web search has still been paid for, and the old code
-    # left `metrics` as None on that path and logged the spend as nothing.
-    metrics = llm.Metrics()
-    problem: d.MathProblem | None = None
-    error: str | None = None
-    try:
-        text, _ = llm.call(
-            settings.llm,
-            PROBLEM_SYSTEM,
-            _problem_prompt(settings, rating, date, seen),
-            tools=llm.web_search_tool(settings.llm.web_search_max_uses),
-            on_status=on_status,
-            metrics=metrics,
-        )
-        problem = to_problem(llm.extract_json(text), settings, settings.llm.model, date)
-        return problem
-    except json.JSONDecodeError as e:
-        error = f"unparseable JSON: {e}"
-        log.exception("math generation returned unusable JSON")
-        raise ContentError("the model did not return usable JSON") from e
-    except (LlmError, ContentError) as e:
-        error = str(e)
-        log.exception("math generation failed")
-        raise
-    finally:
-        llm.log_generation(
-            settings.path("metrics"),
-            llm.record(
-                kind="math",
-                date=date,
-                model=settings.llm.model,
-                started=started,
-                settings=settings.llm,
-                metrics=metrics,
-                ok=problem is not None,
-                error=error,
-                topic=settings.math.topic_for(date),
-                rating=rating,
-                source=problem.source if problem else None,
-                tier=problem.tier if problem else None,
-            ),
-        )
-        if on_status and problem is not None:
-            on_status("done ✓")
 
 
 # --- the smaller generations -----------------------------------------------
@@ -402,8 +294,8 @@ def _json_generation(
     cost?" with one line item and silently dropped the rest -- worse than not
     answering, because it looks like an answer.
 
-    Every paid call from this module now goes through here or through
-    `_generate_problem`. There is deliberately no third path to `llm`.
+    Every paid call from this module now goes through here. There is
+    deliberately no second path to `llm`.
     """
     started = time.time()
     metrics = llm.Metrics()  # owned here, so a failure is still logged with its cost
@@ -576,11 +468,17 @@ def grade_theorem(
 
     The bar is deliberately stated as "in your own words". Recall of a theorem
     is knowing what it claims, not reproducing its typography, and a grader
-    that wanted LaTeX would be marking the wrong thing: "the dot product's
+    that *required* LaTeX would be marking the wrong thing: "the dot product's
     magnitude is at most the product of the magnitudes" *is* Cauchy-Schwarz.
     The failure it should catch is a statement that is wrong or so vague it
     would not identify the theorem -- missing hypotheses, a flipped
     inequality, "it's about inner products".
+
+    Notation is welcome, though, and the prompt says so: the boxes render
+    LaTeX now, and someone writing `$\\langle x,y\\rangle^2 \\le \\|x\\|^2
+    \\|y\\|^2$` is being *more* precise, not less. The grader must read the
+    source rather than penalise it -- "generous about notation" was ambiguous
+    enough to mark a delimited answer down for having delimiters in it.
 
     The application half is graded on whether the problem is one the theorem
     genuinely bears on, named or not. "The polynomial that agreed with a
@@ -593,9 +491,12 @@ def grade_theorem(
         date=date,
         system=(
             "You grade a recalled theorem against its real statement. Be generous about "
-            "wording, phrasing and notation -- plain English is expected and LaTeX is not "
-            "wanted -- and strict about content: wrong direction, dropped hypotheses, or "
-            "so vague it could be any theorem all fail. Respond ONLY with JSON: "
+            "wording, phrasing and notation -- plain English and LaTeX are equally "
+            "acceptable, and an answer written in LaTeX source ($..$ or $$..$$) is to be "
+            "read as the mathematics it denotes, never marked down for its markup or for "
+            "a typo in it -- and strict about content: wrong direction, dropped "
+            "hypotheses, or so vague it could be any theorem all fail. Respond ONLY "
+            "with JSON: "
             '{"explained":bool,"applied":bool,"area":one of the listed areas,'
             '"note":"one line, name what was missing or confirm what was right"}'
         ),

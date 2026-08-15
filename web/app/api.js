@@ -71,38 +71,8 @@ export async function postRaw(path, body = {}, headers = null) {
   );
 }
 
-/**
- * POST that reads back newline-delimited JSON: {status} lines while the
- * generation runs, then {problem} or {error}.
- */
-export async function stream(path, body, onStatus) {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ date: today(), ...body }),
-  });
-  if (!response.ok) return unwrap(response); // always throws
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let result = null;
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let cut;
-    while ((cut = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, cut).trim();
-      buffer = buffer.slice(cut + 1);
-      if (!line) continue;
-      const event = JSON.parse(line);
-      if (event.status) onStatus?.(event.status);
-      else if (event.error) throw new ApiError(event.error);
-      else result = event;
-    }
-  }
-  if (!result) throw new ApiError("the stream ended without a result");
-  return result;
-}
+// There was a `stream()` here — a POST that read newline-delimited JSON,
+// {status} lines then {problem}. Its one caller was the math problem's paid
+// generation, which does not exist any more: the problem comes from the
+// overnight batch or the curated pool, both of them a file read, so there is
+// nothing left in the app slow enough to need progress lines.

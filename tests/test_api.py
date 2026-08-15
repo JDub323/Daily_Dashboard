@@ -163,10 +163,12 @@ def test_an_unknown_outcome_is_rejected_by_the_model(client, repo, problem):
     )
 
 
-def test_math_new_streams_status_lines_then_the_problem(client, monkeypatch, repo):
-    def fake(settings, repository, date, on_status=None):
-        on_status("thinking about a problem…")
-        on_status("verifying against AoPS… (search 1)")
+def test_math_new_returns_the_panel_with_the_problem_on_it(client, monkeypatch):
+    """It was an ndjson stream while there was a paid generation behind it.
+    Both remaining sources are a file read, so it is an ordinary POST and the
+    response is the panel — the same shape every other write route returns."""
+
+    def fake(settings, repository, date):
         stored = repository.add_problem(
             d.MathProblem(
                 source=f"Stub {date}",
@@ -183,27 +185,22 @@ def test_math_new_streams_status_lines_then_the_problem(client, monkeypatch, rep
         return stored
 
     monkeypatch.setattr(content, "next_problem", fake)
-    lines = [
-        line for line in client.post("/api/math/new", json={"date": DATE}).text.splitlines() if line
-    ]
-    assert len(lines) == 3
-    assert '"status"' in lines[0]
-    assert '"problem"' in lines[-1]
+    panel = client.post("/api/math/new", json={"date": DATE}).json()
+    assert panel["problem"]["answer"] == "2"
+    assert panel["status"] == "open"
     assert (
         client.get("/api/state", params={"date": DATE}).json()["math"]["problem"]["answer"] == "2"
     )
 
 
-def test_a_failed_generation_ends_the_stream_with_an_error(client, monkeypatch):
-    def boom(*a, **k):
-        raise content.ContentError("the model returned a problem you have already seen")
-
-    monkeypatch.setattr(content, "next_problem", boom)
-    lines = [
-        line for line in client.post("/api/math/new", json={"date": DATE}).text.splitlines() if line
-    ]
-    assert '"error"' in lines[-1]
-    assert "already seen" in lines[-1]
+def test_no_batch_and_no_pool_is_a_plain_error_not_a_generation(client):
+    """The whole point of removing the paid path: a morning the batch did not
+    run reports what happened instead of quietly buying a problem. Nothing is
+    stubbed here — `content.next_problem` runs for real against an empty
+    batches directory and an empty pool, and must not reach `llm`."""
+    response = client.post("/api/math/new", json={"date": DATE})
+    assert response.status_code >= 400
+    assert "batch" in response.json()["error"].lower()
 
 
 # --- chess -----------------------------------------------------------------

@@ -26,6 +26,12 @@
 // word is paid for. `scoring`'s lapse rule makes the same call about a math
 // problem. What changed is only that *opening the page* is now the whole
 // gesture, rather than opening it and then saying so four times.
+//
+// The math problem is deliberately not in this table, and being free and
+// instant did not change that. Drawing it opens an attempt, and an attempt
+// that is never marked lapses at 0.0 — the rule is that abandoning a problem
+// you asked for costs a full result, while a week away costs nothing. A gather
+// on boot would make opening a tab the asking, and charge for it.
 
 import * as api from "./api.js";
 import { el } from "./dom.js";

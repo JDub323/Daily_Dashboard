@@ -35,11 +35,12 @@ def paid(monkeypatch):
     `paid["reply"]` answers every call. `paid["replies"]` is a queue for the
     generations that can happen more than once — the word resamples when it
     lands on one you have already had — and falls back to `reply` when it runs
-    dry. Every prompt sent is kept in `paid["prompts"]`, which is how the
-    do-not-repeat list is asserted on without reaching into the prompt string
-    from the module under test.
+    dry. Every prompt sent is kept in `paid["prompts"]` and every system in
+    `paid["systems"]`, which is how the do-not-repeat list and what the grader
+    was told are asserted on without reaching into the module under test for
+    the string.
     """
-    payloads: dict[str, Any] = {"prompts": []}
+    payloads: dict[str, Any] = {"prompts": [], "systems": []}
 
     def fake_call(settings, system, user, *, metrics=None, **kw):
         m = metrics if metrics is not None else llm.Metrics()
@@ -47,6 +48,7 @@ def paid(monkeypatch):
         m.output_tokens += 500
         m.web_searches += 1
         payloads["prompts"].append(user)
+        payloads["systems"].append(system)
         queue = payloads.get("replies")
         return json.dumps(queue.pop(0) if queue else payloads["reply"]), m
 
@@ -236,6 +238,39 @@ def test_the_system_prompt_names_both_delimiters(settings):
     assert "bare formula" in content._THEOREM_SYSTEM.lower()
 
 
+# --- a recall written in LaTeX ---------------------------------------------
+
+CAUCHY_SCHWARZ = r"$|\langle x,y\rangle| \le \|x\|\,\|y\|$ for any inner product"
+
+
+def test_a_latex_recall_reaches_the_grader_as_source(settings, paid):
+    """The boxes render LaTeX, so an answer can be notation now. What is sent
+    is the source, not what the preview drew — and it must arrive intact, since
+    every `\\` and `$` in it is load-bearing for the grader reading it."""
+    paid["reply"] = {"explained": True, "applied": True, "area": "algebra", "note": "yes"}
+    card = d.TheoremCard(
+        name="Cauchy-Schwarz", statement="$|<x,y>|^2 \\le ...$", topic="algebra", added=TODAY
+    )
+    content.grade_theorem(settings, TODAY, card, CAUCHY_SCHWARZ, "an olympiad inequality")
+
+    (prompt,) = paid["prompts"]
+    assert CAUCHY_SCHWARZ in prompt
+
+
+def test_the_grader_is_told_latex_is_an_acceptable_answer(settings, paid):
+    """It used to be told the opposite -- "LaTeX is not wanted" -- which was
+    right when the box could not render it and is a mark-down waiting to happen
+    now that it can."""
+    paid["reply"] = {"explained": True, "applied": True, "area": "algebra", "note": "yes"}
+    card = d.TheoremCard(name="C-S", statement="s", topic="algebra", added=TODAY)
+    content.grade_theorem(settings, TODAY, card, "x", "y")
+
+    (system,) = paid["systems"]
+    assert "LaTeX is not wanted" not in system
+    assert "LaTeX" in system
+    assert "never marked down for its markup" in system
+
+
 def test_topic_links_are_logged_once_and_then_served_from_cache(settings, repo, paid):
     """`topic_info` is keyed by topic, not date, so the second call is free —
     and a free call must not write a line claiming a cost."""
@@ -315,34 +350,38 @@ def test_saturday_is_the_showcase_day_and_nothing_else_is():
     assert not any(content.is_showcase(SATURDAY + dt.timedelta(days=n)) for n in range(1, 7))
 
 
-def test_the_showcase_prompt_asks_for_fame_not_calibration(settings):
-    prompt = content._problem_prompt(settings, 1528, SATURDAY, [])
-    assert "CLASSIC, BEAUTIFUL" in prompt
-    assert "Ignore difficulty" in prompt
-    # The rating is deliberately absent: "beautiful, at about 1528" is a much
-    # smaller set than "beautiful", and usually an empty one.
-    assert "1528" not in prompt
-    assert "30-70%" not in prompt
+# What the showcase day *asks for* is asserted in `test_batch.py` now. The
+# prompts that used to live here — one per weekday, built by
+# `content._problem_prompt` — went with the paid generation; `batch.SHOWCASE_BRIEF`
+# is the only place left that says what Saturday wants, and `is_showcase` above
+# is still what decides which day that is.
 
 
-def test_a_weekday_prompt_still_calibrates_to_the_rating(settings):
-    prompt = content._problem_prompt(settings, 1528, WEDNESDAY, [])
-    assert "1528" in prompt
-    assert "30-70%" in prompt
-    assert "CLASSIC" not in prompt
+def test_nothing_in_content_can_ask_for_a_math_problem(settings, repo, monkeypatch):
+    """The removal, stated as a test.
+
+    Not "the pool is preferred" -- that was already true and was never the
+    guarantee. With no batch and no pool there is no fallback at all: an empty
+    day raises, and `llm.call` is booby-trapped so that reaching for the API
+    fails the test rather than costing $0.80.
+    """
+
+    def never(*a, **kw):
+        raise AssertionError("the math problem must never reach the API")
+
+    monkeypatch.setattr(llm, "call", never)
+
+    with pytest.raises(content.ContentError, match="batch"):
+        content.next_problem(settings, repo, TODAY)
+    assert lines(settings) == []
 
 
-def test_the_showcase_still_names_the_week_topic(settings):
-    """ "Classic" is a filter on which problem, not a licence to leave the
-    syllabus -- the day is the capstone of the topic week, not an escape from
-    it."""
-    topic = settings.math.topic_for(SATURDAY)
-    assert topic in content._problem_prompt(settings, 1528, SATURDAY, [])
-
-
-def test_both_prompts_carry_the_do_not_repeat_list(settings):
-    for date in (SATURDAY, WEDNESDAY):
-        assert "Putnam 1998 B3" in content._problem_prompt(settings, 1528, date, ["Putnam 1998 B3"])
+def test_the_paid_generation_is_gone_not_merely_unreachable(settings):
+    """A prompt left in the module is a paid path one caller away from being
+    live again. The point is that there is nothing to call."""
+    assert not hasattr(content, "PROBLEM_SYSTEM")
+    assert not hasattr(content, "_problem_prompt")
+    assert not hasattr(content, "_generate_problem")
 
 
 def _batch_file(settings, date, rungs):

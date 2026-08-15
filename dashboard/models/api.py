@@ -1049,20 +1049,6 @@ class CalendarResponse(Base):
     """
 
 
-# --- streaming -------------------------------------------------------------
-
-
-class MathStatusEvent(Base):
-    """One ndjson line from POST /api/math/new while generation runs."""
-
-    status: str
-
-
-class MathDoneEvent(Base):
-    problem: MathProblem
-    hints_revealed: int = 0
-
-
 # --- the portfolio ---------------------------------------------------------
 #
 # Every model below crosses the fingerprint gate except `PortfolioStatus`,

@@ -397,6 +397,22 @@ input.spell-box { flex: 1; min-width: 140px; }
 .recall-half { border-top: 1px solid var(--border-soft); padding: 7px 0 2px; }
 .recall-half > .row { margin: 0; }
 
+/* What the LaTeX in the box above will look like. Set on the left border
+   rather than in a box of its own: it is the same text one step further along,
+   not a second field, and a bordered card under a bordered textarea reads as
+   something else to fill in. Dimmed for the same reason — the source is what
+   you are editing and has to stay the brighter of the two.
+
+   `anywhere` because an unclosed `$` leaves a long unbroken run of source on
+   screen, and a preview that widens the panel while you are mid-formula is
+   worse than the raw backslashes it replaced. */
+.recall-preview {
+  margin: 0 0 6px; padding: 4px 0 4px 10px;
+  border-left: 2px solid var(--border);
+  color: var(--dim); line-height: 1.5;
+  max-width: var(--measure-text); overflow-wrap: anywhere;
+}
+
 /* ---- trick of the day ----
    The panel is a summary — name, topic, where you got to — and carries no maths
    at all. Everything that is a formula lives in the sheet (`.paper` below),

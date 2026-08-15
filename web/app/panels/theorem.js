@@ -28,6 +28,61 @@ import { typeset } from "../ui.js";
 const MIN_ANSWER = 3;
 
 /**
+ * A recall box that renders what you are typing.
+ *
+ * Plain English still grades exactly as well — the grader is told both are
+ * acceptable — but "the dot product's magnitude is at most the product of the
+ * magnitudes" and $|\langle x,y\rangle| \le \|x\|\,\|y\|$ are not the same
+ * answer, and only the second one commits to which norm. Without a renderer
+ * the second is a line of backslashes you cannot proofread, so the choice
+ * between precision and legibility was being made by the input box.
+ *
+ * The preview sits under the textarea rather than replacing it: this is a
+ * recall test, and something you have written must stay editable and visible
+ * as source until you submit it. It appears only once there is a `$` in the
+ * box, so nobody who writes prose ever sees an empty strip of chrome.
+ *
+ * Re-rendered on every keystroke, uncontroversially — KaTeX is synchronous and
+ * local, these are two-line answers, and a debounce would buy nothing except a
+ * preview that lags behind the cursor. `textContent` is reset first because
+ * `renderMathInElement` replaces the maths it finds with rendered nodes, so
+ * typesetting the output of the last pass would compound.
+ */
+function latexBox(rows, value, placeholder, onInput) {
+  const preview = el("div.recall-preview", { hidden: true });
+
+  const show = (text) => {
+    if (!text.includes("$")) {
+      preview.hidden = true;
+      return;
+    }
+    preview.hidden = false;
+    preview.textContent = text;
+    typeset(preview);
+  };
+
+  const box = el("textarea.recall-box", {
+    rows,
+    value,
+    placeholder,
+    oninput: (e) => {
+      onInput(e.target.value);
+      show(e.target.value);
+    },
+  });
+
+  // A draft restored across a re-render has to render immediately: the panel
+  // is redrawn by any store change at all, and a preview that came back blank
+  // under a box that still had text in it would read as having lost it.
+  show(value);
+
+  return { box, preview };
+}
+
+/** What both boxes say about notation. Once, because they say the same thing. */
+const LATEX_HINT = "LaTeX renders — $x^2$ inline, $$…$$ on its own line";
+
+/**
  * What you have typed but not submitted, kept across re-renders.
  *
  * The panel is redrawn by any store change — adding a card in the deck panel
@@ -78,34 +133,36 @@ function question(body, theorems) {
   const seen = entry ? ` · seen ${entry.seen}× · recalled ${entry.recalled}×` : "";
 
   const held = drafted(card.id);
-  const explanation = el("textarea.recall-box", {
-    rows: 3,
-    value: held.explanation,
-    oninput: (e) => {
-      held.explanation = e.target.value;
+  const explanation = latexBox(
+    3,
+    held.explanation,
+    "what does it say? Plain English is fine — \"the dot product's magnitude is at most "
+      + "the product of the magnitudes\" is Cauchy–Schwarz. LaTeX if you want to be exact.",
+    (value) => {
+      held.explanation = value;
     },
-    placeholder:
-      "what does it say? Plain English is fine — \"the dot product's magnitude is at most "
-      + "the product of the magnitudes\" is Cauchy–Schwarz.",
-  });
-  const application = el("textarea.recall-box", {
-    rows: 3,
-    value: held.application,
-    oninput: (e) => {
-      held.application = e.target.value;
-    },
-    placeholder:
-      "a problem you needed it for. No need to name it — \"the polynomial that agreed with "
+  );
+  const application = latexBox(
+    3,
+    held.application,
+    "a problem you needed it for. No need to name it — \"the polynomial that agreed with "
       + "a rational function everywhere on [0,1]\" is enough.",
-  });
+    (value) => {
+      held.application = value;
+    },
+  );
   const message = el("span.faint");
 
   const submit = el("button.primary", {
     text: "submit",
     onclick: async () => {
+      // Sent as source, not as what the preview drew. The grader is told to
+      // read `$..$` as the mathematics it denotes, and the stored answer is
+      // what gets rendered back on the graded card — so the LaTeX has to
+      // survive the round trip rather than being flattened on the way out.
       const answer = {
-        explanation: explanation.value.trim(),
-        application: application.value.trim(),
+        explanation: explanation.box.value.trim(),
+        application: application.box.value.trim(),
       };
       if (answer.explanation.length < MIN_ANSWER || answer.application.length < MIN_ANSWER) {
         // Said rather than silently refused: half the rating rides on the
@@ -129,10 +186,15 @@ function question(body, theorems) {
   return el("div", null,
     el("div.big.gold", { text: card.name }),
     el("div.faint", { text: `${card.topic}${seen}` }),
-    el("div.faint.gap", { text: "1 · the theorem, in your own words" }),
-    explanation,
+    el("div.row.spread.gap", null,
+      el("span.faint", { text: "1 · the theorem, in your own words" }),
+      el("span.faint.small", { text: LATEX_HINT }),
+    ),
+    explanation.box,
+    explanation.preview,
     el("div.faint.gap", { text: "2 · somewhere you needed it" }),
-    application,
+    application.box,
+    application.preview,
     el("div.row", null, submit, message),
   );
 }
@@ -143,14 +205,21 @@ function graded(theorems) {
   const written = theorems.written;
   const statement = el("div.statement", { text: card.statement });
 
-  const half = (ok, label, yours) =>
-    el("div.recall-half", null,
+  // Your own answer is typeset with the same renderer the statement below it
+  // gets. Showing the source back would undo the point of being able to write
+  // it: the card is what you read when checking whether the grader was fair,
+  // and comparing rendered maths against raw backslashes is not that.
+  const half = (ok, label, yours) => {
+    const written = el("div.dim.small", { text: yours });
+    typeset(written);
+    return el("div.recall-half", null,
       el("div.row.spread", null,
         el("span", { text: label }),
         el(`span.${ok ? "ok" : "bad"}`, { text: ok ? "✓" : "✗" }),
       ),
-      el("div.dim.small", { text: yours }),
+      written,
     );
+  };
 
   const delta = theorems.delta;
   const sign = delta > 0 ? "+" : "";
