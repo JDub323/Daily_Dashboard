@@ -121,7 +121,7 @@ export default {
         ? el("div.chart-block", null,
             el("div.chart-title", null,
               el("span", { text: "ballot score /16" }),
-              el("span.gold", { text: String(scores[scores.length - 1]) }),
+              el("span.value", { text: String(scores[scores.length - 1]) }),
             ),
             lineChart(scores),
           )
@@ -138,7 +138,7 @@ export default {
               el("div.dim.small", null,
                 el("span.faint", { text: `${point.date} ${point.issue} ` }),
                 `${point.confidence}/100 `,
-                point.moved ? el("span.gold", { text: "· moved" }) : null,
+                point.moved ? el("span.value", { text: "· moved" }) : null,
               ),
             ),
           )

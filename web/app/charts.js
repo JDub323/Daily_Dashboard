@@ -58,7 +58,7 @@ export function lineChart(values, { w = 300, h = 80, color = "var(--gold)" } = {
 /** A small labelled chart block: title, current value, chart. */
 export function chartBlock(label, current, values, color) {
   return el("div.chart-block", null,
-    el("div.chart-title", null, el("span", { text: label }), el("span.gold", { text: current })),
+    el("div.chart-title", null, el("span", { text: label }), el("span.value", { text: current })),
     lineChart(values, { color }),
   );
 }

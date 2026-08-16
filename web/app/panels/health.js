@@ -36,7 +36,7 @@ export default {
       return el("div.chart-block", null,
         el("div.chart-title", null,
           el("span", { text: label }),
-          el("span.gold", { text: last ? `${last[1]}${unit}` : "—" }),
+          el("span.value", { text: last ? `${last[1]}${unit}` : "—" }),
         ),
         lineChart(points.map(([, value]) => value), { color }),
         el("div.row", null, input, log),

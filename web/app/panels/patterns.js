@@ -118,7 +118,7 @@ function question(body, patterns) {
   });
 
   return el("div", null,
-    el("div.big.gold", { text: card.name }),
+    el("div.big.value", { text: card.name }),
     el("div.faint", { text: `${card.topic}${seen}` }),
     el("div.faint.gap", { text: "1 · the pattern, in your own words" }),
     explanation,
@@ -146,7 +146,7 @@ function graded(patterns) {
 
   return el("div", null,
     el("div.row.spread", null,
-      el("div.big.gold", { text: card.name }),
+      el("div.big.value", { text: card.name }),
       el(`span.${delta > 0 ? "delta-up" : delta < 0 ? "delta-down" : "faint"}`, {
         text: delta === 0 ? "no change" : `${sign}${delta}`,
         title: "pattern recall rating",

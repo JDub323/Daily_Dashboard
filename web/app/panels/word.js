@@ -48,7 +48,7 @@ function wordHead(word) {
   const parts = [word.respelling, word.pronunciation].filter(Boolean);
 
   return el("div", null,
-    el("div.big.gold", null, word.word, " ", el("span.faint", { text: word.pos })),
+    el("div.big.value", null, word.word, " ", el("span.faint", { text: word.pos })),
     parts.length || speakable
       ? el("div.row.pronounce", null,
           parts.length ? el("span.dim", { text: parts.join(" · ") }) : null,

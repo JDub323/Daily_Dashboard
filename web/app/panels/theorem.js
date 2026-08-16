@@ -184,7 +184,7 @@ function question(body, theorems) {
   });
 
   return el("div", null,
-    el("div.big.gold", { text: card.name }),
+    el("div.big.value", { text: card.name }),
     el("div.faint", { text: `${card.topic}${seen}` }),
     el("div.row.spread.gap", null,
       el("span.faint", { text: "1 · the theorem, in your own words" }),
@@ -226,7 +226,7 @@ function graded(theorems) {
 
   const node = el("div", null,
     el("div.row.spread", null,
-      el("div.big.gold", { text: card.name }),
+      el("div.big.value", { text: card.name }),
       // Zero is drawn as its own thing rather than "+0" — a draw is a result,
       // not a small win.
       el(`span.${delta > 0 ? "delta-up" : delta < 0 ? "delta-down" : "faint"}`, {

@@ -37,6 +37,9 @@
   --faint: rgba(223,230,242,.55);
 
   --gold: #e8b458;
+  /* Cyan's dim twin, for the same jobs --gold-dim used to do on things
+     that are current rather than finished. */
+  --accent-dim: rgba(92,207,230,.5);
   /* Gold that carries words. --gold-dim is 3.3:1 and belongs on borders; it was
      also the colour of the one line a collapsed hero shows you, which is the
      worst place in the app to put text nobody can read. */
@@ -66,11 +69,17 @@
      A 4px base. The file had 21 distinct padding and margin values — essentially
      every integer up to 22 — which is the kind of thing you feel as "off"
      without ever being able to point at it. */
-  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
 
-  /* Three radii. There were eight, and eight means none of them reads as this
-     app's. Controls, cards, and things that are pills. */
+  /* Three radii. There were eight — 2, 3, 4, 6, 8, 10, 12 and 18 — and eight
+     means none of them reads as this app's. Controls, cards, and things that
+     are pills.
+
+     --r-mark is the fourth and is not one of the three: a heatmap cell is
+     11px square and a bar is 3px tall, and those are data marks rather than
+     components. A control radius on an 11px square is a circle. */
   --r-sm: 6px; --r-md: 10px; --r-pill: 999px;
+  --r-mark: 2px;
 
   /* The Edge-ish measure, widened from 1040 to give six grid columns room. The
      margin either side of it is still the point rather than waste: a dashboard
@@ -88,6 +97,9 @@
 /* Every scroll the ring asks for stops clear of the sticky tab bar and the
    fixed statusline. Without this, `j` onto a card just below the fold parks it
    underneath the bar — scrollIntoView considers a covered element visible. */
+/* Not on the spacing scale, deliberately: these two are the measured heights of
+   the sticky tab bar and the fixed statusline plus a little slack, so they answer
+   to those elements rather than to a rhythm. */
 html { scroll-padding: 64px 0 40px; }
 body {
   margin: 0; background: var(--bg); color: var(--fg);
@@ -96,7 +108,7 @@ body {
      looking like a code block. */
   font: var(--t-body)/1.6 "Cascadia Code", Consolas, "JetBrains Mono", monospace;
   /* Bottom padding clears the fixed statusline. */
-  padding: 0 0 64px;
+  padding: 0 0 var(--s7);
   min-height: 100vh;
 }
 a { color: var(--accent); text-decoration: none; }
@@ -134,11 +146,11 @@ body::before {
 #shell {
   position: relative; z-index: 1;
   max-width: var(--measure); margin: 0 auto;
-  padding: clamp(20px, 5vh, 52px) clamp(16px, 4vw, 40px) 0;
+  padding: clamp(var(--s5), 5vh, var(--s7)) clamp(var(--s4), 4vw, var(--s6)) 0;
 }
 
-#topbar { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
-#topbar h1 { font-size: var(--t-head); font-weight: 700; color: var(--gold); margin: 0; letter-spacing: .5px; }
+#topbar { display: flex; align-items: baseline; gap: var(--s4); flex-wrap: wrap; margin-bottom: var(--s4); }
+#topbar h1 { font-size: var(--t-head); font-weight: 700; color: var(--fg); margin: 0; letter-spacing: .5px; }
 #topbar .sub { color: var(--dim); font-size: var(--t-meta); }
 
 /* ---- the tab bar ----
@@ -152,31 +164,34 @@ body::before {
    1px inside the panels. */
 #tabbar {
   position: sticky; top: 0; z-index: 30;
-  display: flex; gap: 6px; flex-wrap: wrap;
+  display: flex; gap: var(--s2); flex-wrap: wrap;
   border-bottom: 1px solid var(--border-soft);
-  padding: 10px clamp(16px, 4vw, 40px);
-  margin: 0 calc(-1 * clamp(16px, 4vw, 40px)) clamp(18px, 5vh, 44px);
+  padding: var(--s3) clamp(var(--s4), 4vw, var(--s6));
+  margin: 0 calc(-1 * clamp(var(--s4), 4vw, var(--s6))) clamp(var(--s4), 5vh, var(--s7));
   background: linear-gradient(180deg, var(--bg) 78%, rgba(10, 12, 18, .92));
   backdrop-filter: blur(6px);
 }
 .tab {
-  display: inline-flex; align-items: center; gap: 7px;
+  display: inline-flex; align-items: center; gap: var(--s2);
   border: 1px solid transparent; background: transparent; color: var(--dim);
-  font: inherit; font-size: var(--t-body); padding: 5px 12px; border-radius: 8px;
+  font: inherit; font-size: var(--t-body); padding: var(--s1) var(--s3); border-radius: var(--r-sm);
   cursor: pointer; transition: color .15s, border-color .15s, background .15s;
 }
 /* The digit that jumps here, printed rather than hidden in the cheatsheet: a
    shortcut you have to look up is one you never learn. */
 .tab::before {
   content: attr(data-key); font-size: var(--t-meta); color: var(--faint);
-  border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; line-height: 1.5;
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 0 var(--s1); line-height: 1.5;
 }
 .tab:hover { color: var(--fg); background: var(--panel); }
+/* Cyan, not gold. Which tab you are on is a statement about where the
+   cursor is, which is what cyan means everywhere else in the app — the
+   focus ring, the item ring, every link. Gold now says one thing only. */
 .tab.active {
-  color: var(--gold); border-color: var(--gold-dim);
-  background: linear-gradient(180deg, rgba(232,180,88,.10), transparent);
+  color: var(--accent); border-color: var(--accent-dim);
+  background: linear-gradient(180deg, rgba(92,207,230,.10), transparent);
 }
-.tab.active::before { color: var(--gold-dim); border-color: var(--gold-dim); }
+.tab.active::before { color: var(--accent-dim); border-color: var(--accent-dim); }
 .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---- panes ----
@@ -220,14 +235,14 @@ body::before {
 }
 
 .panel { position: relative; background: var(--panel); border: 1px solid var(--border);
-         border-radius: var(--r-md); padding: 13px 15px; overflow-wrap: anywhere; }
+         border-radius: var(--r-md); padding: var(--s3) var(--s4); overflow-wrap: anywhere; }
 /* A card's heading is a label, not a title: 11px, letterspaced, dim. It says
    which card this is and then gets out of the way of the thing you came for.
    The hero's heading below is the other half of the pair — the two used to be
    13px and 15px, a difference you have to measure to see. */
-.panel h2 { margin: 0 0 9px; font-size: var(--t-meta); font-weight: 700; color: var(--dim);
+.panel h2 { margin: 0 0 var(--s2); font-size: var(--t-meta); font-weight: 700; color: var(--dim);
             text-transform: lowercase; letter-spacing: 1.2px;
-            border-bottom: 1px solid var(--border-soft); padding-bottom: 6px; }
+            border-bottom: 1px solid var(--border-soft); padding-bottom: var(--s2); }
 .hero > .panel { padding: var(--s5) var(--s6); }
 .panel.hero { background: var(--panel2); }
 .panel.hero h2 { font-size: var(--t-head); color: var(--fg); letter-spacing: .3px; }
@@ -249,7 +264,7 @@ body::before {
               margin: 0 0 var(--s3); }
 .figure { font-size: var(--t-hero); font-weight: 700; line-height: 1.05;
           letter-spacing: -.02em; font-variant-numeric: tabular-nums;
-          color: var(--gold); }
+          color: var(--fg); }
 .figure-unit { font-size: var(--t-lede); color: var(--dim); font-weight: 400; letter-spacing: 0; }
 .figure-label { font-size: var(--t-meta); color: var(--faint); letter-spacing: .06em; }
 
@@ -266,8 +281,10 @@ body::before {
   max-width: var(--measure-text);
 }
 .panel.done-gold { border-color: var(--gold-dim); box-shadow: 0 0 0 1px var(--gold-dim), 0 0 18px rgba(232,180,88,.07); }
-/* focusPanel(): chips and `n` flash the panel they land on. */
-.panel.flash { transition: box-shadow .3s; box-shadow: 0 0 0 2px var(--gold-dim); }
+/* focusPanel(): chips and `n` flash the panel they land on. Cyan, because
+   this is the ring arriving — a gold flash on an unfinished panel read as
+   the app telling you it was done. */
+.panel.flash { transition: box-shadow .3s; box-shadow: 0 0 0 2px var(--accent-dim); }
 
 /* ---- the focus ring ----
    Two rings, because there are two cursors. The panel ring is a border
@@ -275,24 +292,29 @@ body::before {
    without shifting the line. Cyan for both: gold means done, and a cursor
    resting on a finished panel must not read as a completion. */
 .panel.nav-panel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.nav-item { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.nav-item { outline: 2px solid var(--accent); outline-offset: var(--s1); border-radius: var(--r-sm); }
 
 /* ---- link hints ----
    `f` stamps a letter on every link in the focused panel; nav.js sets the
    attribute and the letter is drawn from it, so nothing is inserted into the
-   panel's own markup. Gold rather than cyan: the links are already cyan, and a
-   hint that matches the thing it labels is a hint you have to look for. */
+   panel's own markup.
+
+   Neutral rather than either accent. It cannot be cyan — the links are cyan,
+   and a hint the colour of the thing it labels is a hint you have to look
+   for. It can no longer be gold either, now that gold means finished. A
+   light key on a raised ground is distinct from both and reads as what it
+   is: something stamped on top of the page rather than part of it. */
 a[data-navkey]::before {
   content: attr(data-navkey);
-  display: inline-block; margin-right: 5px; vertical-align: baseline;
-  font-size: var(--t-meta); line-height: 1.5; padding: 0 4px;
-  border: 1px solid var(--gold-dim); border-radius: 3px;
-  color: var(--gold); background: rgba(232, 180, 88, .12);
+  display: inline-block; margin-right: var(--s1); vertical-align: baseline;
+  font-size: var(--t-meta); line-height: 1.5; padding: 0 var(--s1);
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  color: var(--fg); background: var(--raised);
   text-decoration: none;
 }
 
 /* ---- a finished hero folds ---- */
-.collapse-toggle { cursor: pointer; display: flex; gap: 10px; align-items: baseline; }
+.collapse-toggle { cursor: pointer; display: flex; gap: var(--s3); align-items: baseline; }
 /* --gold-dim measured 3.28:1 here, which made the one line a folded hero shows
    you the least readable text in the app. */
 .panel-summary { color: var(--gold-text); font-weight: 400; letter-spacing: 0; text-transform: none;
@@ -309,52 +331,62 @@ a[data-navkey]::before {
 .big { font-size: var(--t-lede); font-weight: 600; }
 .small { font-size: var(--t-meta); }
 .ok { color: var(--ok); } .bad { color: var(--bad); } .gold { color: var(--gold); }
+/* The number or name a line is about, against the dimmer text around it.
+   Most of what now uses this used to be `.gold`, from when gold was the app's
+   general-purpose emphasis — a chart's current value, a pattern card's name, a
+   countdown, the label on a game. None of those is a thing you finished, and
+   with a dozen of them on screen the gold on a done chip had nothing left to
+   say. `.gold` survives for the handful that really are scores. */
+.value { color: var(--fg); font-weight: 600; }
 /* A rating is the second-biggest thing the app says. Tabular for the same
-   reason as .figure: these change in place. */
-.rating { font-size: var(--t-display); font-weight: 700; color: var(--gold);
+   reason as .figure: these change in place. Neutral, like .figure — a rating
+   is not an achievement, it is the score you are currently carrying. */
+.rating { font-size: var(--t-display); font-weight: 700; color: var(--fg);
           font-variant-numeric: tabular-nums; line-height: 1.15; }
-.tag { font-size: var(--t-meta); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; color: var(--dim); }
+.tag { font-size: var(--t-meta); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 0 var(--s2); color: var(--dim); }
 .delta-up { color: var(--ok); font-weight: 700; }
 .delta-down { color: var(--bad); font-weight: 700; }
-.gap { margin: 8px 0 4px; }
-.divider { border-top: 1px solid var(--border-soft); margin-top: 8px; padding-top: 8px; }
+.gap { margin: var(--s2) 0 var(--s1); }
+.divider { border-top: 1px solid var(--border-soft); margin-top: var(--s2); padding-top: var(--s2); }
 
-.row { display: flex; gap: 8px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+.row { display: flex; gap: var(--s2); align-items: center; margin: var(--s2) 0; flex-wrap: wrap; }
 .row.spread { justify-content: space-between; }
-.row.inline { display: inline-flex; gap: 4px; margin: 0; }
+.row.inline { display: inline-flex; gap: var(--s1); margin: 0; }
 .row > input:not([type="number"]) { flex: 1; min-width: 120px; }
 
 button { background: transparent; border: 1px solid var(--border); color: var(--fg);
-         font: inherit; font-size: var(--t-body); padding: 3px 10px; border-radius: 6px; cursor: pointer; }
-button:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
+         font: inherit; font-size: var(--t-body); padding: var(--s1) var(--s3); border-radius: var(--r-sm); cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 button:disabled { opacity: .4; cursor: default; }
-button.primary { border-color: var(--gold-dim); color: var(--gold); }
+button.primary { border-color: var(--accent-dim); color: var(--accent); }
 button.ok { color: var(--ok); } button.bad { color: var(--bad); }
 input, textarea { background: var(--bg); border: 1px solid var(--border); color: var(--fg);
-                  font: inherit; font-size: var(--t-body); padding: 5px 8px; border-radius: 6px; width: 100%; }
+                  font: inherit; font-size: var(--t-body); padding: var(--s2); border-radius: var(--r-sm); width: 100%; }
 textarea { resize: vertical; }
-ul.clean { list-style: none; margin: 6px 0; padding: 0; }
-ul.clean li { margin: 5px 0; }
+ul.clean { list-style: none; margin: var(--s2) 0; padding: 0; }
+ul.clean li { margin: var(--s1) 0; }
 
 /* ---- math panel ---- */
 /* The per-area rating strip under the headline elo. Wraps rather than
    scrolls: six buckets fit on one line on desktop and two on mobile, and a
    sideways-scrolling strip of six numbers is worse than a second line. */
-.areas { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0 6px; font-size: var(--t-meta); }
+.areas { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); margin: var(--s1) 0 var(--s2); font-size: var(--t-meta); }
 .area { white-space: nowrap; }
-/* The area this week's topic rates into — the one setting today's difficulty. */
-.area-live { color: var(--gold); }
-.area-live > .faint { color: var(--gold-dim); }
+/* The area this week's topic rates into — the one setting today's difficulty.
+   Cyan: this is which of the six is live right now, not one you have
+   finished with. */
+.area-live { color: var(--accent); }
+.area-live > .faint { color: var(--accent-dim); }
 
-.statement { margin: 8px 0; }
-.answer { margin-top: 8px; }
-.hints > div { margin: 3px 0; }
+.statement { margin: var(--s2) 0; }
+.answer { margin-top: var(--s2); }
+.hints > div { margin: var(--s1) 0; }
 
 /* The solve-time box. Narrow on purpose — it takes at most four digits, and a
    full-width input reads as a field you are expected to fill in, which this
    deliberately is not. The `.row > input` rule above already exempts
    type=number from stretching; this just gives it a sensible size. */
-.timebox { margin: 8px 0 2px; }
+.timebox { margin: var(--s2) 0 var(--s1); }
 input.minutes { width: 5.5em; flex: 0 0 auto; text-align: right; }
 .katex { font-size: 1.1em; }
 .katex-display { margin: .7em 0; }
@@ -364,37 +396,37 @@ input.minutes { width: 5.5em; flex: 0 0 auto; text-align: right; }
    something is wrong is one nobody has learned to read. `--bad` for stale
    because that is what it is — the source did not answer and the numbers on
    screen are not current, which is a wrong answer rather than a slow one. */
-.stamp { color: var(--faint); font-size: var(--t-meta); margin-top: 8px; }
+.stamp { color: var(--faint); font-size: var(--t-meta); margin-top: var(--s2); }
 .stamp.stale { color: var(--bad); }
 
 /* ---- reading panel ---- */
-.paper-title { margin: 6px 0; }
+.paper-title { margin: var(--s2) 0; }
 
 /* ---- spelling bee ----
    One row per word. The box is the widest thing on the line because it is the
    only thing you touch; everything left of it is context. */
-.spell-row + .spell-row { border-top: 1px solid var(--border-soft); padding-top: 6px; }
-.spell-row > .row { margin: 4px 0 2px; }
+.spell-row + .spell-row { border-top: 1px solid var(--border-soft); padding-top: var(--s2); }
+.spell-row > .row { margin: var(--s1) 0; }
 .spell-n { min-width: 1.2em; }
-.spell-hint { margin: 0 0 5px 1.9em; }
+.spell-hint { margin: 0 0 var(--s1) 1.9em; }
 /* Autocorrect and spellcheck are off on this input in markup; the underline a
    browser draws anyway would be the answer key. */
 input.spell-box { flex: 1; min-width: 140px; }
 
 /* ---- word panel ---- */
-.sentence { margin: 3px 0; }
-.verdict { margin-top: 6px; }
+.sentence { margin: var(--s1) 0; }
+.verdict { margin-top: var(--s2); }
 /* Respelling and IPA sit under the word, with the speak button on the same
    line — it is a property of the word, not a separate action. */
-.pronounce { margin: 2px 0 6px; gap: 10px; }
-.say { font-size: var(--t-meta); padding: 2px 8px; flex: 0 0 auto; }
+.pronounce { margin: var(--s1) 0 var(--s2); gap: var(--s3); }
+.say { font-size: var(--t-meta); padding: var(--s1) var(--s2); flex: 0 0 auto; }
 
 /* ---- theorem recall ----
    The two answer boxes. Roomier than the app's other inputs on purpose: this
    is the one place you write prose rather than a number or a line, and a
    single-line box would suggest a single-line answer. */
-.recall-box { margin: 2px 0 4px; line-height: 1.5; }
-.recall-half { border-top: 1px solid var(--border-soft); padding: 7px 0 2px; }
+.recall-box { margin: var(--s1) 0; line-height: 1.5; }
+.recall-half { border-top: 1px solid var(--border-soft); padding: var(--s2) 0 var(--s1); }
 .recall-half > .row { margin: 0; }
 
 /* What the LaTeX in the box above will look like. Set on the left border
@@ -407,7 +439,7 @@ input.spell-box { flex: 1; min-width: 140px; }
    screen, and a preview that widens the panel while you are mid-formula is
    worse than the raw backslashes it replaced. */
 .recall-preview {
-  margin: 0 0 6px; padding: 4px 0 4px 10px;
+  margin: 0 0 var(--s2); padding: var(--s1) 0 var(--s1) var(--s3);
   border-left: 2px solid var(--border);
   color: var(--dim); line-height: 1.5;
   max-width: var(--measure-text); overflow-wrap: anywhere;
@@ -418,10 +450,10 @@ input.spell-box { flex: 1; min-width: 140px; }
    at all. Everything that is a formula lives in the sheet (`.paper` below),
    because a displayed product wraps over four lines in a 311px column and takes
    the card to three times its neighbours' height. */
-.trick-row { border-top: 1px solid var(--border-soft); padding: 7px 0 5px; }
-.trick-row > .row { margin: 0 0 3px; }
-.trick-prompt { margin: 2px 0 5px; overflow-wrap: anywhere; }
-.trick-solution { margin-top: 3px; padding-left: 10px; border-left: 2px solid var(--border); }
+.trick-row { border-top: 1px solid var(--border-soft); padding: var(--s2) 0; }
+.trick-row > .row { margin: 0 0 var(--s1); }
+.trick-prompt { margin: var(--s1) 0; overflow-wrap: anywhere; }
+.trick-solution { margin-top: var(--s1); padding-left: var(--s3); border-left: 2px solid var(--border); }
 
 /* ---- the trick sheet ----
    The set as a typeset handout, in the modal. Everything here is about giving
@@ -433,37 +465,37 @@ input.spell-box { flex: 1; min-width: 140px; }
    Line-height is looser than the rest of the app on purpose. Elsewhere the
    type is dense because it is scanned; here it is read, and a displayed
    fraction needs the room above and below or it collides with the line. */
-.paper { line-height: 1.65; padding-bottom: 4px; }
-.paper-head { text-align: center; margin: 2px 0 14px; }
-.paper-title { font-size: var(--t-lede); font-weight: 700; color: var(--gold); margin: 0 0 3px; letter-spacing: .3px; }
+.paper { line-height: 1.65; padding-bottom: var(--s1); }
+.paper-head { text-align: center; margin: var(--s1) 0 var(--s4); }
+.paper-title { font-size: var(--t-lede); font-weight: 700; color: var(--fg); margin: 0 0 var(--s1); letter-spacing: .3px; }
 .paper-by { font-size: var(--t-meta); color: var(--faint); letter-spacing: .5px; }
 /* The rule the trick is stated in, given the weight of an abstract: indented
    from both margins the way a displayed quotation is, so it reads as the thing
    the sheet is *about* rather than as its first question. */
 .paper-statement {
-  margin: 0 auto; padding: 10px 14px; max-width: 54em;
-  background: var(--bg); border: 1px solid var(--border-soft); border-radius: 6px;
+  margin: 0 auto; padding: var(--s3) var(--s4); max-width: var(--measure-text);
+  background: var(--bg); border: 1px solid var(--border-soft); border-radius: var(--r-sm);
   overflow-x: auto;
 }
-.paper-idea { margin: 8px 2px 2px; color: var(--dim); font-size: var(--t-body); }
-.paper-rule { border-top: 1px solid var(--border); margin: 16px 0 4px; }
+.paper-idea { margin: var(--s2) 0 var(--s1); color: var(--dim); font-size: var(--t-body); }
+.paper-rule { border-top: 1px solid var(--border); margin: var(--s4) 0 var(--s1); }
 
-.paper-problem { margin: 14px 0; }
-.paper-num { display: flex; gap: 8px; align-items: baseline; margin-bottom: 2px; }
-.paper-n { color: var(--gold-dim); font-weight: 700; min-width: 1.4em; }
+.paper-problem { margin: var(--s4) 0; }
+.paper-num { display: flex; gap: var(--s2); align-items: baseline; margin-bottom: var(--s1); }
+.paper-n { color: var(--dim); font-weight: 700; min-width: 1.4em; }
 /* Wide maths scrolls inside its own problem rather than pushing the sheet
    sideways — a modal that scrolls horizontally is one you cannot read at all. */
-.paper-prompt { margin: 2px 0 6px 1.9em; overflow-x: auto; }
-.paper-verdict { margin: 2px 0 0 1.9em; }
+.paper-prompt { margin: var(--s1) 0 var(--s2) 1.9em; overflow-x: auto; }
+.paper-verdict { margin: var(--s1) 0 0 1.9em; }
 .paper-solution {
-  margin: 5px 0 0 1.9em; padding-left: 10px; border-left: 2px solid var(--border);
+  margin: var(--s1) 0 0 1.9em; padding-left: var(--s3); border-left: 2px solid var(--border);
   color: var(--dim); font-size: var(--t-meta); overflow-x: auto;
 }
 input.paper-box { margin-left: 1.9em; width: calc(100% - 1.9em); max-width: 22em; }
 .paper-problem > textarea { margin-left: 1.9em; width: calc(100% - 1.9em); }
 .paper-problem > .row { margin-left: 1.9em; }
-.paper-score { margin: 2px 0 6px; }
-.paper-challenge { margin-top: 6px; }
+.paper-score { margin: var(--s1) 0 var(--s2); }
+.paper-challenge { margin-top: var(--s2); }
 
 /* ---- debate ----
    The prompt is shown inside a <details> rather than always open: it is ~7000
@@ -472,31 +504,31 @@ input.paper-box { margin-left: 1.9em; width: calc(100% - 1.9em); max-width: 22em
    readable rather than hidden because a prompt you cannot inspect is one you
    stop trusting. */
 .prompt {
-  margin: 8px 0 2px; padding: 10px 12px; max-height: 320px; overflow: auto;
-  background: var(--bg); border: 1px solid var(--border-soft); border-radius: 6px;
+  margin: var(--s2) 0 var(--s1); padding: var(--s3); max-height: 320px; overflow: auto;
+  background: var(--bg); border: 1px solid var(--border-soft); border-radius: var(--r-sm);
   font: inherit; font-size: var(--t-meta); color: var(--dim);
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
 /* One line of the ballot. Bordered like `.recall-half` because it is the same
    kind of object — a graded part of an answer, with what it scored beside it. */
-.ballot-line { border-top: 1px solid var(--border-soft); padding: 6px 0 3px; }
+.ballot-line { border-top: 1px solid var(--border-soft); padding: var(--s2) 0 var(--s1); }
 .ballot-line > .row { margin: 0; }
 
 /* The overnight resolution. Bordered on the left rather than boxed: it is a
    quotation of what the 3am task decided, and it sits inside a panel that is
    already a card. */
-.motion { border-left: 2px solid var(--gold-dim); padding: 2px 0 2px 10px; }
+.motion { border-left: 2px solid var(--border); padding: var(--s1) 0 var(--s1) var(--s3); }
 
 /* The week's reading. A read item dims rather than striking through — it is
    still the thing the opponent will quiz you on, so it has to stay readable. */
-li.reading { margin: 6px 0; }
+li.reading { margin: var(--s2) 0; }
 li.reading.read > a { color: var(--dim); }
-li.reading .tag { margin-left: 6px; }
+li.reading .tag { margin-left: var(--s2); }
 
 /* The remove-a-fact button, and the reading tick. Small enough not to compete
    with the text they sit beside, which is the thing being read. */
-button.tiny { font-size: var(--t-meta); padding: 0 5px; line-height: 1.5; color: var(--faint); }
+button.tiny { font-size: var(--t-meta); padding: 0 var(--s1); line-height: 1.5; color: var(--faint); }
 button.tiny:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
 /* A ticked item is gold and hovers gold: unticking is not a destructive act,
    and a red hover on the only control that undoes a mistake reads as one. */
@@ -508,8 +540,8 @@ button.tiny.read:hover:not(:disabled) { border-color: var(--gold); color: var(--
    this line" has a single-number answer. */
 /* The track is the page colour rather than a lighter one: a bar sits inside a
    card, and a track brighter than the card it is on competes with its own fill. */
-.bar { height: 3px; background: var(--bg); border-radius: 2px; margin: 3px 0 1px; overflow: hidden; }
-.bar-fill { height: 100%; border-radius: 2px; transition: width .25s ease; }
+.bar { height: 3px; background: var(--bg); border-radius: var(--r-mark); margin: var(--s1) 0 1px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: var(--r-mark); transition: width .25s ease; }
 .bar-ok { background: var(--ok); } .bar-gold { background: var(--gold); } .bar-bad { background: var(--bad); }
 
 /* A retired card in the argument deck. Dimmed rather than hidden: the list is
@@ -519,24 +551,24 @@ button.tiny.read:hover:not(:disabled) { border-color: var(--gold); color: var(--
 
 select {
   background: var(--bg); border: 1px solid var(--border); color: var(--fg);
-  font: inherit; font-size: var(--t-body); padding: 4px 6px; border-radius: 6px; flex: 0 0 auto;
+  font: inherit; font-size: var(--t-body); padding: var(--s1) var(--s2); border-radius: var(--r-sm); flex: 0 0 auto;
 }
 
 /* ---- theorem archive ----
    No height or overflow here: #modal already caps at 84vh and scrolls, with
    a sticky head. A second scroll container inside it would nest scrollbars
    and strand the sticky head above a viewport it no longer governs. */
-.archive { margin-top: 10px; }
-.archive-item { border-top: 1px solid var(--border-soft); padding: 7px 0; }
+.archive { margin-top: var(--s3); }
+.archive-item { border-top: 1px solid var(--border-soft); padding: var(--s2) 0; }
 .archive-item > summary { cursor: pointer; list-style-position: outside; }
 .archive-item > summary::marker { color: var(--faint); }
-.archive-item[open] > summary { color: var(--gold); }
-.archive-item > .statement { margin: 8px 0 4px 14px; }
+.archive-item[open] > summary { color: var(--accent); }
+.archive-item > .statement { margin: var(--s2) 0 var(--s1) var(--s4); }
 
 /* ---- task chips ---- */
-.chips { display: flex; gap: 8px; flex-wrap: wrap; }
-.chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;
-        border: 1px solid var(--border); border-radius: 18px; cursor: pointer;
+.chips { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3);
+        border: 1px solid var(--border); border-radius: var(--r-pill); cursor: pointer;
         font-size: var(--t-body); color: var(--dim); background: var(--raised);
         transition: border-color .15s, color .15s; user-select: none; }
 .chip:hover { border-color: var(--accent); color: var(--accent); }
@@ -550,19 +582,19 @@ select {
 .completion-ring { color: var(--gold); font-weight: 700; }
 
 /* ---- home: the stat cards beside the heatmap ---- */
-.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-bottom: 12px; }
-.stat-card { border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px 12px; background: var(--panel); }
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: var(--s3); margin-bottom: var(--s3); }
+.stat-card { border: 1px solid var(--border-soft); border-radius: var(--r-sm); padding: var(--s3); background: var(--panel); }
 .stat-card .rating { line-height: 1.2; }
 
 /* ---- games: the two boards side by side ---- */
-.game-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
-.game-card { border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px 12px; background: var(--panel); }
+.game-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s3); }
+.game-card { border: 1px solid var(--border-soft); border-radius: var(--r-sm); padding: var(--s3); background: var(--panel); }
 
 /* ---- the keyboard help sheet ---- */
-.keys { display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; align-items: baseline; margin-top: 10px; }
-.keycombo { display: flex; gap: 4px; }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: var(--s2) var(--s4); align-items: baseline; margin-top: var(--s3); }
+.keycombo { display: flex; gap: var(--s1); }
 kbd { font: inherit; font-size: var(--t-meta); border: 1px solid var(--border); border-bottom-width: 2px;
-      border-radius: 4px; padding: 1px 6px; color: var(--fg); background: var(--bg); }
+      border-radius: var(--r-sm); padding: 1px var(--s2); color: var(--fg); background: var(--bg); }
 
 /* ---- the statusline ----
    nvchad's, in spirit: where you are on the left, what is left in the middle,
@@ -574,28 +606,32 @@ kbd { font: inherit; font-size: var(--t-meta); border: 1px solid var(--border); 
   background: var(--panel2); border-top: 1px solid var(--border);
   font-size: var(--t-meta); color: var(--dim);
 }
+/* The block that says which tab you are on, in the colour every other
+   "you are here" in the app uses. */
 #st-tab {
-  background: var(--gold); color: #10131c; font-weight: 700;
-  padding: 4px 14px; letter-spacing: .6px; text-transform: uppercase;
+  background: var(--accent); color: #071016; font-weight: 700;
+  padding: var(--s1) var(--s4); letter-spacing: .6px; text-transform: uppercase;
 }
-.st-seg { padding: 4px 14px; border-right: 1px solid var(--border); }
-#st-mode { color: var(--accent); }
+.st-seg { padding: var(--s1) var(--s4); border-right: 1px solid var(--border); }
+/* Neutral now that the block to its left is cyan — two cyans touching read
+   as one wide segment. */
+#st-mode { color: var(--fg); }
 .st-spacer { flex: 1; }
 .st-hint { border-right: none; border-left: 1px solid var(--border); color: var(--faint); }
-.st-hint kbd { font-size: var(--t-meta); padding: 0 4px; }
+.st-hint kbd { font-size: var(--t-meta); padding: 0 var(--s1); }
 
 /* ---- history: the completion heatmap ----
    Column-major: `grid-auto-flow: column` over seven fixed rows means cells
    appended in date order land as weeks, so the DOM order is the reading order
    and no cell needs to name its own position. */
 :root { --hm-col: 11px; --hm-gap: 3px; }
-.hm-scroll { overflow-x: auto; padding-bottom: 4px; margin: 8px 0; }
+.hm-scroll { overflow-x: auto; padding-bottom: var(--s1); margin: var(--s2) 0; }
 .hm-wrap { display: inline-block; min-width: min-content; }
 .heatmap { display: grid; grid-template-rows: repeat(7, var(--hm-col));
            grid-auto-flow: column; grid-auto-columns: var(--hm-col); gap: var(--hm-gap); }
 .hm-months { display: grid; gap: var(--hm-gap); margin-bottom: 3px; }
 .hm-month { font-size: var(--t-meta); color: var(--faint); white-space: nowrap; }
-.hm-cell { width: var(--hm-col); height: var(--hm-col); border-radius: 2px; background: var(--bg);
+.hm-cell { width: var(--hm-col); height: var(--hm-col); border-radius: var(--r-mark); background: var(--bg);
            border: 1px solid var(--border-soft); }
 /* Four steps of gold, so "nearly done" and "done" are different squares. The
    top step is the one worth earning and is the only one that is fully solid. */
@@ -605,54 +641,54 @@ kbd { font: inherit; font-size: var(--t-meta); border: 1px solid var(--border); 
 .hm-4 { background: var(--gold); border-color: transparent; }
 /* Days that have not happened yet are absent, not empty. */
 .hm-future { background: transparent; border-color: transparent; }
-.daylog-text { margin: 2px 0 0; }
+.daylog-text { margin: var(--s1) 0 0; }
 .archive-item .daylog-text { color: var(--fg); }
 
 /* ---- modal ---- */
 #modal-overlay { position: fixed; inset: 0; background: rgba(4,6,10,.72);
                  display: flex; align-items: flex-start; justify-content: center;
-                 padding: 7vh 16px; z-index: 50; backdrop-filter: blur(2px); }
+                 padding: 7vh var(--s4); z-index: 50; backdrop-filter: blur(2px); }
 #modal-overlay[hidden] { display: none; }   /* ID specificity must beat the display:flex above */
-#modal { background: var(--raised); border: 1px solid var(--border); border-radius: 12px;
-         width: min(680px, 100%); max-height: 84vh; overflow-y: auto; padding: 16px 20px; }
+#modal { background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-md);
+         width: min(680px, 100%); max-height: 84vh; overflow-y: auto; padding: var(--s4) var(--s5); }
 #modal-head { display: flex; justify-content: space-between; align-items: center;
-              border-bottom: 1px solid var(--border-soft); padding: 2px 0 8px; margin-bottom: 12px;
+              border-bottom: 1px solid var(--border-soft); padding: var(--s1) 0 var(--s2); margin-bottom: var(--s3);
               position: sticky; top: 0; background: var(--raised); z-index: 1; }
-#modal-title { color: var(--gold); font-weight: 700; letter-spacing: .8px; }
-#modal-close { border: 1px solid var(--border); font-size: var(--t-lede); line-height: 1; padding: 3px 9px; }
+#modal-title { color: var(--fg); font-weight: 700; letter-spacing: .8px; }
+#modal-close { border: 1px solid var(--border); font-size: var(--t-lede); line-height: 1; padding: var(--s1) var(--s2); }
 #modal-close:hover { border-color: var(--bad); color: var(--bad); }
 
 /* ---- toast ---- */
-#toast { position: fixed; bottom: 46px; left: 50%; transform: translateX(-50%);
+#toast { position: fixed; bottom: var(--s7); left: 50%; transform: translateX(-50%);
          background: var(--raised); border: 1px solid var(--bad); color: var(--fg);
-         border-radius: 8px; padding: 8px 16px; z-index: 60; font-size: var(--t-body); }
-#toast.info { border-color: var(--gold-dim); }
+         border-radius: var(--r-sm); padding: var(--s2) var(--s4); z-index: 60; font-size: var(--t-body); }
+#toast.info { border-color: var(--accent-dim); }
 
 /* ---- charts ---- */
-.chart-block { margin: 8px 0 4px; }
+.chart-block { margin: var(--s2) 0 var(--s1); }
 .chart-title { font-size: var(--t-meta); color: var(--dim); display: flex; justify-content: space-between; }
 .line-chart { width: 100%; max-height: 80px; }
 svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(--faint); }
 
 /* ---- wordle / pokedoku trophy grids ---- */
-.wgrid { display: inline-grid; grid-template-columns: repeat(5, 16px); gap: 2px; margin: 4px 8px 4px 0; vertical-align: top; }
-.pgrid { display: inline-grid; grid-template-columns: repeat(3, 16px); gap: 2px; margin: 4px 8px 4px 0; vertical-align: top; }
-.cell { width: 16px; height: 16px; border-radius: 3px; background: var(--raised); }
+.wgrid { display: inline-grid; grid-template-columns: repeat(5, 16px); gap: 2px; margin: var(--s1) var(--s2) var(--s1) 0; vertical-align: top; }
+.pgrid { display: inline-grid; grid-template-columns: repeat(3, 16px); gap: 2px; margin: var(--s1) var(--s2) var(--s1) 0; vertical-align: top; }
+.cell { width: 16px; height: 16px; border-radius: var(--r-mark); background: var(--raised); }
 .cell.g { background: #6aaa64; } .cell.y { background: #c9b458; }
 .cell.r { background: #a04652; } .cell.w { background: #4a5165; }
 
 /* ---- piano ---- */
-.piano-item + .piano-item { margin-top: 10px; border-top: 1px solid var(--border-soft); padding-top: 8px; }
+.piano-item + .piano-item { margin-top: var(--s3); border-top: 1px solid var(--border-soft); padding-top: var(--s2); }
 .piano-head { display: flex; justify-content: space-between; align-items: baseline; }
-.piano-name { color: var(--gold); font-weight: 600; }
+.piano-name { color: var(--fg); font-weight: 600; }
 .piano-notes { color: var(--dim); font-size: var(--t-meta); }
 /* The play button sits on the spelling line rather than above the keyboard:
    the keyboard is the picture, and a control floating over it reads as part of
    the diagram. Margin is zeroed because `.row` adds its own. */
-.piano-controls { margin: 4px 0 2px; }
-.piano-play { font-size: var(--t-meta); padding: 2px 8px; flex: 0 0 auto; }
-.piano-song { font-size: var(--t-meta); margin-top: 3px; }
-#panel-piano svg { width: 100%; max-width: 280px; height: auto; display: block; margin: 4px 0; }
+.piano-controls { margin: var(--s1) 0; }
+.piano-play { font-size: var(--t-meta); padding: var(--s1) var(--s2); flex: 0 0 auto; }
+.piano-song { font-size: var(--t-meta); margin-top: var(--s1); }
+#panel-piano svg { width: 100%; max-width: 280px; height: auto; display: block; margin: var(--s1) 0; }
 .pk-white { fill: #e8eaf0; stroke: #1a1f2c; stroke-width: 1; }
 .pk-black { fill: #1a1f2c; stroke: #000; stroke-width: 1; }
 .pk-hl    { fill: var(--accent); }
@@ -662,7 +698,7 @@ svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(-
 /* inline spinner for the math-problem streaming status */
 .spinner {
   display: inline-block; width: 12px; height: 12px;
-  border: 2px solid var(--border); border-top-color: var(--gold);
+  border: 2px solid var(--border); border-top-color: var(--accent);
   border-radius: 50%; animation: spin .7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -683,20 +719,20 @@ svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(-
    proportional digits cannot be scanned for magnitude, which is the only thing
    anyone does with it. The symbol column stays left, because that one is read
    as a word. */
-.scroll-x { overflow-x: auto; margin: 8px 0; }
+.scroll-x { overflow-x: auto; margin: var(--s2) 0; }
 
 table.holdings { width: 100%; border-collapse: collapse; font-size: var(--t-body); }
 table.holdings th {
   text-align: right;
   font-weight: 500;
   color: var(--faint);
-  padding: 0 0 4px;
+  padding: 0 0 var(--s1);
   border-bottom: 1px solid var(--border-soft);
 }
 table.holdings th:first-child { text-align: left; }
 table.holdings td {
   text-align: right;
-  padding: 5px 0;
+  padding: var(--s2) 0;
   border-bottom: 1px solid var(--border-soft);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -704,6 +740,6 @@ table.holdings td {
 table.holdings td:first-child { text-align: left; white-space: normal; }
 /* Columns need air between them, but the outer edges should sit flush with the
    panel body rather than indented from it. */
-table.holdings th + th, table.holdings td + td { padding-left: 14px; }
+table.holdings th + th, table.holdings td + td { padding-left: var(--s4); }
 /* A long fund name should not set the width of the whole table. */
 table.holdings td:first-child .small { max-width: 22ch; overflow-wrap: anywhere; }

@@ -112,7 +112,7 @@ function summaryCard(panel) {
 
   return el("div", null,
     el("div.row.spread", null,
-      el("span.big.gold", { text: panel.trick.name }),
+      el("span.big.value", { text: panel.trick.name }),
       el("span.tag", { text: panel.trick.kind }),
     ),
     el("div.faint", { text: panel.trick.topic }),

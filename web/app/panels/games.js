@@ -61,7 +61,7 @@ function gameBlock(game, result) {
   const spec = GAMES[game];
   return el("div.game-card", null,
     el("div.row.spread", null,
-      el("span.gold", { text: spec.label }),
+      el("span.value", { text: spec.label }),
       link(...spec.play),
     ),
     result

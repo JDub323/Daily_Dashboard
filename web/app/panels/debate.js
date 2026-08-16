@@ -86,7 +86,7 @@ function header(panel) {
 /** Issue · sub-area · today's angle. The line that says what today *is*. */
 function subject(panel) {
   return el("div", null,
-    el("div.big.gold", { text: panel.subarea ?? "—" }),
+    el("div.big.value", { text: panel.subarea ?? "—" }),
     el("div.faint", {
       text: panel.reading_day
         ? `${panel.issue_name} · reading day — no debate, just the file`

@@ -168,7 +168,7 @@ window.addEventListener("pagehide", () => lock({ keepalive: true }));
 // --- rendering --------------------------------------------------------------
 
 function countdown(seconds, onExpire) {
-  const node = el("span.gold");
+  const node = el("span.value");
   let left = seconds;
   const paint = () => {
     const minutes = Math.floor(left / 60);

@@ -307,7 +307,7 @@ export const areas = {
         return el("div.chart-block", null,
           el("div.chart-title", null,
             el("span", { text: series.area }),
-            el("span.gold", { text: values[values.length - 1] }),
+            el("span.value", { text: values[values.length - 1] }),
           ),
           lineChart(values, { color: "var(--accent)" }),
           el("div.faint.small", {
@@ -347,7 +347,7 @@ export const archive = {
       el("div.archive", null,
         ...data.daylogs.map((entry) =>
           el("div.archive-item", null,
-            el("div.gold.small", { text: entry.date }),
+            el("div.value.small", { text: entry.date }),
             el("div.daylog-text", { text: entry.text }),
           ),
         ),

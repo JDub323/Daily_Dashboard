@@ -58,7 +58,7 @@ function draw(body) {
     el("div.row.spread", null,
       el("span.faint", { text: `${entries.length} problems` }),
       pending.length
-        ? el("span.gold", {
+        ? el("span.value", {
             text: `${pending.length} still submittable`,
             title: `a lapse can be submitted for ${late_window_days} days`,
           })
