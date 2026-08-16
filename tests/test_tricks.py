@@ -239,7 +239,8 @@ def opened(repo, *, callback: d.Trick | None = None, name: str = "Roots of unity
 
 def test_a_second_draw_hands_back_the_first(repo):
     """Idempotent per day, which matters more here than for the theorem draw:
-    rerolling this one spends a generation."""
+    the boot gather asks for this on every page load, so a reroll would swap the
+    set out from under a sheet half worked."""
     stored, first = opened(repo)
     again = repo.open_trick_round(TODAY, stored.id, a_set(4, 4))
     assert [p.prompt for p in again.problems] == [p.prompt for p in first.problems]
@@ -491,16 +492,21 @@ def test_the_context_says_so_when_the_feature_is_off(settings):
     }
 
 
-# --- serving from the batch -------------------------------------------------
+# --- serving from the batch, which is the only way a set arrives -------------
+
+
+def write_batch(settings, payload, date: dt.date = TODAY) -> None:
+    """Leave a file where the 3am task would have. A string is written as-is,
+    which is how the not-quite-JSON cases below get on disk."""
+    settings.path("batches").mkdir(parents=True, exist_ok=True)
+    raw = payload if isinstance(payload, str) else json.dumps(payload)
+    content.trick_batch_path(settings, date).write_text(raw, encoding="utf-8")
 
 
 def test_a_batched_set_is_served_without_an_llm_call(settings, repo):
     """No API key exists in the tests, so anything that reached `llm` would
     raise rather than pass."""
-    settings.path("batches").mkdir(parents=True, exist_ok=True)
-    content.trick_batch_path(settings, TODAY).write_text(
-        json.dumps(a_batch(settings)), encoding="utf-8"
-    )
+    write_batch(settings, a_batch(settings))
     round_ = content.next_trick(settings, repo, TODAY)
     assert repo.trick(round_.trick_id).name == "Conjugate multiplication"
     assert len(round_.problems) == settings.tricks.easy + settings.tricks.medium + 1
@@ -513,105 +519,27 @@ def test_the_batchs_own_callback_wins_over_a_fresh_pick(settings, repo):
     repo.add_trick(a_trick("Vieta's formulas", added=TODAY - dt.timedelta(days=400)))
     payload = a_batch(settings, callback="Telescoping")
     payload["problems"][-2]["band"] = "callback"
-    settings.path("batches").mkdir(parents=True, exist_ok=True)
-    content.trick_batch_path(settings, TODAY).write_text(json.dumps(payload), encoding="utf-8")
+    write_batch(settings, payload)
     round_ = content.next_trick(settings, repo, TODAY)
     assert round_.callback_id == old.id
 
 
-def test_an_unusable_batch_does_not_take_the_panel_down(settings, repo, monkeypatch):
-    """A batch is an optimisation, and an optimisation that can take the panel
-    down is not one — it falls through to a generation."""
-    settings.path("batches").mkdir(parents=True, exist_ok=True)
-    content.trick_batch_path(settings, TODAY).write_text("{not json", encoding="utf-8")
-
-    called = {}
-
-    def fake(settings_, date, wanted, seen, callback):
-        called["wanted"] = wanted
-        return a_trick("Generated"), a_set(2, 1)
-
-    monkeypatch.setattr(content, "generate_trick", fake)
+def test_a_batch_written_as_a_chat_reply_still_imports(settings, repo):
+    """`extract_json` takes the object out of whatever it is sitting in. The
+    task is a model writing a file, so a stray sentence and a fence around the
+    JSON is the likeliest way a good night's work arrives slightly wrong."""
+    write_batch(
+        settings,
+        f"Here's today's set:\n\n```json\n{json.dumps(a_batch(settings))}\n```\n",
+    )
     round_ = content.next_trick(settings, repo, TODAY)
-    assert repo.trick(round_.trick_id).name == "Generated"
-    assert called["wanted"]["challenge"] == 1
-
-
-def test_a_generated_repeat_is_a_loud_error_rather_than_a_silent_one(
-    settings, repo, monkeypatch
-):
-    repo.add_trick(a_trick("Generated"))
-    monkeypatch.setattr(
-        content, "generate_trick", lambda *a, **k: (a_trick("Generated"), a_set(2, 1))
-    )
-    with pytest.raises(content.ContentError, match="already had"):
-        content.next_trick(settings, repo, TODAY)
-
-
-# --- the free path: a set written in the Claude app -------------------------
-
-
-def test_the_prompt_is_self_contained(settings, repo):
-    """What is copied is the whole of what the model will see, so anything left
-    implicit is something that only works when you remember to say it."""
-    repo.add_trick(a_trick("Telescoping", added=TODAY - dt.timedelta(days=90)))
-    prompt = content.trick_prompt(settings, repo, TODAY)
-    assert settings.math.topic_for(TODAY) in prompt
-    assert "Telescoping" in prompt  # the callback it must write a problem on
-    assert '"problems"' in prompt  # the output schema
-    assert "band" in prompt and "accept" in prompt
-    assert TODAY.isoformat() in prompt
-
-
-def test_the_prompt_names_the_same_callback_twice_running(settings, repo):
-    """Asked once to build the prompt and again when the paste arrives. A fresh
-    sample each time would name a different trick on every reload."""
-    for i in range(6):
-        repo.add_trick(a_trick(f"trick {i}", added=TODAY - dt.timedelta(days=30 + i * 20)))
-    first = content.today_callback(settings, repo, TODAY)
-    assert first is not None
-    assert all(content.today_callback(settings, repo, TODAY).id == first.id for _ in range(5))
-
-
-def test_a_pasted_set_costs_nothing_and_lands(settings, repo):
-    """No API key exists in the tests, so anything reaching `llm` would raise."""
-    round_ = content.trick_from_paste(settings, repo, TODAY, json.dumps(a_batch(settings)))
-    assert repo.trick(round_.trick_id).name == "Conjugate multiplication"
-    assert len(round_.problems) == settings.tricks.easy + settings.tricks.medium + 1
-
-
-def test_a_pasted_set_survives_the_chat_wrapping_it_in_prose(settings, repo):
-    """`extract_json` takes the object out of whatever it is sitting in, which
-    is what a copy out of a chat window looks like."""
-    wrapped = (
-        f"Sure — here's today's set:\n\n```json\n{json.dumps(a_batch(settings))}\n```\n"
-        f"Hope it helps!"
-    )
-    round_ = content.trick_from_paste(settings, repo, TODAY, wrapped)
     assert repo.trick(round_.trick_id).name == "Conjugate multiplication"
 
 
-def test_a_paste_for_another_week_is_refused(settings, repo):
-    with pytest.raises(tricks.TrickError, match="week"):
-        content.trick_from_paste(
-            settings, repo, TODAY, json.dumps(a_batch(settings, topic="knot theory"))
-        )
-
-
-def test_a_paste_that_is_not_json_says_so(settings, repo):
-    with pytest.raises(tricks.TrickError, match=r"not JSON|not a trick set"):
-        content.trick_from_paste(settings, repo, TODAY, "I'm afraid I can't do that")
-
-
-def test_a_paste_cannot_overwrite_a_set_you_have_already_started(settings, repo):
-    opened(repo)
-    with pytest.raises(tricks.TrickError, match="already stored"):
-        content.trick_from_paste(settings, repo, TODAY, json.dumps(a_batch(settings)))
-
-
-def test_a_misshapen_paste_is_accepted_where_the_cli_would_reject_it(settings, repo):
-    """The two callers disagree about strictness on purpose: at 3am regenerating
-    is free, and at breakfast you have already done the work of getting it."""
+def test_a_misshapen_batch_is_served_where_the_cli_would_have_rejected_it(settings, repo):
+    """The two ends of the night disagree about strictness on purpose: at 3am
+    the task can write another, and by 8am the alternative to a set two problems
+    short is no set at all."""
     payload = a_batch(settings)
     payload["problems"] = payload["problems"][2:]  # two easy problems short
     _, errors, warnings = content.parse_trick_set(settings, json.dumps(payload), TODAY)
@@ -619,31 +547,75 @@ def test_a_misshapen_paste_is_accepted_where_the_cli_would_reject_it(settings, r
     assert any("easy" in w for w in warnings)
     _, cli_errors = batch.validate_trick(settings, json.dumps(payload), TODAY)
     assert cli_errors
-    assert content.trick_from_paste(settings, repo, TODAY, json.dumps(payload))
+    write_batch(settings, payload)
+    assert content.next_trick(settings, repo, TODAY)
 
 
-def test_a_paste_resolves_its_callback_by_name(settings, repo):
-    old = repo.add_trick(a_trick("Telescoping", added=TODAY - dt.timedelta(days=90)))
-    payload = a_batch(settings, callback="Telescoping")
-    payload["problems"][-2]["band"] = "callback"
-    round_ = content.trick_from_paste(settings, repo, TODAY, json.dumps(payload))
-    assert round_.callback_id == old.id
+# --- the morning after a night that did not run -----------------------------
 
 
-def test_the_panel_carries_the_prompt_until_there_is_a_set(settings, repo):
-    """Shipped with the panel rather than fetched on click, so the copy button
-    is instant and what you copy is what you were looking at."""
-    before = state.tricks_panel(settings, repo, TODAY)
-    assert before.prompt and before.batched is False
-    opened(repo)
-    assert state.tricks_panel(settings, repo, TODAY).prompt is None
+def test_no_file_is_an_error_naming_the_fix_rather_than_a_generation(settings, repo):
+    """The whole of the failure path. There is no pool behind the trick and no
+    paid generation left, so this is a morning with no set — said out loud, with
+    the command that fixes it, rather than billed for quietly."""
+    with pytest.raises(content.ContentError, match="trick-context"):
+        content.next_trick(settings, repo, TODAY)
 
 
-def test_the_panel_says_when_tonights_file_is_already_there(settings, repo):
-    settings.path("batches").mkdir(parents=True, exist_ok=True)
-    content.trick_batch_path(settings, TODAY).write_text(
-        json.dumps(a_batch(settings)), encoding="utf-8"
-    )
+@pytest.mark.parametrize(
+    "payload",
+    ["{not json", '{"date": "2026-08-14"}', "I'm afraid I can't do that"],
+)
+def test_an_unusable_file_is_the_same_as_no_file(settings, repo, payload):
+    """Four ways of having nothing — no file, bad JSON, the wrong shape, a
+    refusal — and one thing to say about all of them. Which it was is in the
+    log; the panel only needs to know the night did not land."""
+    write_batch(settings, payload)
+    with pytest.raises(content.ContentError, match="has not landed"):
+        content.next_trick(settings, repo, TODAY)
+
+
+def test_a_file_for_another_week_is_not_served(settings, repo):
+    """Not visibly wrong at 8am, which is why it is checked at both ends."""
+    write_batch(settings, a_batch(settings, topic="knot theory"))
+    with pytest.raises(content.ContentError, match="has not landed"):
+        content.next_trick(settings, repo, TODAY)
+
+
+def test_a_file_repeating_a_trick_you_have_had_says_which_one(settings, repo):
+    repo.add_trick(a_trick("Conjugate multiplication"))
+    write_batch(settings, a_batch(settings))
+    with pytest.raises(content.ContentError, match="already had"):
+        content.next_trick(settings, repo, TODAY)
+
+
+def test_the_boot_gather_cannot_reroll_a_set_you_have_started(settings, repo):
+    """`next_trick` is called on every page load now, so idempotence is what
+    stops a second tab at noon from swapping the set under a sheet you are half
+    way through."""
+    stored, first = opened(repo)
+    write_batch(settings, a_batch(settings))
+    again = content.next_trick(settings, repo, TODAY)
+    assert again.trick_id == stored.id
+    assert [p.prompt for p in again.problems] == [p.prompt for p in first.problems]
+
+
+def test_the_callback_is_the_same_on_a_second_run_of_the_context(settings, repo):
+    """Chosen at 3am and echoed into the file. A fresh sample each time would
+    mean a retried `--trick-context` naming a different trick from the one the
+    first run's set was written against."""
+    for i in range(6):
+        repo.add_trick(a_trick(f"trick {i}", added=TODAY - dt.timedelta(days=30 + i * 20)))
+    first = content.today_callback(settings, repo, TODAY)
+    assert first is not None
+    assert all(content.today_callback(settings, repo, TODAY).id == first.id for _ in range(5))
+
+
+def test_the_panel_says_whether_tonights_file_is_there(settings, repo):
+    """The one bit the boot gather reads. False means the page must not ask for
+    a set, because there is nothing that could answer."""
+    assert state.tricks_panel(settings, repo, TODAY).batched is False
+    write_batch(settings, a_batch(settings))
     assert state.tricks_panel(settings, repo, TODAY).batched is True
 
 

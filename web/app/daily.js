@@ -32,6 +32,12 @@
 // that is never marked lapses at 0.0 — the rule is that abandoning a problem
 // you asked for costs a full result, while a week away costs nothing. A gather
 // on boot would make opening a tab the asking, and charge for it.
+//
+// The trick set *is* in the table, and the difference is exactly that rule: an
+// unworked set is not scored at all, so a day the page was opened and the sheet
+// never touched costs nothing. It joined once the overnight file became its only
+// source — while a draw could still fall through to a paid generation, a gather
+// on boot was a page load that could spend.
 
 import * as api from "./api.js";
 import { el } from "./dom.js";
@@ -92,6 +98,21 @@ const DAILIES = [
     busy: "fetching…",
     needed: (state) => !state.chess.puzzle_id,
     open: () => api.post("/api/chess/new"),
+  },
+  {
+    key: "tricks",
+    panel: "tricks",
+    label: "open tonight's set",
+    busy: "opening…",
+    // `batched` is the guard, and it is not the same kind of guard as the
+    // others. They are asking "is today's already here?"; this one also asks
+    // whether there is anything to draw *from*, because the overnight file is
+    // now the only source — no pool behind it, and nothing paid. Without the
+    // check, every page load on a morning the 3am task missed would fire a
+    // request that can only come back a 502, and the panel would report a
+    // failure where what actually happened is that the night did not run.
+    needed: (state) => state.tricks.enabled && !state.tricks.trick && state.tricks.batched,
+    open: () => api.post("/api/trick/new"),
   },
 ];
 

@@ -622,10 +622,13 @@ def theorem_from_prompt(settings: Settings, date: dt.date, prompt: str) -> d.The
 # are checked by string comparison rather than by a grader -- eight gradings a
 # day would cost more than the generation that produced the problems.
 #
-# The overnight batch is the other half of the same decision. Unlike the math
-# problem there is no curated pool to fall back on, so `batches/trick-<date>.json`
-# is the only free source there is; the paid path below exists for the mornings
-# the 3am task did not run.
+# That generation happens overnight, on a subscription, and `batches/trick-<date>.json`
+# is where it lands. It is the only source there is. There used to be two more --
+# a prompt the panel handed you to carry into the Claude app and paste back, and
+# a paid API generation behind a button -- and both are gone, on `next_problem`'s
+# reasoning: the morning after a night the task did not run should be a morning
+# with no set, visibly, rather than a morning that quietly costs something or
+# asks you to go and do by hand what the night was for.
 
 TRICK_MEMORY = 300
 """How many past trick names go into the do-not-repeat list.
@@ -661,25 +664,13 @@ TRICK_RULES = (
 )
 """The rules, without the output schema.
 
-Public and separated from `_TRICK_SYSTEM` below because the overnight task
-needs exactly these instructions with a *different* schema attached -- the
-batch file carries the date and topic back for validation, the live response
-does not. Keeping one copy is what stops the free path and the paid path from
-slowly becoming two features. See `batch.trick_context`.
+Public because the overnight task is what uses them: `batch.trick_context`
+prints these, `trick_instructions` below and `TRICK_SCHEMA` as one payload, so
+the night's generation is asking for exactly what this module will import.
+Nothing in the app generates a set, so this is the only place they are needed
+-- and keeping them here, next to the parser that has to accept the result, is
+what stops the asking and the reading from drifting apart.
 """
-
-_TRICK_SYSTEM = (
-    f"{TRICK_RULES}\n\n"
-    "Respond ONLY with JSON:\n"
-    '{"name":"the standard name of the trick, plain text, no LaTeX",'
-    '"statement":"what it says, stated precisely, LaTeX delimited",'
-    '"idea":"when to reach for it and what it buys you — two or three sentences, and '
-    'name the situation that should trigger it",'
-    '"kind":"trick or technique",'
-    '"problems":[{"band":"easy|medium|callback|challenge","prompt":"the problem, LaTeX '
-    'delimited","answer":"the bare final answer","accept":["other spellings of the same '
-    'answer"],"solution":"one or two lines: the trick applied, and the answer"}]}'
-)
 
 
 def trick_instructions(
@@ -691,9 +682,9 @@ def trick_instructions(
     """What today's set has to be, in words.
 
     Public and built from primitives so the overnight task can be handed the
-    identical instructions -- `batch.trick_context` puts this in its payload,
-    which is what keeps the free path and the paid path asking for the same
-    thing rather than drifting into two features.
+    day's shape rather than having to know how to work it out -- which old
+    trick to call back to, how many of each band, what has already been taught.
+    `batch.trick_context` puts this in its payload.
     """
     lines = [
         f"Topic of the week: {topic}. Give me today's trick from this topic, and its "
@@ -761,61 +752,23 @@ def _to_trick(
     return trick, problems
 
 
-def generate_trick(
-    settings: Settings,
-    date: dt.date,
-    wanted: dict[str, int],
-    seen: list[str],
-    callback: d.Trick | None,
-) -> tuple[d.Trick, list[d.TrickProblem]]:
-    """One paid generation of the day's trick and its problems.
-
-    No web search, unlike the math problem: nothing here is a claim about a
-    real past competition that could be got factually wrong, so there is
-    nothing to verify and no reason to pay for four searches. What can go
-    wrong is a stated identity that is false, and a search would not catch
-    that either -- the problems are the check, since a wrong identity produces
-    answers that do not survive being worked by hand.
-    """
-    raw = _json_generation(
-        settings,
-        kind="trick",
-        date=date,
-        topic=settings.math.topic_for(date),
-        system=_TRICK_SYSTEM,
-        user=trick_instructions(settings.math.topic_for(date), wanted, seen, callback),
-    )
-    if not isinstance(raw, dict):
-        raise ContentError("the trick generation did not return an object")
-    trick, problems = _to_trick(raw, settings, date)
-
-    # Logged rather than rejected. A set with three easy problems instead of
-    # four is a slightly short morning; refusing it would mean paying for a
-    # second generation over a missing rung, and `_store`'s rule applies --
-    # spending your money on a retry is not a decision this module makes on
-    # its own.
-    for complaint in tricks.check_bands(problems, wanted):
-        log.warning("today's trick set is misshapen: %s", complaint)
-    return trick, problems
-
-
 def parse_trick_set(
     settings: Settings, raw: str, date: dt.date | None = None
 ) -> tuple[Any | None, list[str], list[str]]:
     """Read a written trick set, and say what is wrong with it.
 
-    One parser for all three ways a set can arrive -- the overnight batch file,
-    a paste out of the Claude app, and `./batch.sh --validate-trick` -- because
-    they are the same document produced by the same instructions, and a second
-    reading of it is a second set of rules to keep in step.
+    One parser for both ends of the same file -- `./batch.sh --validate-trick`
+    checking it at 3am, and `_trick_from_batch` importing it at 8am -- because
+    a second reading of one document is a second set of rules to keep in step.
 
-    Returns `(set, errors, warnings)`, and the split is what lets the three
+    Returns `(set, errors, warnings)`, and the split is what lets the two
     callers disagree about strictness without disagreeing about the rules.
     **Errors** make the set unusable: it will not parse, it is for another week,
     it repeats a problem. **Warnings** are shape complaints -- one easy problem
     short, a missing worked line. The CLI treats both as fatal, because at 3am
-    regenerating is free; the paste path accepts a warned set, because by then
-    you have already done the work of getting it.
+    regenerating is free and the task is still there to do it; the serving path
+    logs the warnings and serves anyway, because by morning the alternative to a
+    slightly thin set is no set at all.
 
     Runs `extract_json`, LaTeX repair and all: a model asked for JSON full of
     LaTeX writes `\\frac` whether it is answering over HTTPS, writing a file, or
@@ -899,9 +852,10 @@ def _trick_from_batch(
     """Tonight's generated set, or None.
 
     None rather than an exception for every failure mode -- no file, bad JSON,
-    a set that does not validate -- on `_from_batch`'s reasoning: a batch is an
-    optimisation, and an optimisation that can take the panel down is not one.
-    The caller falls through.
+    a set that does not validate -- so the caller decides what a missing set
+    means. It used to mean "fall through to the paid path"; it now means one
+    `ContentError` naming the fix, and the distinction between the four ways of
+    having nothing is in the log rather than in the panel.
     """
     path = trick_batch_path(settings, date)
     if not path.exists():
@@ -941,10 +895,11 @@ def trick_batch_path(settings: Settings, date: dt.date) -> Path:
 def today_callback(settings: Settings, repo: Repository, date: dt.date) -> d.Trick | None:
     """The trick today's set reaches back to. One answer, however often asked.
 
-    Asked twice on a normal day -- once to build the prompt you carry off to the
-    Claude app, once when the paste comes back -- and `tricks.day_rng` is what
-    makes the two agree. The paste still echoes the name, because a prompt
-    copied last night has to mean what it said when it was copied.
+    Chosen at 3am, because the generator has to be *told* which old trick to
+    write a callback problem on. `tricks.day_rng` is what makes a second run of
+    `--trick-context` on the same night -- a retry, a task that was interrupted
+    -- name the same trick as the first: the file echoes the name back, and the
+    import resolves it, so the set and the card it reinforces cannot disagree.
     """
     return tricks.pick_callback(
         repo.tricks(),
@@ -955,120 +910,42 @@ def today_callback(settings: Settings, repo: Repository, date: dt.date) -> d.Tri
     )
 
 
-def trick_prompt(settings: Settings, repo: Repository, date: dt.date) -> str:
-    """The whole generation, as one message to paste into the Claude app.
-
-    This is the free path, and it is the same split that makes the debate cost
-    nothing: the model runs on a subscription rather than on the API, and the
-    dashboard's job is to assemble a prompt and read what comes back. The
-    difference from the debate is that here it is a *fallback as well as* a
-    plan -- the overnight task does the same job unattended, and this is what
-    you reach for on a morning it did not run and you would rather not pay.
-
-    Self-contained on purpose: the rules, the day's shape, the do-not-repeat
-    list and the output schema all in one block, because what is copied is the
-    whole of what the model will see. Anything left implicit here is something
-    that only works when *you* remember to say it.
-    """
-    # Imported here rather than at module scope: `batch` imports this module,
-    # and `TRICK_SCHEMA` is the batch file's shape, which is what a paste is.
-    from .batch import TRICK_SCHEMA
-
-    callback = today_callback(settings, repo, date)
-    wanted = tricks.wanted_bands(
-        settings.tricks.easy, settings.tricks.medium, callback=callback is not None
-    )
-    return "\n\n".join(
-        [
-            TRICK_RULES,
-            f"Today is {date.isoformat()} ({date.strftime('%A')}).",
-            trick_instructions(
-                settings.math.topic_for(date), wanted, repo.trick_names(), callback
-            ),
-            TRICK_SCHEMA.replace("Write the file as JSON:", "Reply with ONLY this JSON:"),
-            f'Set "date" to "{date.isoformat()}" and "topic" to '
-            f'"{settings.math.topic_for(date)}" exactly. '
-            + (
-                f'Set "callback" to "{callback.name}".'
-                if callback
-                else 'Set "callback" to null.'
-            ),
-        ]
-    )
-
-
-def trick_from_paste(
-    settings: Settings, repo: Repository, date: dt.date, raw: str
-) -> d.TrickRound:
-    """Store a set written elsewhere. No API call, and that is the point.
-
-    Warnings are logged rather than refused. By the time this is reached the
-    work of getting the set has already been done in another window, and
-    bouncing it back over one missing worked line would mean doing that again --
-    which is a trade the 3am task can afford to make and a person at breakfast
-    cannot.
-    """
-    existing = repo.trick_round(date)
-    if existing is not None:
-        raise tricks.TrickError(f"a trick set is already stored for {date}")
-
-    parsed, errors, warnings = parse_trick_set(settings, raw, date)
-    if parsed is None or errors:
-        raise tricks.TrickError("; ".join(errors) or "that is not a trick set")
-    for complaint in warnings:
-        log.warning("the pasted set is misshapen: %s", complaint)
-
-    trick, problems = _from_trick_set(settings, parsed, date)
-    # Resolved by name, exactly as the batch path does: the set's callback
-    # problem was written against whichever trick the prompt named, and picking
-    # again here could label it with a different one.
-    callback = repo.trick_named(parsed.callback) if parsed.callback else None
-    if parsed.callback and callback is None:
-        log.warning(
-            "the pasted callback trick %r is not in the deck; leaving it unlabelled",
-            parsed.callback,
-        )
-    return _store_trick(repo, date, trick, problems, callback)
-
-
 def next_trick(settings: Settings, repo: Repository, date: dt.date) -> d.TrickRound:
-    """Today's trick round, from the cheapest source that has one.
+    """Today's trick round, from the overnight file and from nowhere else.
 
-    Idempotent: a day that already has a round gets it back untouched. That is
-    load-bearing here in a way it is not for the theorem draw -- rerolling this
-    one spends money.
+    Idempotent: a day that already has a round gets it back untouched. It is
+    what makes this safe to call on every page load, which is now how it is
+    reached -- the panel gathers itself at boot rather than waiting to be asked,
+    since there is nothing left here that a reload could spend.
 
-    The callback is chosen *before* the generation, because the generator has to
-    be told which old trick to write a problem on. On the batch path it was
-    chosen at 3am and is resolved back by name, so the set and the card it
-    reaches back to cannot disagree.
+    The `ContentError` is the whole of the failure path, and it names the fix,
+    because the answer is a real one: run the night's job by hand. Nothing is
+    generated on demand -- see `next_problem`, which made this trade first.
     """
     existing = repo.trick_round(date)
     if existing is not None:
         return existing
 
-    callback = today_callback(settings, repo, date)
-
     batched = _trick_from_batch(settings, date)
-    if batched is not None:
-        trick, problems, name = batched
-        log.info("serving the trick %r from the overnight batch (no LLM call)", trick.name)
-        # The batch's own callback wins: its problem was written against that
-        # trick, and re-picking here would label it with a different one.
-        resolved = repo.trick_named(name) if name else None
-        if name and resolved is None:
-            log.warning(
-                "the batch's callback trick %r is not in the deck; leaving it unlabelled", name
-            )
-        return _store_trick(repo, date, trick, problems, resolved)
+    if batched is None:
+        raise ContentError(
+            f"no trick set for {date.isoformat()}: the overnight batch has not landed. "
+            f"Run `./batch.sh --trick-context` for today, write the file it describes to "
+            f"batches/trick-{date.isoformat()}.json and check it with "
+            f"`./batch.sh --validate-trick` — the dashboard no longer generates one."
+        )
 
-    wanted = tricks.wanted_bands(
-        settings.tricks.easy, settings.tricks.medium, callback=callback is not None
-    )
-    trick, problems = generate_trick(
-        settings, date, wanted, repo.trick_names(), callback
-    )
-    return _store_trick(repo, date, trick, problems, callback)
+    trick, problems, name = batched
+    log.info("serving the trick %r from the overnight batch (no LLM call)", trick.name)
+    # The batch's own callback wins over a fresh pick: its problem was written
+    # against that trick at 3am, and choosing again here would label it with a
+    # different one.
+    resolved = repo.trick_named(name) if name else None
+    if name and resolved is None:
+        log.warning(
+            "the batch's callback trick %r is not in the deck; leaving it unlabelled", name
+        )
+    return _store_trick(repo, date, trick, problems, resolved)
 
 
 def _store_trick(
@@ -1081,11 +958,12 @@ def _store_trick(
     try:
         stored = repo.add_trick(trick)
     except sqlite3.IntegrityError as e:
-        # `name` is UNIQUE: the model ignored the do-not-repeat list. Not
-        # retried automatically, on `_store`'s rule -- a retry is another paid
-        # generation and the click that asks for one should be the user's.
+        # `name` is UNIQUE: the night's generation ignored the do-not-repeat
+        # list it was given. Nothing to retry from here any more -- the fix is
+        # a new file, so this says which trick collided and stops.
         raise ContentError(
-            f"the model returned a trick you have already had ({trick.name}) — press again to retry"
+            f"tonight's file gives a trick you have already had ({trick.name}); "
+            f"regenerate it — `--trick-context` lists what has been taught"
         ) from e
     assert stored.id is not None
     return repo.open_trick_round(

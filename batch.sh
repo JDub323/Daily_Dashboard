@@ -12,11 +12,11 @@
 #   ./batch.sh --trick-context            tonight's trick set: topic, bands, callback
 #   ./batch.sh --validate-trick FILE      the same, for a generated trick set
 #
-# The trick is the one job here with no *file* fallback -- the math problem has
-# a curated pool behind it and the debate costs nothing to begin with. It is
-# still free on a night this does not run: the panel offers the same prompt to
-# carry into the Claude app and a box to paste the reply into. What this buys
-# over that is not having to do it.
+# The trick is the one job here with nothing at all behind it -- the math
+# problem has a curated pool and the debate costs nothing to begin with. The
+# panel used to offer the same prompt to carry into the Claude app by hand;
+# it does not any more, so a night this does not run is a morning with no
+# trick, and the panel says so and names these two commands.
 #
 # `--debate-context` reports two nullable jobs: `motion` on every debate day,
 # and `reading_list` only on the night before the reading day. The task writes

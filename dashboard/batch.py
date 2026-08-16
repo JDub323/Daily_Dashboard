@@ -162,8 +162,10 @@ def batch_path(settings: Settings, date: dt.date) -> Path:
 #
 # The batch matters more here than anywhere else in this file. The math problem
 # has a curated pool behind it and the debate costs nothing to begin with; the
-# trick has neither, so this file *is* the free path and the API path exists for
-# the mornings it did not run.
+# trick has neither, and there is no longer anything behind it at all -- no
+# paste box, no paid generation. A night this does not run is a morning with no
+# trick, which is the trade, and it is why the CLI rejects a set the serving
+# path would have accepted: at 3am the task is still there to write another.
 
 TRICK_SCHEMA = (
     "Write the file as JSON:\n"
@@ -177,8 +179,7 @@ TRICK_SCHEMA = (
     'delimited","answer":"the bare final answer","accept":["other spellings of the same '
     'answer"],"solution":"one or two lines: the trick applied, and the answer"}]}'
 )
-"""The batch file's shape, which is the live response plus `date`, `topic` and
-`callback`.
+"""The batch file's shape: the set, plus `date`, `topic` and `callback`.
 
 Those three are echoed back so `--validate-trick` can check the generator
 answered the day it was asked about -- the same job `DebateMotion` does with its
@@ -246,13 +247,13 @@ def validate_trick(
     """Parse and check a generated trick set, for the CLI.
 
     The reading itself is `content.parse_trick_set`, shared with the serving
-    path and the paste box -- three ways the same document arrives, and a second
-    set of rules for any of them would be a set that drifts.
+    path -- the same document read at both ends of the night, and a second set
+    of rules for either end would be a set that drifts.
 
     What is local to here is the *strictness*: warnings are folded in with the
     errors, so a set one easy problem short is rejected. At 3am regenerating is
     free and the alternative is a morning that is quietly thinner than it should
-    be. The paste path makes the opposite trade, and says why.
+    be. The import makes the opposite trade at 8am, and says why.
     """
     parsed, errors, warnings = content.parse_trick_set(settings, raw, date)
     return parsed, errors + warnings

@@ -41,10 +41,6 @@ function drafted(count) {
   return draft;
 }
 
-export function clearTrickDraft() {
-  draft = { date: null, answers: [], challenge: "" };
-}
-
 export function openTrickSet() {
   openModal("trick of the day", (body) => draw(body));
 }

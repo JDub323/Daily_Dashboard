@@ -15,26 +15,16 @@
 // marking is a string comparison the server performs, so shipping the answers
 // with the problems would put the answer key in the page.
 //
-// [Invariant] Nothing here spends money without being asked. The set arrives
-// free three ways — from the overnight file, or by carrying the prompt to the
-// Claude app and pasting the result back — and the API button is the last
-// resort, labelled with what it costs.
+// [Invariant] Nothing here spends money at all. The set is written overnight by
+// the scheduled task and read off disk; there is no generation behind this panel
+// and no button that could start one. The one paid call the feature still makes
+// is the challenge grader, in the sheet, when a challenge is actually answered.
 
-import * as api from "../api.js";
-import { promptBlock } from "../clipboard.js";
+import { opener } from "../daily.js";
 import { el, mount } from "../dom.js";
 import { openTrickArchive } from "../modals/tricks.js";
-import { clearTrickDraft, openTrickSet } from "../modals/trickset.js";
-import { put, store } from "../store.js";
-
-/** What has been pasted but not submitted, kept across re-renders. */
-let pasted = { date: null, text: "" };
-
-function paste() {
-  const date = api.today();
-  if (pasted.date !== date) pasted = { date, text: "" };
-  return pasted;
-}
+import { openTrickSet } from "../modals/trickset.js";
+import { store } from "../store.js";
 
 function header(panel) {
   const detail = [
@@ -55,113 +45,35 @@ function links() {
   );
 }
 
-// --- getting today's set ----------------------------------------------------
+// --- before the set exists --------------------------------------------------
 
 /**
- * The free path, and the default one.
+ * Two empty states, and which one you get says whose turn it is.
  *
- * The prompt is assembled server-side and shipped with the panel, so the copy
- * button is instant and what you copy is what you were looking at — the same
- * bargain the debate's prompt makes. The generation then happens in the Claude
- * app on the subscription, and the dashboard's only job is to read what comes
- * back.
+ * With a file on disk this is a busy line: `daily.js` asked for the set at boot
+ * and it is a file read away. Without one there is nothing to press — the panel
+ * used to offer the prompt to carry into the Claude app and a paid generation
+ * beside it, and both are gone, so what is left to say is that the night did not
+ * run and which command puts that right. The math panel's bargain: a failure you
+ * can see and a fix you can name beats a fallback that quietly costs something.
  */
-function pasteBox(body, panel, extra) {
-  const held = paste();
-  const box = el("textarea.recall-box", {
-    rows: 2,
-    value: held.text,
-    // The instruction lives in the placeholder rather than on a line of its
-    // own. This state is on screen for ten seconds a day and every sentence in
-    // it is one you have already read, so the card is kept to the two presses
-    // it is actually for.
-    placeholder: "…then paste Claude's reply here",
-    oninput: (e) => { held.text = e.target.value; },
-  });
-  const message = el("span.faint");
-  const save = el("button.primary", {
-    text: "use this set",
-    onclick: async () => {
-      if (!box.value.trim()) {
-        message.textContent = "paste the reply first";
-        return;
-      }
-      save.disabled = true;
-      message.textContent = "reading it…";
-      try {
-        put("tricks", await api.post("/api/trick/paste", { text: box.value }));
-        pasted = { date: null, text: "" };
-        clearTrickDraft();
-        render(body);
-        // Straight into the sheet: you have just fetched the set, and the next
-        // thing you want is to be looking at it.
-        openTrickSet();
-      } catch (error) {
-        save.disabled = false;
-        message.textContent = error.message;
-      }
-    },
-  });
-
-  return el("div", null,
-    promptBlock(panel.prompt, {
-      summary: "read the prompt",
-      label: "copy the prompt →",
-    }).node,
-    box,
-    el("div.row", null, save, extra, message),
-  );
-}
-
-/** Before the set exists. */
-function undrawn(body, panel) {
+function undrawn(panel) {
   if (!panel.enabled) {
     return el("div.faint", { text: "not configured — see [tricks] in config.toml" });
   }
-
-  // The overnight task already did it: one press, no window-hopping, no cost.
-  // Offered above the copy-and-paste route rather than beside it, because when
-  // it is available it is strictly the better of the two.
-  const fromBatch = el("button.primary", {
-    text: "open tonight's set",
-    onclick: () => run(body, fromBatch, "opening…"),
-  });
-
-  // The paid path, quiet and beside the free one rather than under a heading of
-  // its own. It is the fallback, and a button that costs something should look
-  // like one you have to decide to press — but it should not need a paragraph.
-  const paid = el("button", {
-    text: "or generate · ~$0.03",
-    title: "one API generation. The prompt above does the same job for nothing.",
-    onclick: () => run(body, paid, "writing today's set…"),
-  });
-
+  if (!panel.batched) {
+    return el("div", null,
+      el("div.faint", { text: "no set for today — the overnight task did not leave one" }),
+      el("div.faint.small", { text: "./batch.sh --trick-context, then --validate-trick" }),
+    );
+  }
+  // The gather is in flight, or it failed and this is the retry. Either way the
+  // control comes from `daily.js`, so pressing it cannot come to mean something
+  // different from what the boot already tried.
   return el("div", null,
     el("div.faint", { text: `from this week's topic: ${store.config.topic}` }),
-    panel.batched
-      ? el("div", null,
-          el("div.faint.small", { text: "the 3am task left a set — free" }),
-          el("div.row", null, fromBatch),
-        )
-      : pasteBox(body, panel, paid),
+    opener("tricks"),
   );
-}
-
-/** `POST /api/trick/new` — the batch or, failing that, a paid generation. */
-async function run(body, button, busy) {
-  const was = button.textContent;
-  button.disabled = true;
-  button.textContent = busy;
-  try {
-    put("tricks", await api.post("/api/trick/new"));
-    clearTrickDraft();
-    render(body);
-    openTrickSet();
-  } catch (error) {
-    button.disabled = false;
-    button.textContent = was;
-    body.append(el("div.err", { text: error.message }));
-  }
 }
 
 // --- once it exists ---------------------------------------------------------
@@ -176,7 +88,7 @@ async function run(body, button, busy) {
  * same complaint the problems caused, at a quarter of the size. A grid card is
  * a place for a sentence; the sheet is where the formulas go.
  */
-function summaryCard(body, panel) {
+function summaryCard(panel) {
   const done = panel.status !== "open";
 
   const openButton = el("button.primary", {
@@ -216,7 +128,7 @@ function render(body) {
   const panel = store.state.tricks;
   mount(body,
     header(panel),
-    panel.trick ? summaryCard(body, panel) : undrawn(body, panel),
+    panel.trick ? summaryCard(panel) : undrawn(panel),
     links(),
   );
 }

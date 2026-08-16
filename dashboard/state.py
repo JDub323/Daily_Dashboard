@@ -437,9 +437,9 @@ def tricks_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.TricksP
     """Today's trick.
 
     Read-only, like everything here: this reports the round, it does not draw
-    one. Drawing is a POST, and here that is not merely a verb preference --
-    on a morning the overnight task did not run, drawing spends money, and a
-    boot payload that could spend money is one you cannot afford to reload.
+    one. Drawing is a POST — `daily.js` makes it at boot, so the set is waiting
+    when the page opens, and `batched` below is what tells it whether there is
+    anything to draw.
     """
     base = {
         "enabled": cfg.tricks.enabled,
@@ -451,16 +451,10 @@ def tricks_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.TricksP
     if round_ is None:
         if not cfg.tricks.enabled:
             return api.TricksPanel(**base)
-        # The two free ways to get today's set, both reported before anything is
-        # pressed: the file the 3am task may have left, and the prompt you carry
-        # off to the Claude app yourself. Assembling the prompt here costs three
-        # small queries and no API call, and it is what makes the copy button
-        # instant.
-        return api.TricksPanel(
-            **base,
-            prompt=content.trick_prompt(cfg, repo, today),
-            batched=content.trick_batch_path(cfg, today).exists(),
-        )
+        # One stat, and it decides everything the panel does next: whether the
+        # night left a file. A page load with one draws the set; a page load
+        # without one says the night was missed and names the job that fixes it.
+        return api.TricksPanel(**base, batched=content.trick_batch_path(cfg, today).exists())
 
     trick = repo.trick(round_.trick_id)
     if trick is None:

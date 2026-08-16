@@ -15,7 +15,8 @@ import { describe, it } from "node:test";
 
 import { missing } from "../../web/app/daily.js";
 
-/** A boot payload with only the fields `missing` reads. Empty day by default. */
+/** A boot payload with only the fields `missing` reads. Empty day by default,
+ *  with tonight's trick file on disk. */
 function state(overrides = {}) {
   return {
     date: "2026-08-15",
@@ -23,13 +24,14 @@ function state(overrides = {}) {
     spelling: { enabled: true, words: [] },
     theorems: { deck_size: 12, today: null },
     chess: { puzzle_id: null, summary: { rating: 1467 } },
+    tricks: { enabled: true, trick: null, batched: true },
     ...overrides,
   };
 }
 
 describe("missing", () => {
   it("asks for everything on an untouched day", () => {
-    assert.deepEqual(missing(state()), ["word", "spelling", "theorems", "chess"]);
+    assert.deepEqual(missing(state()), ["word", "spelling", "theorems", "chess", "tricks"]);
   });
 
   it("asks for nothing when the day is already gathered", () => {
@@ -40,6 +42,7 @@ describe("missing", () => {
       spelling: { enabled: true, words: [{ word: "liaison" }] },
       theorems: { deck_size: 12, today: { id: 3 } },
       chess: { puzzle_id: "abc12", summary: { rating: 1467 } },
+      tricks: { enabled: true, trick: { name: "Telescoping" }, batched: true },
     });
     assert.deepEqual(missing(gathered), []);
   });
@@ -53,13 +56,26 @@ describe("missing", () => {
     // Unconfigured is not a failure to report — the panel says to look at
     // config.toml — so asking anyway would put an error under that line.
     const off = state({ spelling: { enabled: false, words: [] } });
-    assert.deepEqual(missing(off), ["word", "theorems", "chess"]);
+    assert.deepEqual(missing(off), ["word", "theorems", "chess", "tricks"]);
   });
 
   it("skips the theorem draw when the deck is empty", () => {
     // Same reason: the panel's real answer is "add a theorem below".
     const empty = state({ theorems: { deck_size: 0, today: null } });
-    assert.deepEqual(missing(empty), ["word", "spelling", "chess"]);
+    assert.deepEqual(missing(empty), ["word", "spelling", "chess", "tricks"]);
+  });
+
+  it("does not ask for a trick the 3am task never wrote", () => {
+    // The trick has no pool behind it and nothing paid: with no file there is
+    // nothing `/api/trick/new` can do but 502, and a page load should not put
+    // that under a panel whose real answer is "the overnight task did not run".
+    const missed = state({ tricks: { enabled: true, trick: null, batched: false } });
+    assert.ok(!missing(missed).includes("tricks"));
+  });
+
+  it("skips the trick when it is not configured", () => {
+    const off = state({ tricks: { enabled: false, trick: null, batched: true } });
+    assert.ok(!missing(off).includes("tricks"));
   });
 
   it("still asks for a word whose sentences are unwritten", () => {

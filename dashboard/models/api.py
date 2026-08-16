@@ -283,18 +283,6 @@ class TrickSubmitRequest(DateBody):
     answers: list[str] = Field(max_length=20)
 
 
-class TrickPasteRequest(DateBody):
-    """A set written in the Claude app, pasted back whole.
-
-    The raw text rather than parsed JSON from the browser, exactly as
-    `DebateVerdictRequest` is: this is a document whose reading decides what
-    nine problems say and what counts as answering them, so it is parsed where
-    the rules live and where the tests are.
-    """
-
-    text: str = Field(min_length=2, max_length=40000)
-
-
 class TrickChallengeRequest(DateBody):
     """The optional problem, answered in prose.
 
@@ -573,22 +561,20 @@ class TricksPanel(Base):
     erroring, the way an unconfigured spelling bee does."""
 
     trick: Trick | None = None
-    """Null until the day's set is drawn, which is a POST of its own rather
-    than part of the boot payload -- drawing costs a generation on any morning
-    the overnight task did not run, so it cannot happen because a tab loaded."""
-
-    prompt: str | None = None
-    """The whole generation, assembled and ready to paste into the Claude app.
-
-    Sent with the panel rather than fetched on click, exactly as
-    `DebatePanel.prompt` is: the copy button should be instant, and what you
-    copy should be what you were looking at. Null once the day has a set, since
-    there is then nothing left to generate.
-    """
+    """Null until the day's set is drawn, which is still a POST of its own
+    rather than part of the boot payload -- drawing opens the round, and the
+    boot payload is a read. `daily.js` makes that call at boot, so by the time
+    anyone is looking this is null only on a morning the night's file is
+    missing."""
 
     batched: bool = False
-    """Whether tonight's file is already on disk. What lets the panel say the
-    set is free before you press anything."""
+    """Whether tonight's file is on disk.
+
+    What the boot gather reads to decide whether to draw at all: with nothing to
+    draw from, `POST /api/trick/new` can only raise, and a page load should not
+    put an error under a panel whose real answer is "the 3am task did not run".
+    It is also the difference between the two empty states the panel can show.
+    """
 
     problems: list[TrickPrompt] = Field(default_factory=list)
     challenge: TrickPrompt | None = None

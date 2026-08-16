@@ -37,15 +37,6 @@ from .models import domain as d
 log = logs.get(__name__)
 
 
-class TrickError(ValueError):
-    """A trick set that cannot be used as given.
-
-    Its own type, and a 400 rather than a 502, for `DebateError`'s reason:
-    nothing upstream failed. A set pasted out of the Claude app that will not
-    parse is a paste that went wrong, and the message says which way.
-    """
-
-
 CHALLENGE = "challenge"
 """The band whose problem is optional and graded by a model rather than
 compared. Named once here because three modules test for it."""
