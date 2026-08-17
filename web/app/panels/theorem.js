@@ -250,7 +250,9 @@ export default {
   title: "theorem recall",
   tab: "math",
   slot: "grid",
-  span: 2,
+  // The math tab is a single column: every card on it is prose or a formula,
+  // and both would rather have the line and the vertical room than a neighbour.
+  span: 6,
 
   async render(node) {
     draw(node);
