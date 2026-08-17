@@ -18,6 +18,26 @@ export const daysAgo = (n) => {
 
 class ApiError extends Error {}
 
+/**
+ * `fetch`, with the one failure it reports uselessly translated.
+ *
+ * A server that is not running makes fetch reject with a bare TypeError whose
+ * message is "Failed to fetch" — and that string was what the panel then
+ * displayed. It names nothing and suggests nothing, for far and away the most
+ * likely cause: the dashboard process has stopped. Saying so turns a mystery
+ * into an instruction.
+ *
+ * `cause` is kept so the original is still in the console for anything that is
+ * genuinely not a dead server (a CORS refusal, an aborted request).
+ */
+async function send(path, init) {
+  try {
+    return await fetch(path, init);
+  } catch (cause) {
+    throw new ApiError("cannot reach the dashboard server — is it still running?", { cause });
+  }
+}
+
 async function unwrap(response) {
   let body = null;
   try {
@@ -52,7 +72,7 @@ function message(body) {
  */
 export async function get(path, params = {}, headers = null) {
   const query = new URLSearchParams(params).toString();
-  return unwrap(await fetch(query ? `${path}?${query}` : path, headers ? { headers } : undefined));
+  return unwrap(await send(query ? `${path}?${query}` : path, headers ? { headers } : undefined));
 }
 
 /** A dated POST — `date` is filled in from the browser unless supplied. */
@@ -63,7 +83,7 @@ export function post(path, body = {}, headers = null) {
 /** For the endpoints whose bodies have no `date` field; they forbid extras. */
 export async function postRaw(path, body = {}, headers = null) {
   return unwrap(
-    await fetch(path, {
+    await send(path, {
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),

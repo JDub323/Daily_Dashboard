@@ -252,31 +252,46 @@ def _fit_calendar_model(state: Any, fetch: Feeds, repo: Repository, *, force: bo
     because gcalcli was briefly unreachable.
     """
     clf: calclass.CalendarClassifier = state.calendar_clf
-    with state.calendar_fit_lock:
-        # The calendar list is read *before* deciding whether to refit, and
-        # that ordering is the whole of this function's robustness to calendars
-        # being created, renamed or deleted. Fitting once at boot froze the set
-        # of calendars the box would ever offer: a calendar made afterwards was
-        # missing from the Tab cycle until a restart, and one deleted afterwards
-        # stayed in the model, could still be predicted, and failed at gcalcli
-        # with "No available calendar to use".
-        #
-        # Cheap enough to check every time: `gcalcli list` measures 0.27s and is
-        # cached for `list_cache_seconds`, so this is a dict lookup nearly
-        # always, and a refit only happens when the answer actually changed.
-        try:
-            writable = [c.name for c in fetch.calendars() if c.writable]
-        except (FeedError, OSError) as e:
-            # Keep whatever model is already fitted -- a momentarily unreachable
-            # gcalcli is not a reason to forget the classifier.
-            if not clf.fitted:
-                clf.unavailable = f"could not read the calendar list ({e})"
-                log.warning("calendar classifier: %s", clf.unavailable)
-            return
 
-        if clf.fitted and not force and writable == clf.targets:
+    # The calendar list is read *before* deciding whether to refit, and that
+    # ordering is the whole of this function's robustness to calendars being
+    # created, renamed or deleted. Fitting once at boot froze the set of
+    # calendars the box would ever offer: a calendar made afterwards was missing
+    # from the Tab cycle until a restart, and one deleted afterwards stayed in
+    # the model, could still be predicted, and failed at gcalcli with "No
+    # available calendar to use".
+    #
+    # Read *outside* the fit lock, which matters more than it looks. Every
+    # keystroke in the quick-add box comes through here, and while the list is
+    # usually a cached dict lookup, it is a subprocess call whenever
+    # `list_cache_seconds` has passed. Holding the lock across that made one
+    # slow gcalcli stall every preview behind it -- and a gcalcli that hung
+    # would freeze the box for the full timeout, which is indistinguishable
+    # from the feature being broken.
+    try:
+        writable = [c.name for c in fetch.calendars() if c.writable]
+    except (FeedError, OSError) as e:
+        # Keep whatever model is already fitted -- a momentarily unreachable
+        # gcalcli is not a reason to forget the classifier.
+        if not clf.fitted:
+            clf.unavailable = f"could not read the calendar list ({e})"
+            log.warning("calendar classifier: %s", clf.unavailable)
+        return
+
+    # Compared as a set: what the model is fitted against is *which* calendars
+    # exist, not the order gcalcli happened to print them in. gcalcli sorts by
+    # access role and nothing promises a stable order within one, so comparing
+    # sequences would refit -- an eight-second history fetch -- over a reshuffle
+    # that changes nothing.
+    if clf.fitted and not force and set(writable) == set(clf.targets):
+        return
+
+    with state.calendar_fit_lock:
+        # Re-checked now the lock is held: several previews can arrive at once
+        # and only the first of them should pay for the fit.
+        if clf.fitted and not force and set(writable) == set(clf.targets):
             return
-        if clf.fitted and writable != clf.targets:
+        if clf.fitted and set(writable) != set(clf.targets):
             log.info(
                 "calendar set changed (%s); refitting",
                 _describe_change(clf.targets, writable),

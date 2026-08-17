@@ -1239,3 +1239,49 @@ def test_history_takes_no_date_parameter(client):
     """The one GET with nothing relative to today in it. Asking the browser
     for a day it would not use would be cargo-culting the invariant."""
     assert client.get("/api/history", params={"date": DATE}).status_code == 200
+
+
+def test_a_reordered_calendar_list_does_not_refit(client, monkeypatch):
+    """What the model is fitted against is *which* calendars exist, not the
+    order gcalcli printed them in.
+
+    gcalcli sorts by access role and nothing promises a stable order within
+    one, so comparing sequences would refit — an eight-second history fetch —
+    over a reshuffle that changes nothing.
+    """
+    live = ["Special Events", "Tests"]
+    monkeypatch.setattr(
+        feeds.Feeds,
+        "calendars",
+        lambda self: [api.CalendarInfo(name=n, access="owner") for n in live],
+    )
+    histories = []
+
+    def history(self, today):
+        histories.append(today)
+        # Two classes at least, or sklearn declines to fit and `fitted` stays
+        # False -- which would make every preview retry and hide the very
+        # thing this test is checking.
+        return [
+            api.CalendarEvent(date=TODAY, title="Final Exam", calendar="Tests"),
+            api.CalendarEvent(date=TODAY, title="Probability Midterm", calendar="Tests"),
+            api.CalendarEvent(date=TODAY, title="Blue and Gold Game", calendar="Special Events"),
+            api.CalendarEvent(date=TODAY, title="Bengal Bouts Final", calendar="Special Events"),
+        ]
+
+    monkeypatch.setattr(feeds.Feeds, "calendar_history", history)
+
+    preview = lambda: client.post(  # noqa: E731
+        "/api/calendar/preview", json={"text": "lunch friday", "today": DATE}
+    )
+    assert preview().status_code == 200
+    fitted_once = len(histories)
+
+    live.reverse()
+    assert preview().status_code == 200
+    assert len(histories) == fitted_once, "a reshuffle must not trigger a refit"
+
+    # ...but a genuine change still does.
+    live.append("Classes")
+    assert preview().status_code == 200
+    assert len(histories) > fitted_once
