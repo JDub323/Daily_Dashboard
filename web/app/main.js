@@ -88,7 +88,10 @@ const PANELS = [
   // already the better answer to "did I keep this up". `renderChips` still runs
   // on every store change — it owns the completion write and the statusline —
   // it simply has no panel to draw into now.
-  activity, calendar, daylog,
+  // The week leads, and is the tab's hero: it is the only panel here that says
+  // what is *about* to happen, where everything else counts something that
+  // already has.
+  calendar, activity, daylog,
   // math — the problem is the hero; the trick and the deck are the two things
   // that make the next one easier.
   math, tricks, theorem, deck,

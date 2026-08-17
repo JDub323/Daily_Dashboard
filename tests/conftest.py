@@ -46,6 +46,11 @@ def settings(tmp_path) -> Settings:
                 }
             ),
             "server": cfg.server.model_copy(update={"log_file": None, "open_browser": False}),
+            # Otherwise every app the suite builds spawns a thread that runs the
+            # real gcalcli against the real Google account, several seconds at a
+            # time. The tests that want a fitted classifier stub the history and
+            # let the lazy fit on first use do it.
+            "calendar": cfg.calendar.model_copy(update={"warm_on_start": False}),
         }
     )
 

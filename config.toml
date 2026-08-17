@@ -313,6 +313,17 @@ unlock_seconds = 300
 command = ["gcalcli", "--nocolor"]
 cache_seconds = 300
 timeout_seconds = 60
+list_cache_seconds = 86400
+# The classifier's training window, and how often it is re-read from gcalcli.
+history_days = 1095
+history_days_ahead = 180
+history_cache_seconds = 86400
+# An add is synchronous with someone's Enter key; a read is not.
+write_timeout_seconds = 20
+# Where an event goes when nothing else decides. Must be a writable calendar.
+default_calendar = "Special Events"
+# 0 = Monday. Google's own week view starts on Sunday (6).
+week_starts_on = 0
 
 [news]
 cache_seconds = 900

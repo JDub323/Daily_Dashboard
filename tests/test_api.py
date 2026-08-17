@@ -13,6 +13,7 @@ import time
 import pytest
 
 from dashboard import content, feeds
+from dashboard.models import api
 from dashboard.models import domain as d
 from dashboard.models.common import Track
 
@@ -790,15 +791,125 @@ def test_the_daylog_round_trips(client):
     assert client.get("/api/state", params={"date": DATE}).json()["daylog"] == "shipped the rewrite"
 
 
+def _no_gcalcli(monkeypatch, writable=("Special Events", "Tests")):
+    """Stub the two gcalcli reads the quick-add path makes, and capture the write."""
+    written: dict = {}
+
+    monkeypatch.setattr(
+        feeds.Feeds,
+        "calendars",
+        lambda self: [api.CalendarInfo(name=n, access="owner") for n in writable],
+    )
+    monkeypatch.setattr(feeds.Feeds, "calendar_history", lambda self, today: [])
+
+    def _add(self, **kwargs):
+        written.update(kwargs)
+        return "created"
+
+    monkeypatch.setattr(feeds.Feeds, "add_calendar_event", _add)
+    return written
+
+
 def test_calendar_add_takes_no_date(client, monkeypatch):
-    """The one body with no `date`: gcalcli parses the day out of the text."""
-    monkeypatch.setattr(feeds.Feeds, "add_calendar_event", lambda self, text: f"added {text}")
-    assert client.post("/api/calendar/add", json={"text": "lunch friday"}).json() == {
-        "out": "added lunch friday"
-    }
+    """The body carries the browser's date as `today`, never as `date`.
+
+    `date` stays rejected: it was the name on every other dated body, and the
+    two meant different things here -- this one is the day the *text* is read
+    relative to, not the day the event lands on.
+    """
+    _no_gcalcli(monkeypatch)
+    body = client.post("/api/calendar/add", json={"text": "lunch friday"}).json()
+    assert body["title"] == "Lunch"
     assert (
         client.post("/api/calendar/add", json={"text": "x", "date": DATE}).status_code == 422
     )  # extra="forbid"
+
+
+def test_calendar_add_names_the_calendar_it_writes_to(client, monkeypatch):
+    """The bug this whole path exists to fix.
+
+    `gcalcli quick` was called with no `--calendar`, which on an account with
+    more than one writable calendar drops gcalcli to an interactive menu and
+    hangs until the timeout. Every write must name its target.
+    """
+    written = _no_gcalcli(monkeypatch)
+    client.post(
+        "/api/calendar/add",
+        json={"text": "real analysis test wednesday from 9:25-10:30", "today": DATE},
+    )
+    assert written["calendar"] == "Tests"  # the rule, not the model
+    assert written["title"] == "Real analysis test"
+    assert written["when"].endswith("09:25")
+    assert written["duration"] == 65
+    assert written["all_day"] is False
+
+
+def test_calendar_preview_writes_nothing(client, monkeypatch):
+    written = _no_gcalcli(monkeypatch)
+    body = client.post(
+        "/api/calendar/preview", json={"text": "move to ND 8am-10am wednesday", "today": DATE}
+    ).json()
+    assert body["title"] == "Move to ND"
+    assert (body["start"], body["end"]) == ("08:00", "10:00")
+    # Every writable calendar is offered, best first, so Tab can reach all of them.
+    assert {g["calendar"] for g in body["ranked"]} == {"Special Events", "Tests"}
+    assert written == {}
+
+
+def test_the_calendar_list_says_which_ones_are_writable(client, monkeypatch):
+    """`writable` has to survive serialisation, not just exist in Python.
+
+    It was a bare `@property`, which `model_dump` ignores — so the grid's Tab
+    cycle filtered on `undefined`, found nothing writable, and silently refused
+    to change the target calendar.
+    """
+    monkeypatch.setattr(
+        feeds.Feeds,
+        "calendars",
+        lambda self: [
+            api.CalendarInfo(name="Tests", access="owner"),
+            api.CalendarInfo(name="Holidays in United States", access="reader"),
+        ],
+    )
+    monkeypatch.setattr(feeds.Feeds, "calendar_history", lambda self, today: [])
+    monkeypatch.setattr(
+        feeds.Feeds,
+        "calendar",
+        lambda self, start, days=7: _cached(
+            feeds.CalendarResponse(start=start, calendars=self.calendars())
+        ),
+    )
+    body = client.get("/api/calendar", params={"date": DATE}).json()
+    assert {c["name"]: c["writable"] for c in body["calendars"]} == {
+        "Tests": True,
+        "Holidays in United States": False,
+    }
+
+
+def test_an_override_is_recorded_and_used(client, monkeypatch):
+    written = _no_gcalcli(monkeypatch)
+    client.post(
+        "/api/calendar/add",
+        json={"text": "brunch sunday", "today": DATE, "calendar": "Tests"},
+    )
+    assert written["calendar"] == "Tests"
+
+    from dashboard.db.repository import Repository
+
+    conn = client.app.state.db.conn
+    assert Repository(conn).calendar_corrections() == [("Brunch", "Tests")]
+
+
+def test_an_override_to_an_unknown_calendar_is_refused(client, monkeypatch):
+    written = _no_gcalcli(monkeypatch)
+    # gcalcli matches --calendar as a regex, so an unrecognised name does not
+    # fail cleanly downstream -- it is rejected here instead.
+    response = client.post(
+        "/api/calendar/add",
+        json={"text": "brunch sunday", "today": DATE, "calendar": "Holidays in United States"},
+    )
+    assert response.status_code == 409  # the app's ValueError mapping
+    assert written == {}
 
 
 # --- feed freshness --------------------------------------------------------
@@ -854,7 +965,7 @@ def test_news_and_calendar_carry_freshness_too(client, monkeypatch):
     assert client.get("/api/news", params={"date": DATE}).json()["feed"]["ttl_seconds"] == 60
 
     monkeypatch.setattr(
-        feeds.Feeds, "calendar", lambda self, today: _cached(feeds.CalendarResponse())
+        feeds.Feeds, "calendar", lambda self, start, days=7: _cached(feeds.CalendarResponse())
     )
     body = client.get("/api/calendar", params={"date": DATE}).json()
     # Attached by the route: the fetcher builds this response inside the cache

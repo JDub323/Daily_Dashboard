@@ -42,6 +42,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import (
+    calclass,
+    calparse,
     content,
     debate,
     feeds,
@@ -122,6 +124,23 @@ async def lifespan(app: FastAPI):
     )
     app.state.challenges = webauthn.Challenges()
     app.state.unlocks = webauthn.Unlocks(cfg.portfolio.unlock_seconds)
+    app.state.calendar_clf = calclass.CalendarClassifier(cfg.calendar.default_calendar)
+    app.state.calendar_fit_lock = threading.Lock()
+    # Fitted off the request path, in the background.
+    #
+    # The training data is a single `gcalcli agenda` over several years, which
+    # measures about 8 seconds on this account -- and the alternative to this
+    # thread is that the *first thing typed* after a restart pays for all of
+    # it before the preview line appears. Lazy would be the wrong kind of
+    # thrifty for a box whose whole promise is that it answers as you type.
+    #
+    # Daemon, and every failure inside is logged rather than raised: a
+    # classifier that could not be fitted degrades to the keyword rules, which
+    # is not a reason to hold up or take down the server.
+    if cfg.calendar.warm_on_start:
+        threading.Thread(
+            target=_warm_calendar_model, args=(app,), name="calendar-fit", daemon=True
+        ).start()
     log.info("dashboard ready on http://%s:%s", cfg.server.host, cfg.server.port)
     if cfg.portfolio.enabled:
         # Logged because the failure it prevents is silent and confusing: at
@@ -201,6 +220,85 @@ Fetch = Annotated[Feeds, Depends(get_feeds)]
 # The browser supplies its own local date on every dated request. On GETs it
 # is a query parameter for the same reason it is a body field on POSTs.
 Today = Annotated[dt.date, Query(description="the browser's local date")]
+
+
+# --- the calendar quick-add ------------------------------------------------
+#
+# Three pieces: `calparse` turns the line into a title and a span, `calclass`
+# picks the calendar, and the fit that connects them is lazy. Lazy because the
+# training data comes out of gcalcli -- a few seconds, on an account with years
+# of history -- and boot is not the moment to spend that. The first preview
+# pays for it, every one after is a matrix multiply.
+
+
+def _week_start(date: dt.date, starts_on: int) -> dt.date:
+    """The Monday (or Sunday) of `date`'s week."""
+    return date - dt.timedelta(days=(date.weekday() - starts_on) % 7)
+
+
+def _fit_calendar_model(state: Any, fetch: Feeds, repo: Repository, *, force: bool = False) -> None:
+    """Fit on the account's history plus every correction.
+
+    Failures here are logged and swallowed. The classifier is an assistant to a
+    text box: with no model the rules still fire and the default still applies,
+    which is worse than a fit but far better than a quick-add box that 503s
+    because gcalcli was briefly unreachable.
+    """
+    clf: calclass.CalendarClassifier = state.calendar_clf
+    with state.calendar_fit_lock:
+        if clf.fitted and not force:
+            return
+        try:
+            writable = [c.name for c in fetch.calendars() if c.writable]
+            samples = calclass.samples_from_events(
+                fetch.calendar_history(dt.date.today()), writable
+            )
+        except (FeedError, OSError) as e:
+            clf.unavailable = f"could not read the calendar history ({e})"
+            log.warning("calendar classifier: %s", clf.unavailable)
+            return
+
+        # Corrections last so they win the dedupe inside `fit`, and heavier:
+        # they are the only labels anyone gave on purpose.
+        for text, chosen in repo.calendar_corrections():
+            if chosen in writable:
+                samples.append(calclass.Sample(text, chosen, calclass.CORRECTION_WEIGHT))
+        try:
+            clf.fit(samples, writable)
+        except Exception:
+            log.exception("calendar classifier failed to fit")
+            clf.unavailable = "the classifier failed to fit; using rules only"
+
+
+def _warm_calendar_model(app: FastAPI) -> None:
+    try:
+        _fit_calendar_model(app.state, app.state.feeds, Repository(app.state.db.conn))
+    except Exception:
+        log.exception("calendar classifier warm-up failed")
+
+
+def _resolve(
+    state: Any, fetch: Feeds, repo: Repository, body: api.CalendarAddRequest
+) -> tuple[calparse.Parsed, api.ResolvedEvent]:
+    """The parse and the guess, together.
+
+    Both are returned because the write needs the `Parsed` -- `when()` and
+    `duration_minutes` are on it -- and parsing a second time inside the add
+    route would be two places that have to agree about what a line means.
+    """
+    parsed = calparse.parse(body.text, body.today or dt.date.today())
+    _fit_calendar_model(state, fetch, repo)
+    prediction = state.calendar_clf.predict(parsed.title)
+    return parsed, api.ResolvedEvent(
+        title=parsed.title,
+        date=parsed.date,
+        start=parsed.start.strftime("%H:%M") if parsed.start else None,
+        end=parsed.end.strftime("%H:%M") if parsed.end else None,
+        calendar=prediction.calendar,
+        source=prediction.source,
+        ranked=[api.CalendarGuess(calendar=c, score=s) for c, s in prediction.ranked],
+        warning=parsed.warning or state.calendar_clf.unavailable,
+    )
 
 
 # --- error handling --------------------------------------------------------
@@ -597,13 +695,64 @@ def _register(app: FastAPI) -> None:
         )
 
     @app.get("/api/calendar")
-    def calendar(fetch: Fetch, date: Today) -> api.CalendarResponse:
-        got = fetch.calendar(date)
+    def calendar(fetch: Fetch, cfg: Cfg, date: Today, weeks: int = 0) -> api.CalendarResponse:
+        """One week of the grid. `weeks` pages, 0 being the week `date` is in."""
+        start = _week_start(date, cfg.calendar.week_starts_on) + dt.timedelta(weeks=weeks)
+        got = fetch.calendar(start, 7)
         return got.value.model_copy(update={"feed": _feed_meta(got)})
 
+    @app.post("/api/calendar/preview")
+    def calendar_preview(
+        request: Request, fetch: Fetch, repo: Repo, body: api.CalendarAddRequest
+    ) -> api.ResolvedEvent:
+        """What the line means. Writes nothing, on purpose.
+
+        Called on every keystroke (debounced), so it must never be the thing
+        that creates an event and must not depend on gcalcli being reachable --
+        a failed model leaves the parse, which is the half that matters most.
+        """
+        return _resolve(request.app.state, fetch, repo, body)[1]
+
     @app.post("/api/calendar/add")
-    def calendar_add(fetch: Fetch, body: api.CalendarAddRequest) -> dict[str, str]:
-        return {"out": fetch.add_calendar_event(body.text)}
+    def calendar_add(
+        request: Request, fetch: Fetch, repo: Repo, body: api.CalendarAddRequest
+    ) -> api.ResolvedEvent:
+        parsed, resolved = _resolve(request.app.state, fetch, repo, body)
+        target = resolved.calendar
+
+        if body.calendar is not None and body.calendar != resolved.calendar:
+            # Validated against the account rather than passed through: gcalcli
+            # matches `--calendar` as a *regex* against every calendar summary,
+            # so an unknown string does not fail cleanly -- it either matches
+            # several and is refused, or matches one nobody asked for.
+            writable = [c.name for c in fetch.calendars() if c.writable]
+            if body.calendar not in writable:
+                raise ValueError(f"{body.calendar!r} is not a writable calendar")
+            repo.record_calendar_correction(
+                text=resolved.title,
+                predicted=resolved.calendar,
+                chosen=body.calendar,
+                source=resolved.source,
+            )
+            target = body.calendar
+            # Refit now, not on the next restart: the correction exists so the
+            # same phrasing stops being wrong, and "stops being wrong later"
+            # is not what anyone means by that.
+            _fit_calendar_model(request.app.state, fetch, repo, force=True)
+
+        fetch.add_calendar_event(
+            calendar=target,
+            title=parsed.title,
+            when=parsed.when(),
+            duration=parsed.duration_minutes if not parsed.all_day else 1,
+            all_day=parsed.all_day,
+        )
+        log.info(
+            "calendar add %r -> %s [%s]%s",
+            parsed.title, target, resolved.source,
+            "" if target == resolved.calendar else f" (corrected from {resolved.calendar})",
+        )
+        return resolved.model_copy(update={"calendar": target})
 
     # -- math --------------------------------------------------------------
 

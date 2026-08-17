@@ -2159,5 +2159,41 @@ class Repository:
         ).fetchone()
         return d.RatingEvent(**dict(row))
 
+    # -- the calendar classifier --------------------------------------------
+
+    def record_calendar_correction(
+        self, *, text: str, predicted: str | None, chosen: str, source: str
+    ) -> None:
+        """Remember that the quick-add box was told it picked the wrong calendar."""
+        self.conn.execute(
+            "INSERT INTO calendar_correction (created, text, predicted, chosen, source) "
+            "VALUES (strftime('%Y-%m-%dT%H:%M:%S', 'now'), ?, ?, ?, ?)",
+            (text[:500], predicted, chosen[:200], source),
+        )
+        self.conn.commit()
+
+    def calendar_corrections(self, limit: int = 2000) -> list[tuple[str, str]]:
+        """`(text, chosen)` newest first -- the extra training rows."""
+        rows = self.conn.execute(
+            "SELECT text, chosen FROM calendar_correction ORDER BY created DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [(row["text"], row["chosen"]) for row in rows]
+
+    def calendar_correction_rate(self, limit: int = 200) -> tuple[int, int]:
+        """`(corrected, total)` over the recent window.
+
+        Only meaningful beside the adds that were *not* corrected, which are
+        not in this table -- so this counts corrections whose prediction stood
+        against those where it did not, which is the accuracy of the guess at
+        the moment someone looked at it.
+        """
+        rows = self.conn.execute(
+            "SELECT predicted, chosen FROM calendar_correction "
+            "ORDER BY created DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return sum(1 for r in rows if r["predicted"] != r["chosen"]), len(rows)
+
     def is_empty(self) -> bool:
         return self.conn.execute("SELECT COUNT(*) FROM rating_event").fetchone()[0] == 0

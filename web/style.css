@@ -736,3 +736,163 @@ table.holdings td:first-child { text-align: left; white-space: normal; }
 table.holdings th + th, table.holdings td + td { padding-left: var(--s4); }
 /* A long fund name should not set the width of the whole table. */
 table.holdings td:first-child .small { max-width: 22ch; overflow-wrap: anywhere; }
+
+/* ---- the week ---- */
+/* The home hero. A real time grid rather than a list: seven day columns, an
+   hour ruler in a gutter, and events absolutely positioned inside their column
+   so that height means duration. Auto-placement does the layout — the children
+   are emitted in reading order (corner, seven heads, gutter, seven strips,
+   ruler, seven columns) and land in the three rows below without a single
+   explicit grid-row.
+
+   --cal-height and --cal-hour are set inline by the panel, which owns the
+   px-per-minute scale; nothing here may assume an hour is 54px on its own. */
+.cal-scroll { overflow-x: auto; margin: var(--s3) 0 var(--s4); }
+.cal {
+  display: grid;
+  grid-template-columns: 52px repeat(var(--cal-days, 7), minmax(0, 1fr));
+  /* Below this the columns stop being readable and the strip scrolls instead.
+     A squeezed seven-column week is worse than a scrolling one. */
+  min-width: 680px;
+}
+
+.cal-corner, .cal-allday-gutter {
+  border-right: 1px solid var(--border);
+  font-size: var(--t-meta);
+  color: var(--faint);
+}
+.cal-allday-gutter { padding: var(--s1) var(--s2) 0 0; text-align: right; }
+
+.cal-day-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--s1);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--border);
+}
+.cal-dow { font-size: var(--t-meta); color: var(--faint); text-transform: uppercase;
+           letter-spacing: .6px; }
+.cal-dom { font-size: var(--t-lede); color: var(--dim); font-variant-numeric: tabular-nums; }
+/* Today is the one column you look for, so it gets the accent and the weight —
+   not gold, which in this app means a thing that is finished. */
+.cal-day-head.is-today .cal-dom { color: var(--accent); font-weight: 600; }
+.cal-day-head.is-today .cal-dow { color: var(--accent-dim); }
+
+.cal-allday {
+  border-bottom: 1px solid var(--border);
+  border-left: 1px solid var(--border-soft);
+  padding: var(--s1);
+  min-height: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cal-chip {
+  font-size: var(--t-meta);
+  line-height: 1.5;
+  padding: 0 var(--s1);
+  border-radius: var(--r-mark);
+  border-left: 3px solid hsl(var(--hue) 62% 62%);
+  background: hsl(var(--hue) 30% 20%);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-ruler { position: relative; height: var(--cal-height); border-right: 1px solid var(--border); }
+.cal-hour {
+  position: absolute;
+  right: var(--s2);
+  /* Half the label's line-height, so the text is centred on its gridline
+     rather than sitting under it. */
+  transform: translateY(-50%);
+  font-size: var(--t-meta);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-col {
+  position: relative;
+  height: var(--cal-height);
+  border-left: 1px solid var(--border-soft);
+  /* The hour lines are painted rather than being elements: one gradient per
+     column instead of fifteen empty divs per column per render. */
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--border-soft) 0 1px,
+    transparent 1px var(--cal-hour, 54px)
+  );
+}
+.cal-col.is-today { background-color: rgba(92, 207, 230, .04); }
+
+.cal-event {
+  position: absolute;
+  overflow: hidden;
+  padding: 2px var(--s1);
+  border-radius: var(--r-mark);
+  border-left: 3px solid hsl(var(--hue) 62% 62%);
+  background: hsl(var(--hue) 32% 19%);
+  font-size: var(--t-meta);
+  line-height: 1.35;
+  cursor: default;
+}
+.cal-event:hover { background: hsl(var(--hue) 36% 24%); }
+.cal-event-time { color: hsl(var(--hue) 55% 78%); margin-right: var(--s1); }
+.cal-event-title { color: var(--fg); }
+/* Under about 45 minutes there is one line of room, so the title runs on
+   after the time instead of under it. */
+.cal-event:not(.is-short) { display: flex; flex-direction: column; }
+.cal-event.is-short { white-space: nowrap; text-overflow: ellipsis; }
+
+.cal-now { position: absolute; left: 0; right: 0; height: 1px; background: var(--accent); z-index: 2; }
+.cal-now::before {
+  content: "";
+  position: absolute;
+  left: -3px; top: -3px;
+  width: 7px; height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+
+.cal-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3);
+            flex-wrap: wrap; }
+.cal-span { font-size: var(--t-lede); color: var(--fg); }
+button.ghost { border-color: transparent; color: var(--faint); padding: var(--s1) var(--s2); }
+button.ghost:hover:not(:disabled) { border-color: var(--border); color: var(--accent); }
+
+.cal-legend { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); font-size: var(--t-meta);
+              color: var(--faint); margin-bottom: var(--s3); }
+.cal-key { display: inline-flex; align-items: center; gap: var(--s1); }
+.cal-key i { width: 9px; height: 9px; border-radius: var(--r-mark);
+             background: hsl(var(--hue) 62% 62%); }
+
+/* ---- the quick-add box ---- */
+/* The input is the widest thing on the hero on purpose: it is the one control
+   the panel exists to offer, and the preview line under it is the only reason
+   pressing Enter is safe. */
+.cal-add { border-top: 1px solid var(--border-soft); padding-top: var(--s3); }
+input.cal-input { font-size: var(--t-body); padding: var(--s2) var(--s3); background: var(--panel); }
+input.cal-input:focus { outline: 1px solid var(--accent-dim); outline-offset: -1px; }
+
+.cal-preview {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  min-height: 22px;      /* reserved, so resolving a line does not jump the page */
+  margin-top: var(--s2);
+  font-size: var(--t-meta);
+}
+.cal-preview:empty { visibility: hidden; }
+.cal-pill {
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+  border-radius: var(--r-pill);
+  padding: 1px var(--s2);
+}
+.cal-pv-title { color: var(--fg); font-size: var(--t-body); }
+.cal-pv-when { color: var(--dim); font-variant-numeric: tabular-nums; }
+.cal-pv-src { color: var(--faint); }
+.cal-pv-warn { color: var(--bad); opacity: .85; }

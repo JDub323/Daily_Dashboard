@@ -1,0 +1,90 @@
+// Overlap packing and the drawn window.
+//
+// These are the two pieces of the week grid that are arithmetic rather than
+// markup, and they are the two that go wrong invisibly: a packing bug hides an
+// event completely (it draws underneath another one) and a window bug puts an
+// event outside the box entirely. Neither shows up as an error anywhere.
+//
+// The rest of the panel builds DOM nodes and there is no document under
+// `node --test`, so it is exercised in the browser instead.
+
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { pack, windowFor } from "../../web/app/panels/calendar.js";
+
+const at = (from, to, title = "") => ({ from, to, title });
+const layout = (packed, title) => packed.find((e) => e.title === title);
+
+describe("pack", () => {
+  it("gives a lone event the whole column", () => {
+    const [only] = pack([at(600, 660)]);
+    assert.equal(only.column, 0);
+    assert.equal(only.of, 1);
+  });
+
+  it("splits two events that overlap", () => {
+    // The real collision on this account: a course calendar and a personal one
+    // both carrying the 10:30 class.
+    const packed = pack([at(630, 680, "lecture"), at(630, 680, "systems")]);
+    assert.deepEqual(packed.map((e) => e.column).sort(), [0, 1]);
+    assert.ok(packed.every((e) => e.of === 2));
+  });
+
+  it("reuses a column once its event has finished", () => {
+    // 9–10 and 10–11 do not overlap, so the second takes the first's column
+    // and neither is narrowed.
+    const packed = pack([at(540, 600, "a"), at(600, 660, "b")]);
+    assert.equal(layout(packed, "a").of, 1);
+    assert.equal(layout(packed, "b").of, 1);
+  });
+
+  it("keeps a crowded morning from narrowing a quiet afternoon", () => {
+    // Column counts are per cluster of mutual overlap, not per day: without
+    // that, three stacked 9am events would draw the 3pm one at a third width
+    // with two empty columns beside it.
+    const packed = pack([
+      at(540, 600, "a"), at(540, 600, "b"), at(540, 600, "c"),
+      at(900, 960, "afternoon"),
+    ]);
+    assert.equal(layout(packed, "a").of, 3);
+    assert.equal(layout(packed, "afternoon").of, 1);
+    assert.equal(layout(packed, "afternoon").column, 0);
+  });
+
+  it("chains a cluster through a long event that spans two short ones", () => {
+    // 9–12 overlaps both 9–10 and 11–12, which do not overlap each other. All
+    // three are one cluster, and the long one must not be drawn over.
+    const packed = pack([at(540, 720, "long"), at(540, 600, "early"), at(660, 720, "late")]);
+    assert.ok(packed.every((e) => e.of === 2));
+    assert.notEqual(layout(packed, "long").column, layout(packed, "early").column);
+    assert.notEqual(layout(packed, "long").column, layout(packed, "late").column);
+    // ...but the two short ones are free to share, since they never coincide.
+    assert.equal(layout(packed, "early").column, layout(packed, "late").column);
+  });
+
+  it("does not lose an event", () => {
+    const input = [at(540, 600, "a"), at(550, 610, "b"), at(1200, 1260, "c")];
+    assert.equal(pack(input).length, input.length);
+  });
+});
+
+describe("windowFor", () => {
+  it("defaults to waking hours when the week is empty", () => {
+    assert.deepEqual(windowFor([]), [8 * 60, 21 * 60]);
+  });
+
+  it("opens earlier for an early event, on the hour", () => {
+    const [open] = windowFor([at(6 * 60 + 25, 7 * 60)]);
+    assert.equal(open, 6 * 60);
+  });
+
+  it("closes later for a late one", () => {
+    const [, close] = windowFor([at(22 * 60, 23 * 60 + 10)]);
+    assert.equal(close, 24 * 60);
+  });
+
+  it("never narrows past the default for a mid-morning week", () => {
+    assert.deepEqual(windowFor([at(600, 660)]), [8 * 60, 21 * 60]);
+  });
+});

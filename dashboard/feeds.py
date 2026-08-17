@@ -27,7 +27,7 @@ from typing import Any, Generic, NamedTuple, TypeVar
 
 from . import logs, portfolio
 from .config import Settings
-from .models.api import CalendarEvent, CalendarResponse, MarketRow, NewsItem
+from .models.api import CalendarEvent, CalendarInfo, CalendarResponse, MarketRow, NewsItem
 from .models.common import Base
 from .models.domain import ChessPuzzle
 
@@ -390,7 +390,7 @@ class Feeds:
 
     # -- calendar -----------------------------------------------------------
 
-    def gcalcli(self, *args: str) -> str:
+    def gcalcli(self, *args: str, timeout: float | None = None) -> str:
         """Run gcalcli with an argv list.
 
         Was a hand-quoted string through `bash -lc`, which meant every call
@@ -398,46 +398,138 @@ class Feeds:
         POSIX quoting by hand. `subprocess.run` with a list passes the
         arguments through untouched, so an apostrophe in an event title is no
         longer a shell metacharacter.
+
+        stdin is closed, deliberately, and it is the fix for the bug that made
+        adding an event impossible from the day it was written. gcalcli drops
+        to an *interactive prompt* whenever a subcommand cannot resolve its
+        target calendar on its own -- and with nine calendars on this account
+        and no gcalclirc to name a default, `quick` could never resolve one. It
+        printed a numbered menu and called `input()`. Inheriting the parent's
+        stdin meant that menu blocked until `timeout_seconds` expired, so the
+        panel reported "gcalcli timed out after 60s" for what was really a
+        missing argument. A closed stdin turns the same class of mistake into
+        an immediate EOFError, with the menu it was about to draw sitting in
+        stderr where it reads as the bug report it is.
         """
         cfg = self.settings.calendar
         argv = [*cfg.command, *args]
         if os.name == "nt":
             argv = ["wsl", "-e", *argv]
+        limit = cfg.timeout_seconds if timeout is None else timeout
         try:
             r = subprocess.run(
-                argv, capture_output=True, text=True, timeout=cfg.timeout_seconds, check=False
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=limit,
+                check=False,
+                stdin=subprocess.DEVNULL,
             )
         except FileNotFoundError as e:
             raise FeedError(f"{cfg.command[0]} not found on PATH") from e
         except subprocess.TimeoutExpired as e:
-            raise FeedError(f"{cfg.command[0]} timed out after {cfg.timeout_seconds}s") from e
+            raise FeedError(f"{cfg.command[0]} timed out after {limit}s") from e
         if r.returncode != 0:
             message = (r.stderr or r.stdout).strip()
             log.error("gcalcli %s exited %s: %s", args, r.returncode, message)
             raise FeedError(message[:200] or "gcalcli failed")
         return r.stdout
 
-    def calendar(self, today: dt.date) -> Cached[CalendarResponse]:
+    def calendar(self, start: dt.date, days: int = 7) -> Cached[CalendarResponse]:
         return self.cached(
-            f"calendar:{today.isoformat()}",
+            f"calendar:{start.isoformat()}:{days}",
             self.settings.calendar.cache_seconds,
-            lambda: self._fetch_calendar(today),
+            lambda: self._fetch_calendar(start, days),
         )
 
-    def _fetch_calendar(self, today: dt.date) -> CalendarResponse:
-        week_end = (today + dt.timedelta(days=7)).isoformat()
-        day = self.gcalcli("agenda", f"{today} 00:00", f"{today} 23:59", "--tsv")
-        week = self.gcalcli("agenda", str(today), week_end, "--tsv")
-        return CalendarResponse(today=_parse_agenda(day), week=_parse_agenda(week))
+    def _fetch_calendar(self, start: dt.date, days: int) -> CalendarResponse:
+        # One agenda call, not two. The old pair asked for today and then for
+        # today-plus-seven, which fetched today twice and put its events in
+        # both lists.
+        end = start + dt.timedelta(days=days)
+        tsv = self.gcalcli("agenda", str(start), str(end), "--tsv", "--details", "calendar")
+        return CalendarResponse(
+            start=start,
+            days=days,
+            events=_parse_agenda(tsv),
+            calendars=self.calendars(),
+        )
 
-    def add_calendar_event(self, text: str) -> str:
-        out = self.gcalcli("quick", text)
-        # The agenda is now wrong; drop it rather than show a stale one.
-        # Every cached day, not just "today" -- `quick` parses the date out of
-        # the text, so the new event can land on any of them, and the server
-        # is not the authority on which one is today anyway.
+    def calendar_history(self, today: dt.date) -> list[CalendarEvent]:
+        """Years of events, for the classifier to be fitted on.
+
+        One agenda call covering the whole window rather than one per calendar:
+        `--details calendar` labels each row, which is the entire reason the
+        training set costs nothing to build.
+        """
+        cfg = self.settings.calendar
+        start = today - dt.timedelta(days=cfg.history_days)
+        # Forward as well as back. Next semester's classes are already on the
+        # calendar in August, and they are the most useful rows in the set.
+        end = today + dt.timedelta(days=cfg.history_days_ahead)
+        return self.cached(
+            "calendarhistory",
+            cfg.history_cache_seconds,
+            lambda: _parse_agenda(
+                self.gcalcli("agenda", str(start), str(end), "--tsv", "--details", "calendar")
+            ),
+        ).value
+
+    def calendars(self) -> list[CalendarInfo]:
+        """The account's calendar list, cached hard.
+
+        Separately cached from the agenda and for far longer: a calendar is
+        created every few months, and this is on the path of every add.
+        """
+        return self.cached(
+            "calendarlist",
+            self.settings.calendar.list_cache_seconds,
+            self._fetch_calendars,
+        ).value
+
+    def _fetch_calendars(self) -> list[CalendarInfo]:
+        return _parse_calendar_list(self.gcalcli("list"))
+
+    def add_calendar_event(
+        self,
+        *,
+        calendar: str,
+        title: str,
+        when: str,
+        duration: int | None = None,
+        all_day: bool = False,
+    ) -> str:
+        """Write one event, with its target named.
+
+        Was `gcalcli quick <text>` -- no `--calendar`, which on an account with
+        more than one writable calendar is not a thing gcalcli can do. See the
+        note in `gcalcli()`; it hung rather than failing.
+
+        `add` rather than `quick`, so the fields are ours. `quick` hands the
+        whole string to Google's parser and returns whatever it decided, which
+        cannot be shown to anyone before it is already written. Here the date
+        and the title have been resolved locally and can be previewed.
+        """
+        args = [
+            "add",
+            "--calendar", calendar,
+            "--title", title,
+            "--when", when,
+            "--noprompt",  # belt and braces: stdin is closed anyway
+        ]
+        if all_day:
+            args.append("--allday")
+        # gcalcli wants a duration for every event, all-day included -- there
+        # it counts days, not minutes.
+        args += ["--duration", str(duration if duration is not None else (1 if all_day else 60))]
+
+        out = self.gcalcli(*args, timeout=self.settings.calendar.write_timeout_seconds)
+        # Every cached window, not just the one holding today: the event can
+        # land on any date the text named. `invalidate` adds the `:` itself, so
+        # this drops every `calendar:<date>:<days>` and leaves `calendarlist`
+        # -- which adding an event cannot have changed -- alone.
         self.invalidate("calendar")
-        return out
+        return out.strip()
 
     # -- arXiv --------------------------------------------------------------
 
@@ -526,15 +618,62 @@ def _maybe_date(value: str) -> dt.date | None:
 
 
 def _parse_agenda(tsv: str) -> list[CalendarEvent]:
+    """gcalcli's `--tsv` output -> events, addressed by column *name*.
+
+    Was five fixed indices. `--details calendar` appends a sixth column and
+    `--details all` puts nine *before* the title, so any position taken as a
+    constant is a column the next flag moves. gcalcli always emits the header
+    row, so there is no reason to guess.
+    """
+    lines = tsv.strip().splitlines()
+    if not lines:
+        return []
+
+    header = lines[0].split("\t")
+    if header[0] != "start_date":
+        log.warning("gcalcli agenda had no header row; first line was %r", lines[0][:120])
+        return []
+    index = {name: i for i, name in enumerate(header)}
+
+    def field(parts: list[str], name: str) -> str:
+        i = index.get(name, -1)
+        return parts[i].strip() if 0 <= i < len(parts) else ""
+
     events: list[CalendarEvent] = []
-    for line in tsv.strip().splitlines():
+    for line in lines[1:]:
         parts = line.split("\t")
-        if parts and parts[0] == "start_date":  # gcalcli tsv header row
+        date = _maybe_date(field(parts, "start_date"))
+        if date is None:
+            log.debug("skipping unparseable agenda row: %r", line)
             continue
-        if len(parts) >= 5:
-            date = _maybe_date(parts[0])
-            if date is None:
-                log.debug("skipping unparseable agenda row: %r", line)
-                continue
-            events.append(CalendarEvent(date=date, start=parts[1], end=parts[3], title=parts[4]))
+        # Google's end date is exclusive for all-day events, so a one-day
+        # holiday ends on the following morning. Only worth carrying when it
+        # actually disagrees with the start.
+        end_date = _maybe_date(field(parts, "end_date"))
+        events.append(
+            CalendarEvent(
+                date=date,
+                start=field(parts, "start_time") or None,
+                end=field(parts, "end_time") or None,
+                title=field(parts, "title") or "(untitled)",
+                calendar=field(parts, "calendar"),
+                end_date=end_date if end_date and end_date != date else None,
+            )
+        )
     return events
+
+
+def _parse_calendar_list(out: str) -> list[CalendarInfo]:
+    """`gcalcli list` -> the account's calendars.
+
+    `list` is the one subcommand with no `--tsv`, so this reads the drawn
+    table: two leading spaces, the access role, then the title, which may
+    contain spaces of its own and so takes the rest of the line.
+    """
+    calendars: list[CalendarInfo] = []
+    roles = ("owner", "writer", "reader", "freebusy")
+    for line in out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and parts[0] in roles:
+            calendars.append(CalendarInfo(access=parts[0], name=parts[1].strip()))
+    return calendars

@@ -20,6 +20,13 @@ dependencies = [
     # something. `dashboard/webauthn.py` imports it lazily, so a venv that
     # predates this still boots -- the panel says what to run instead.
     "cryptography>=42",
+    # Picks which calendar a quick-added event belongs on, from the ~380
+    # distinct event titles already sitting in the account's own calendars --
+    # the labels are free, because an event's calendar *is* the label.
+    # `dashboard/calclass.py` imports it lazily, like cryptography above: a
+    # venv that predates this still boots, and the classifier falls back to its
+    # keyword rules with the reason shown in the panel.
+    "scikit-learn>=1.4",
 ]
 
 [project.optional-dependencies]

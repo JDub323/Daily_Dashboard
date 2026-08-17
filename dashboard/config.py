@@ -751,6 +751,43 @@ class CalendarSettings(Base):
     cache_seconds: int = Field(default=300, ge=0)
     timeout_seconds: int = Field(default=60, gt=0)
 
+    list_cache_seconds: int = Field(default=86_400, ge=0)
+    """The calendar *list* barely changes and is read on every add."""
+
+    warm_on_start: bool = True
+    """Fit the quick-add classifier in a background thread at boot.
+
+    Off under test, where it would run the real `gcalcli` against the real
+    account on every app the suite constructs -- see the `settings` fixture.
+    """
+
+    history_days: int = Field(default=1095, ge=0)
+    history_days_ahead: int = Field(default=180, ge=0)
+    history_cache_seconds: int = Field(default=86_400, ge=0)
+    """The classifier's training window. Three years back, half a year
+    forward: next semester's timetable is already filed and is the most
+    representative data on the account."""
+
+    write_timeout_seconds: int = Field(default=20, gt=0)
+    """Shorter than the read timeout, on purpose.
+
+    A read happens on a timer and nobody is waiting for it. A write happens
+    because someone pressed Enter and is watching -- 60s of a spinner is
+    indistinguishable from the app being broken, which is what the stdin bug
+    looked like from the outside for as long as it existed.
+    """
+
+    default_calendar: str = "Special Events"
+    """Where an event goes when the classifier has nothing useful to say.
+
+    Named rather than inferred: "the first writable one" is alphabetical
+    accident, and this is the calendar whose contents are already the most
+    varied, so a wrong guess landing here is the least surprising.
+    """
+
+    week_starts_on: int = Field(default=0, ge=0, le=6)
+    """0 = Monday, matching `date.weekday()`. 6 is Sunday, as Google draws it."""
+
     @field_validator("command")
     @classmethod
     def _non_empty(cls, v: list[str]) -> list[str]:

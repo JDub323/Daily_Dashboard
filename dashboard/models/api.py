@@ -21,7 +21,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Annotated
 
-from pydantic import Field, model_validator
+from pydantic import Field, computed_field, model_validator
 
 from .common import (
     Base,
@@ -125,6 +125,22 @@ class WordCheckRequest(DateBody):
 
 class CalendarAddRequest(Base):
     text: str = Field(min_length=1, max_length=500)
+
+    today: dt.date | None = None
+    """The browser's date, for resolving "wednesday" and "tomorrow".
+
+    Optional rather than required, and deliberately not `DateBody`: the server
+    can fall back to its own date, and the old contract for this endpoint took
+    no date at all -- `test_calendar_add_takes_no_date` pins that a *stray*
+    `date` key is still rejected.
+    """
+
+    calendar: str | None = None
+    """The override. None means "use whatever the classifier picked".
+
+    Set only when the user cycled the target away from the prediction, which
+    is exactly the signal worth learning from -- the route records it.
+    """
 
 
 class PaperTriageRequest(DateBody):
@@ -1008,6 +1024,50 @@ class CalendarEvent(Base):
     end: str | None = None
     title: str
 
+    calendar: str = ""
+    """Which of the account's calendars this event came from.
+
+    Empty only for a row gcalcli returned without the column. The week grid
+    colours by this, and the classifier is trained on it -- an event's calendar
+    is the label, so reading it back is what makes the training set free.
+    """
+
+    end_date: dt.date | None = None
+    """Set only when the event does not end on the day it starts.
+
+    An all-day event spans `[date, end_date)` in Google's half-open convention:
+    a one-day holiday comes back as 09-07 to 09-08. The grid would draw that as
+    two days without somewhere to put the distinction.
+
+    There is deliberately no `all_day` helper beside this. "Has no start time"
+    is the whole test, both ends read it that way, and a bare `@property` would
+    not survive `model_dump` anyway -- which is the bug `CalendarInfo.writable`
+    was fixed for.
+    """
+
+
+class CalendarInfo(Base):
+    """One row of `gcalcli list`."""
+
+    name: str
+    access: str
+
+    @computed_field
+    @property
+    def writable(self) -> bool:
+        """The two roles Google lets you insert events under.
+
+        A `reader` calendar -- the US holidays feed, a shared course calendar
+        -- is real, is drawn in the grid, and can never be an add target.
+
+        `computed_field`, not a bare `@property`: the grid filters the Tab
+        cycle on this, and a plain property is invisible to `model_dump`, so
+        the client saw `undefined` and offered no calendars at all. The rule
+        belongs on the server either way -- the browser should not be the
+        second place that knows which access roles can be written to.
+        """
+        return self.access in ("owner", "writer")
+
 
 class MarketsResponse(Base):
     """Was a bare `list[MarketRow]`. An envelope, so freshness has somewhere
@@ -1023,8 +1083,27 @@ class NewsResponse(Base):
 
 
 class CalendarResponse(Base):
-    today: list[CalendarEvent] = Field(default_factory=list)
-    week: list[CalendarEvent] = Field(default_factory=list)
+    """One week, as the grid draws it.
+
+    Was `today` plus `week`, two flat lists built from two agenda calls -- and
+    today's events appeared in both, because the week range started on today.
+    The grid needs neither list: it needs a date window and every event inside
+    it, and which day a given event belongs in is a property of the event.
+    """
+
+    start: dt.date | None = None
+    """The Monday the window opens on. None only on an empty default."""
+
+    days: int = 7
+    events: list[CalendarEvent] = Field(default_factory=list)
+
+    calendars: list[CalendarInfo] = Field(default_factory=list)
+    """Every calendar on the account, writable or not.
+
+    Sent with the events rather than fetched separately because the grid needs
+    it to assign colours on first paint, and the add box needs the writable
+    subset to offer as override targets.
+    """
 
     feed: FeedMeta | None = None
     """Attached by the route, not by the fetcher.
@@ -1033,6 +1112,40 @@ class CalendarResponse(Base):
     cache and so cannot know when it will be considered fetched. The route
     wraps it once the cache has answered. Never None over HTTP.
     """
+
+
+class CalendarGuess(Base):
+    calendar: str
+    score: float
+
+
+class ResolvedEvent(Base):
+    """What one line of typing was understood to mean, before anything is written.
+
+    `POST /api/calendar/preview` returns this and touches nothing. It exists so
+    the guess is visible *while you type* rather than discovered afterwards in
+    Google -- the classifier is trained on noisy labels and will be wrong, and
+    a wrong guess you can see is a keystroke rather than an event to go and
+    delete.
+    """
+
+    title: str
+    date: dt.date
+    start: str | None = None
+    end: str | None = None
+
+    calendar: str
+    source: str = Field(pattern=r"^(rule|model|correction|fallback)$")
+    """Which stage decided. Shown in the preview, because "why did it pick
+    that" is the first question a wrong guess raises."""
+
+    ranked: list[CalendarGuess] = Field(default_factory=list)
+    """Every writable calendar, best first. The UI cycles this with Tab, so the
+    second-best guess is one key away rather than a menu."""
+
+    warning: str | None = None
+    """Set when the text parsed but something about it is worth saying -- no
+    time found, an end before its start, a date read as next week."""
 
 
 # --- the portfolio ---------------------------------------------------------

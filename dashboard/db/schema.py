@@ -1055,6 +1055,40 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX trick_round_callback ON trick_round (callback_id, date);
         """,
     ),
+    (
+        16,
+        """
+        -- Every time the quick-add box was told it guessed the wrong calendar.
+        --
+        -- This table is the training set that the account's own history cannot
+        -- provide. The history is free but noisy: `Meals` holds "Learn Python"
+        -- and "Schedule Week", `Homework` holds six birthdays and "do taxes",
+        -- so a model fitted on it alone learns filing habits that are not
+        -- really habits. A correction is the one label that was given
+        -- deliberately, about a phrasing that actually gets typed, so these
+        -- rows carry more weight in the fit than the history does.
+        --
+        -- `predicted` is kept alongside `chosen` rather than being overwritten
+        -- by it: the pair is the only record of whether the classifier is
+        -- getting better, and a table of right answers with the wrong ones
+        -- discarded cannot answer that.
+        CREATE TABLE calendar_correction (
+            id          INTEGER PRIMARY KEY,
+            created     TEXT    NOT NULL
+                                CHECK (created IS strftime('%Y-%m-%dT%H:%M:%S', created)),
+            -- What was typed, minus the date and time -- the same string the
+            -- classifier saw, so a row can be replayed exactly.
+            text        TEXT    NOT NULL CHECK (length(text) BETWEEN 1 AND 500),
+            predicted   TEXT,
+            chosen      TEXT    NOT NULL CHECK (length(chosen) BETWEEN 1 AND 200),
+            source      TEXT    NOT NULL
+                                CHECK (source IN ('rule', 'model', 'correction', 'fallback'))
+        ) STRICT;
+
+        -- The fit reads the whole table on every retrain, newest first.
+        CREATE INDEX calendar_correction_created ON calendar_correction (created);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)
