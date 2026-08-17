@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+<!-- Dailies: one motif per thing the page asks of you. Piano, wordle row and
+     the bee's comb on the left; a chessboard corner and the day's article on
+     the right. Weighted to the outer thirds like the rest of web/assets/bg/ —
+     the middle band stays clear for the content column. -->
+<g fill="none" stroke="#cdd6e4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+
+  <!-- piano, upper left: an octave with the black keys stopped short -->
+  <g transform="translate(80 120)">
+    <rect x="0"   y="0" width="56" height="180" rx="4"/>
+    <rect x="56"  y="0" width="56" height="180" rx="4"/>
+    <rect x="112" y="0" width="56" height="180" rx="4"/>
+    <rect x="168" y="0" width="56" height="180" rx="4"/>
+    <rect x="224" y="0" width="56" height="180" rx="4"/>
+    <rect x="280" y="0" width="56" height="180" rx="4"/>
+    <rect x="336" y="0" width="56" height="180" rx="4"/>
+    <rect x="39"  y="0" width="34" height="112" rx="3" fill="#cdd6e4"/>
+    <rect x="95"  y="0" width="34" height="112" rx="3" fill="#cdd6e4"/>
+    <rect x="207" y="0" width="34" height="112" rx="3" fill="#cdd6e4"/>
+    <rect x="263" y="0" width="34" height="112" rx="3" fill="#cdd6e4"/>
+    <rect x="319" y="0" width="34" height="112" rx="3" fill="#cdd6e4"/>
+  </g>
+
+  <!-- the day's five letters, mid left. One green, one amber-by-position. -->
+  <g transform="translate(80 380)">
+    <rect x="0"   y="0" width="64" height="64" rx="6"/>
+    <rect x="76"  y="0" width="64" height="64" rx="6" fill="#cdd6e4"/>
+    <rect x="152" y="0" width="64" height="64" rx="6"/>
+    <rect x="228" y="0" width="64" height="64" rx="6" fill="#cdd6e4"/>
+    <rect x="304" y="0" width="64" height="64" rx="6"/>
+  </g>
+
+  <!-- the comb, lower left -->
+  <g transform="translate(190 660)" opacity=".75">
+    <path d="M0 -44 L38 -22 L38 22 L0 44 L-38 22 L-38 -22 Z" fill="#cdd6e4"/>
+    <g transform="translate(76 0)"><path d="M0 -44 L38 -22 L38 22 L0 44 L-38 22 L-38 -22 Z"/></g>
+    <g transform="translate(38 -66)"><path d="M0 -44 L38 -22 L38 22 L0 44 L-38 22 L-38 -22 Z"/></g>
+    <g transform="translate(-38 -66)"><path d="M0 -44 L38 -22 L38 22 L0 44 L-38 22 L-38 -22 Z"/></g>
+    <g transform="translate(-76 0)"><path d="M0 -44 L38 -22 L38 22 L0 44 L-38 22 L-38 -22 Z"/></g>
+    <g transform="translate(0 66)"><path d="M0 -44 L38 -22 L38 22 L0 44 L-38 22 L-38 -22 Z"/></g>
+  </g>
+
+  <!-- a board corner, upper right -->
+  <g transform="translate(1190 130)">
+    <rect x="0"   y="0"   width="84" height="84"/>
+    <rect x="84"  y="0"   width="84" height="84" fill="#cdd6e4"/>
+    <rect x="168" y="0"   width="84" height="84"/>
+    <rect x="252" y="0"   width="84" height="84" fill="#cdd6e4"/>
+    <rect x="0"   y="84"  width="84" height="84" fill="#cdd6e4"/>
+    <rect x="84"  y="84"  width="84" height="84"/>
+    <rect x="168" y="84"  width="84" height="84" fill="#cdd6e4"/>
+    <rect x="252" y="84"  width="84" height="84"/>
+    <rect x="0"   y="168" width="84" height="84"/>
+    <rect x="84"  y="168" width="84" height="84" fill="#cdd6e4"/>
+    <rect x="168" y="168" width="84" height="84"/>
+    <rect x="252" y="168" width="84" height="84" fill="#cdd6e4"/>
+    <rect x="0"   y="252" width="84" height="84" fill="#cdd6e4"/>
+    <rect x="84"  y="252" width="84" height="84"/>
+    <rect x="168" y="252" width="84" height="84" fill="#cdd6e4"/>
+    <rect x="252" y="252" width="84" height="84"/>
+  </g>
+
+  <!-- today's paper, lower right: a folded sheet with its column rules -->
+  <g transform="translate(1210 540)">
+    <path d="M0 0 h300 v300 h-300 z"/>
+    <path d="M28 46 h244" stroke-width="6"/>
+    <path d="M28 92 h110 M28 122 h110 M28 152 h110 M28 182 h84"/>
+    <rect x="164" y="86" width="108" height="72" rx="4" opacity=".7"/>
+    <path d="M28 224 h244 M28 254 h180" opacity=".7"/>
+  </g>
+
+  <!-- the day, rising over both sides -->
+  <path d="M120 860 h380 M1160 860 h380" opacity=".35"/>
+  <circle cx="1520" cy="420" r="46" opacity=".5"/>
+</g>
+</svg>

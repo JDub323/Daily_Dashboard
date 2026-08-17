@@ -9,43 +9,16 @@
 // So: the completion heatmap is the hero, in the slot Edge gives the search
 // bar — the first thing on the first tab, because "did I keep this up" is the
 // question the whole dashboard exists to answer. The streak and the running
-// cost sit with it. The two deeper reads — per-area elo, the day-log archive —
-// are panels below it rather than tabs inside it, since nothing is competing
-// for the space any more.
+// cost sit with it.
+//
+// The two deeper reads that used to sit below it are both gone: the day-log
+// archive is a modal off the log cell (`modals/daylogs.js`), and the per-area
+// elo chart went with every other rating chart in the app. `/api/history` still
+// serves both halves; only the day logs are read now.
 
 import * as api from "../api.js";
-import { lineChart } from "../charts.js";
 import { el } from "../dom.js";
 import { store } from "../store.js";
-
-// --- the shared /api/history read -------------------------------------------
-//
-// Two panels want it and neither should wait on the other's request.
-
-let cache = null;
-let inflight = null;
-
-function history() {
-  if (cache) return Promise.resolve(cache);
-  inflight ??= api
-    .get("/api/history")
-    .then((data) => (cache = data))
-    .catch((error) => (cache = { areas: [], daylogs: [], error: error.message }))
-    .finally(() => {
-      inflight = null;
-    });
-  return inflight;
-}
-
-/** Dropped when the day turns, so a stale month is not still on screen. */
-export function invalidateHistory() {
-  cache = null;
-}
-
-/** Shared by the two panels that wait on the fetch. */
-function failed(data) {
-  return data.error ? el("div.err", { text: data.error }) : null;
-}
 
 // --- the completion heatmap -------------------------------------------------
 //
@@ -216,7 +189,7 @@ function spendBlock(spend) {
   );
 }
 
-// --- the panels -------------------------------------------------------------
+// --- the panel --------------------------------------------------------------
 
 export const activity = {
   id: "activity",
@@ -266,92 +239,5 @@ export const activity = {
       // estimate could not be read is the wrong trade.
       spendSlot.replaceChildren(el("div.faint", { text: "llm spend — unavailable" }));
     }
-  },
-};
-
-export const areas = {
-  id: "areas",
-  title: "elo by area",
-  tab: "home",
-  slot: "grid",
-  // Two of a kind with everything else on the tab. A wider card was tried and
-  // measured: it shortens this one, but only by pushing a third row onto the
-  // tab, and the home grid is 460px taller that way. Six cards, two rows of
-  // three, is the shortest home tab there is.
-  span: 2,
-
-  async render(node) {
-    node.replaceChildren(el("div.faint", { text: "loading…" }));
-    const data = await history();
-
-    if (failed(data)) {
-      node.replaceChildren(failed(data));
-      return;
-    }
-    if (!data.areas.length) {
-      node.replaceChildren(el("div.faint", {
-        text: "no area has a measured result yet — the breakdown on the math tab is"
-          + " your overall rating standing in until one does",
-      }));
-      return;
-    }
-
-    node.replaceChildren(
-      el("div.faint.small", {
-        text: "the rating each week's topic is actually pitched against. Only measured"
-          + " results are plotted — reconstructed rows carry no rating and are not drawn.",
-      }),
-      ...data.areas.map((series) => {
-        const values = series.points.map(([, rating]) => rating);
-        const first = series.points[0][0];
-        return el("div.chart-block", null,
-          el("div.chart-title", null,
-            el("span", { text: series.area }),
-            el("span.value", { text: values[values.length - 1] }),
-          ),
-          lineChart(values, { color: "var(--accent)" }),
-          el("div.faint.small", {
-            text: `${series.events} result${series.events === 1 ? "" : "s"} since ${first}`,
-          }),
-        );
-      }),
-    );
-  },
-};
-
-export const archive = {
-  id: "archive",
-  title: "day logs",
-  tab: "home",
-  slot: "grid",
-  // Still the tallest card on the tab, and it is what sets the second row's
-  // height. Full width does shorten it — but see `areas` above: it costs a
-  // whole extra row to do it, which is a worse trade than the slack it saves.
-  span: 2,
-
-  async render(node) {
-    node.replaceChildren(el("div.faint", { text: "loading…" }));
-    const data = await history();
-
-    if (failed(data)) {
-      node.replaceChildren(failed(data));
-      return;
-    }
-    if (!data.daylogs.length) {
-      node.replaceChildren(el("div.faint", { text: "no day logs yet" }));
-      return;
-    }
-
-    node.replaceChildren(
-      el("div.faint.small", { text: `${data.daylogs.length} entries, newest first` }),
-      el("div.archive", null,
-        ...data.daylogs.map((entry) =>
-          el("div.archive-item", null,
-            el("div.value.small", { text: entry.date }),
-            el("div.daylog-text", { text: entry.text }),
-          ),
-        ),
-      ),
-    );
   },
 };

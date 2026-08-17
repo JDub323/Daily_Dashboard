@@ -129,10 +129,8 @@ a:hover { text-decoration: underline; }
 body[data-tab="home"]     #bg { background-image: url("/assets/bg/home.svg"); }
 body[data-tab="math"]     #bg { background-image: url("/assets/bg/math.svg"); }
 body[data-tab="politics"] #bg { background-image: url("/assets/bg/politics.svg"); }
-body[data-tab="papers"]   #bg { background-image: url("/assets/bg/papers.svg"); }
-body[data-tab="games"]    #bg { background-image: url("/assets/bg/games.svg"); }
+body[data-tab="dailies"]  #bg { background-image: url("/assets/bg/dailies.svg"); }
 body[data-tab="markets"]  #bg { background-image: url("/assets/bg/markets.svg"); }
-body[data-tab="hobbies"]  #bg { background-image: url("/assets/bg/hobbies.svg"); }
 body[data-tab="health"]   #bg { background-image: url("/assets/bg/health.svg"); }
 
 /* The old radial wash, kept as a second layer so the top of the page still
@@ -198,9 +196,14 @@ body::before {
    The hero holds what the tab is *for*. It gets the position Edge gives the
    search bar — first thing under the chrome, alone on its row — which is a
    claim about importance and not about size: a two-line "solved ✓" summary in
-   this slot still outranks a full-height card below it. */
+   this slot still outranks a full-height card below it.
+
+   A tab may decline to have one — `dailies` does, since a page of equal small
+   obligations has no single point — and then the slot must take no room at
+   all, or the grid starts a rhythm's worth of whitespace below the tab bar. */
 .pane[hidden] { display: none; }
 .hero { display: flex; flex-direction: column; gap: var(--s4); margin-bottom: var(--s4); }
+.hero:empty { display: none; }
 
 /* ---- the grid ----
    Six columns with a span declared per panel, replacing
@@ -565,20 +568,10 @@ select {
 .archive-item[open] > summary { color: var(--accent); }
 .archive-item > .statement { margin: var(--s2) 0 var(--s1) var(--s4); }
 
-/* ---- task chips ---- */
-.chips { display: flex; gap: var(--s2); flex-wrap: wrap; }
-.chip { display: inline-flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3);
-        border: 1px solid var(--border); border-radius: var(--r-pill); cursor: pointer;
-        font-size: var(--t-body); color: var(--dim); background: var(--raised);
-        transition: border-color .15s, color .15s; user-select: none; }
-.chip:hover { border-color: var(--accent); color: var(--accent); }
-.chip.done { border-color: var(--gold-dim); color: var(--gold);
-             background: linear-gradient(180deg, rgba(232,180,88,.08), transparent); }
-.chip.done::before { content: "✦ "; }
-/* Optional: tracked and gold when done, but out of the ring's denominator.
-   A dashed border rather than a dimmer one — dim reads as "disabled", and
-   these are perfectly live, just not owed. */
-.chip.optional { border-style: dashed; }
+/* ---- the day's count ----
+   All that is left of the chip row, which was deleted with the "today" card:
+   the ring in the statusline, which said the same thing on every tab and did
+   not cost the top of the home page to do it. */
 .completion-ring { color: var(--gold); font-weight: 700; }
 
 /* ---- home: the stat cards beside the heatmap ---- */

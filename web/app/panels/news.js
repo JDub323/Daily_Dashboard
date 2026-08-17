@@ -85,18 +85,24 @@ export function newsPanel(spec) {
 }
 
 /** Categories with a home of their own. Everything else falls to the catch-all. */
-const CLAIMED = new Set(["uspolitics", "world", "finance"]);
+const CLAIMED = new Set(["finance"]);
 
-// Demoted from the hero when the debate arrived. Still the widest net on the
-// tab — the debate panel's reading list is ranked to one issue, and the point
-// of this one is everything that issue is not.
+// Demoted from the hero when the debate arrived, and widened again when the
+// newsletters tab was folded away: the "elsewhere" card that used to live there
+// was the catch-all, and the catch-all is now this one. So the rule is simply
+// "everything the money pages did not take" — a category added to config.toml
+// still shows up somewhere instead of vanishing, and it does not need a tab of
+// its own to do it.
+//
+// `cats: null` also means the per-row category tag comes back, which it has to:
+// this card is no longer one subject.
 export const politics = newsPanel({
   id: "news-politics",
   title: "headlines",
   tab: "politics",
   slot: "grid",
   span: 2,
-  cats: ["uspolitics", "world"],
+  cats: null,
 });
 
 export const finance = newsPanel({
@@ -106,14 +112,4 @@ export const finance = newsPanel({
   slot: "grid",
   span: 3,
   cats: ["finance"],
-});
-
-export const misc = newsPanel({
-  id: "news-misc",
-  title: "elsewhere",
-  tab: "papers",
-  slot: "grid",
-  // The only card on the tab, under a hero — so it takes the row.
-  span: 6,
-  cats: null,
 });

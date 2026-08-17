@@ -9,7 +9,14 @@
 // Panes are all built up front and shown by toggling `hidden`, never rebuilt
 // on switch. Panels hold live timers, streaming generations and half-typed
 // inputs; tearing their DOM down on every tab change would drop all three.
-// Eight hidden panes cost nothing and switching is then instant.
+// Six hidden panes cost nothing and switching is then instant.
+//
+// `dailies` is the exception to the hero rule, on purpose. Games, newsletters
+// and hobbies were three tabs of one or two cards each, and each had to
+// nominate a hero it did not really have — the chess puzzle got the same slot
+// on its tab that the math problem gets on its own. They are one page now, and
+// on that page nothing is the point: it is the day's small obligations, all
+// the same size, and you work down it.
 
 import { $, el } from "./dom.js";
 
@@ -25,10 +32,8 @@ export const TABS = [
   { id: "home", label: "home", blurb: "everything, counted" },
   { id: "math", label: "math", blurb: "problem of the day, and the theorem deck" },
   { id: "politics", label: "politics", blurb: "the week's issue, the prep, and the argument" },
-  { id: "papers", label: "newsletters", blurb: "arXiv triage and the reading queue" },
-  { id: "games", label: "games", blurb: "wordle, pokedoku, and the streaks" },
+  { id: "dailies", label: "dailies", blurb: "the word, the bee, the games, the puzzle, the paper" },
   { id: "markets", label: "markets", blurb: "quotes and the money pages" },
-  { id: "hobbies", label: "hobbies", blurb: "chess and piano" },
   { id: "health", label: "health", blurb: "weight and sleep" },
 ];
 

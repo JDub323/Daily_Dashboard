@@ -168,11 +168,11 @@ function item(title, subtitle, rootIndex, intervals, entry, notes, kind) {
 export default {
   id: "piano",
   title: "♪ piano of the day",
-  tab: "hobbies",
+  tab: "dailies",
   slot: "grid",
-  // The keyboard diagram is the picture on this tab; the rating chart beside it
-  // is a footnote to it.
-  span: 4,
+  // Half a row. The keyboard diagram caps at 280px anyway, so the four columns
+  // it used to hold were mostly whitespace to the right of the picture.
+  span: 3,
 
   async render(node) {
     const { notes, scales, chords } = await load();

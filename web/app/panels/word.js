@@ -157,9 +157,9 @@ function drawEditor(body, word) {
 export default {
   id: "word",
   title: "word of the day",
-  tab: "home",
+  tab: "dailies",
   slot: "grid",
-  span: 2,
+  span: 3,
 
   async render(node) {
     draw(node);

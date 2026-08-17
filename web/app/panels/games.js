@@ -1,10 +1,13 @@
 // Wordle and Pokedoku, logged from their share text.
 //
 // This was one modal that opened focused on whichever chip you clicked, and
-// the focus existed because 680px only had room to lead with one of them. A
-// tab has room for both, so the ordering question goes away: both games are
-// laid out side by side, and the single paste box already auto-detects which
-// share you gave it.
+// the focus existed because 680px only had room to lead with one of them. Both
+// games are laid out side by side instead, so the ordering question goes away,
+// and the single paste box already auto-detects which share you gave it.
+//
+// It headed a tab of its own for a while, which was more room than two games
+// nobody else schedules deserve. It is half a row on `dailies` now, beside the
+// streaks it feeds.
 
 import * as api from "../api.js";
 import { el, link, mount } from "../dom.js";
@@ -111,9 +114,9 @@ function draw(body) {
 export default {
   id: "games",
   title: "⬛ daily games",
-  tab: "games",
-  slot: "hero",
-  hero: true,
+  tab: "dailies",
+  slot: "grid",
+  span: 3,
 
   async render(node) {
     draw(node);

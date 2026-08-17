@@ -60,12 +60,12 @@ web/                  the front end — native ES modules, no build step
     freshness.js  "as of 09:14", and when a live panel refetches
     charts.js   sparkline + line chart
     parsers.js  Wordle & Pokedoku share text — pure functions
-    chips.js    the daily checklist
-    tabs.js     the eight sections, and which pane a panel mounts into
+    chips.js    what counts as a day — the completion write and the `n` order
+    tabs.js     the six sections, and which pane a panel mounts into
     nav.js      the focus ring — what h/j/k/l actually move
     keys.js     the bindings, as data; the cheatsheet is generated from them
     panels/     one file per panel
-    modals/     theorems, math, tricks (the archives) + trickset (the sheet)
+    modals/     theorems, math, tricks, day logs (the archives) + trickset
   data/         piano.json — scale/chord content, out of the logic file
   vendor/katex  see PROVENANCE.txt
 
@@ -77,14 +77,17 @@ vendored and everything else is hand-written — so native `<script type="module
 does the whole job, and a build step would only add a thing that can break
 between you and the page.
 
-UI: eight tabs, each a subject with one **hero** panel saying what the tab is
-for and supporting panels under it — home (checklist, completion heatmap, LLM
-spend, word of the day, calendar, day log, elo by area) · math · politics ·
-newsletters · games · markets · hobbies · health. The content column is capped
-at 1040px and centred, so the margins stay empty on a wide screen.
+UI: six tabs, each a subject with one **hero** panel saying what the tab is for
+and supporting panels under it — home (completion heatmap, LLM spend, calendar,
+day log) · math · politics · dailies · markets · health. `dailies` is the one
+tab with no hero, deliberately: it holds the word, the bee, the two games and
+their streaks, the chess puzzle, the piano scale and the day's arXiv article,
+and on a page of equal small obligations nothing is the point. The content
+column is capped at 1040px and centred, so the margins stay empty on a wide
+screen.
 
 Keyboard-first, and the mouse still works. `Tab`/`Shift-Tab` cycle sections,
-`1`–`8` jump to one, `h`/`j`/`k`/`l` move a focus ring between panels — and,
+`1`–`6` jump to one, `h`/`j`/`k`/`l` move a focus ring between panels — and,
 after `Enter` descends into a panel, between the links and controls inside it.
 `Enter` opens the focused thing, `Esc` backs out a level, `gg`/`G` go to the
 first/last panel, `n` opens the next unfinished task, `?` lists the lot. The

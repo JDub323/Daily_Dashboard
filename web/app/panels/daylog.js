@@ -4,11 +4,14 @@
 // never read. They need days the boot payload does not carry, so they arrive
 // after the input is already usable rather than gating it.
 //
-// The archive of every entry is its own panel further down this tab; this one
-// stays about today.
+// The whole archive used to be a second card further down this tab. It is a
+// button here now: two entries deep is what you want while writing, and every
+// entry is what you want occasionally, which is exactly the difference between
+// a panel and a modal.
 
 import * as api from "../api.js";
 import { el, mount } from "../dom.js";
+import { openDaylogArchive } from "../modals/daylogs.js";
 import { put, store } from "../store.js";
 
 const ECHOES = [
@@ -21,7 +24,7 @@ export default {
   title: "day log",
   tab: "home",
   slot: "grid",
-  span: 2,
+  span: 3,
 
   async render(node) {
     const message = el("div.faint.gap", { text: store.state.daylog ? "saved ✓" : "" });
@@ -36,7 +39,11 @@ export default {
     });
     const echoes = el("div");
 
-    mount(node, line, message, echoes);
+    mount(node, line, message, echoes,
+      el("div.row.gap", null,
+        el("button", { text: "past logs", onclick: openDaylogArchive }),
+      ),
+    );
 
     for (const [days, label] of ECHOES) {
       const past = await api.get("/api/state", { date: api.daysAgo(days) }).catch(() => null);

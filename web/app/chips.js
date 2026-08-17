@@ -1,19 +1,18 @@
-// The daily checklist. Gold = done.
+// The day's task list — no longer drawn, still counted.
 //
-// Chips lost two jobs in the tab rewrite and kept the important one. They are
-// no longer the keyboard surface — nav.js moves a focus ring over real panels
-// now, and the digits belong to the tabs — and they no longer carry a cursor.
-// What they still are is the only place the whole day is visible at once,
-// which is why they head the home tab: eight tabs is eight things you could be
-// forgetting, and this is the row that says which.
+// Chips lost two jobs in the tab rewrite and have now lost the third. They were
+// never the keyboard surface (nav.js moves a ring over real panels, and the
+// digits belong to the tabs), they never carried a cursor, and the row of them
+// that headed the home tab is gone too: it was a second copy of the count the
+// statusline carries on every tab, sitting above a heatmap that answers the
+// same question better and over a longer window.
 //
-// Clicking one switches to its tab and lands the ring on its panel, so the
-// checklist doubles as the map.
-//
-// They also own the completion write, which is why this renders on every store
-// change rather than only when the home tab is showing. Every pane is mounted
-// at boot — hidden, not absent — so the count is correct from whichever tab
-// you happen to be standing on when you finish something.
+// What the list still is, is the definition of a day. `tasks()` is what `n`
+// walks, what the cheatsheet counts, and what the completion write is computed
+// from — which is why `renderChips` runs on every store change rather than only
+// when some particular tab is showing. Every pane is mounted at boot — hidden,
+// not absent — so the count is correct from whichever tab you happen to be
+// standing on when you finish something.
 
 import * as api from "./api.js";
 import { el, mount } from "./dom.js";
@@ -150,59 +149,16 @@ export function openNextUnfinished() {
   return true;
 }
 
-/** The panel wrapper. Registered first on the home tab, so it heads the page. */
-export const todayPanel = {
-  id: "today",
-  title: "today",
-  tab: "home",
-  slot: "hero",
-  hero: true,
-  render(node) {
-    target = node;
-    return renderChips();
-  },
-};
-
-let target = null;
-
 export async function renderChips() {
   const list = tasks();
-  // The count is over the required ones only. Optional chips still render and
-  // still go gold — what they no longer do is stand between you and a perfect
-  // day. Rows already in `day_completion` keep the total they were written
-  // with, so the heatmap and the streak stay true about the days they describe.
+  // The count is over the required ones only. Optional tasks are still tracked
+  // and still turn their panel gold — what they no longer do is stand between
+  // you and a perfect day. Rows already in `day_completion` keep the total they
+  // were written with, so the heatmap and the streak stay true about the days
+  // they describe.
   const counted = required(list);
   const done = counted.filter((task) => task.done).length;
   const extra = list.filter((task) => task.optional && task.done).length;
-
-  if (target) {
-    mount(target,
-      // What the home tab is for, said once at the size of the answer. The
-      // statusline carries the same count, but the statusline is a thing you
-      // consult; this is a thing you see.
-      el("div.figure-row", null,
-        el("span.figure", null,
-          String(done),
-          el("span.figure-unit", { text: `/${counted.length}` }),
-        ),
-        el("span.figure-label", {
-          text: done === counted.length ? "perfect day ✦" : "done today",
-        }),
-        extra ? el("span.figure-label", { text: `+${extra} optional` }) : null,
-      ),
-      el("div.chips", null,
-        ...list.map((task) =>
-          el(`div.chip${task.done ? ".done" : ""}${task.optional ? ".optional" : ""}`, {
-            text: task.label,
-            title: task.optional ? "optional — not counted toward the day" : "",
-            role: "button",
-            tabIndex: 0,
-            onclick: () => focusPanel(task.panel),
-          }),
-        ),
-      ),
-    );
-  }
 
   mount(document.querySelector("#st-completion"),
     el("span.completion-ring", { text: `${done}/${counted.length}` }),

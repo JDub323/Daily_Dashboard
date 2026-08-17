@@ -212,9 +212,9 @@ function render(body) {
 export default {
   id: "spelling",
   title: "🐝 spelling bee",
-  tab: "home",
+  tab: "dailies",
   slot: "grid",
-  span: 2,
+  span: 3,
 
   async render(node) {
     render(node);

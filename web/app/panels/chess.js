@@ -23,9 +23,11 @@ const OUTCOMES = [
 export default {
   id: "chess",
   title: "♞ chess puzzle",
-  tab: "hobbies",
-  slot: "hero",
-  hero: true,
+  tab: "dailies",
+  slot: "grid",
+  span: 3,
+  // Still folds when it is done, even without the hero's padding: the heading
+  // plus "1467 +8 · abc12" is the whole story once the puzzle is reported.
   collapsible: true,
 
   /** Rating and what today's puzzle did to it. See the math panel's. */

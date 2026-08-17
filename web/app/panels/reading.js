@@ -16,10 +16,12 @@ const ACTIONS = [
 
 export default {
   id: "reading",
-  title: "reading",
-  tab: "papers",
-  slot: "hero",
-  hero: true,
+  title: "📰 article of the day",
+  tab: "dailies",
+  slot: "grid",
+  // The full row. One triage decision is small, but the queue under it is a
+  // list of titles, and titles want the width.
+  span: 6,
 
   async render(node) {
     let papers = store.state.papers;

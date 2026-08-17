@@ -17,10 +17,10 @@ const stat = (label, value) =>
 export default {
   id: "metrics",
   title: "streaks",
-  tab: "games",
+  tab: "dailies",
   slot: "grid",
-  // The only card on the tab, under a hero — so it takes the row.
-  span: 6,
+  // Half a row, beside the games it counts.
+  span: 3,
 
   async render(node) {
     const games = store.state.games;

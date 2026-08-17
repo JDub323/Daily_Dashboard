@@ -10,10 +10,11 @@
 // in the same store a moment later.
 
 import * as api from "./api.js";
-import { renderChips, todayPanel } from "./chips.js";
+import { renderChips } from "./chips.js";
 import { gatherDailies } from "./daily.js";
 import { $ } from "./dom.js";
 import { initKeys } from "./keys.js";
+import { invalidateHistory } from "./modals/daylogs.js";
 import { invalidateTrickArchive } from "./modals/tricks.js";
 import { initNav, resetToTab } from "./nav.js";
 import { mountAll, refreshLive, register, rerender, rerenderAll, resetCollapse } from "./panel.js";
@@ -23,19 +24,18 @@ import daylog from "./panels/daylog.js";
 import debate from "./panels/debate.js";
 import debateStats, { invalidateDebateHistory } from "./panels/debatestats.js";
 import deck from "./panels/deck.js";
-import { chessElo, mathElo } from "./panels/elo.js";
 import games from "./panels/games.js";
 import health from "./panels/health.js";
 import markets from "./panels/markets.js";
 import math from "./panels/math.js";
 import metrics from "./panels/metrics.js";
-import { finance, misc, politics } from "./panels/news.js";
+import { finance, politics } from "./panels/news.js";
 import patterns from "./panels/patterns.js";
 import piano from "./panels/piano.js";
 import portfolio from "./panels/portfolio.js";
 import reading from "./panels/reading.js";
 import spelling from "./panels/spelling.js";
-import { activity, archive, areas, invalidateHistory } from "./panels/stats.js";
+import { activity } from "./panels/stats.js";
 import theorem from "./panels/theorem.js";
 import tricks from "./panels/tricks.js";
 import word from "./panels/word.js";
@@ -50,13 +50,11 @@ import { initModal, onModalClose, toast } from "./ui.js";
  * `rerender("elo")` and `updateChips()` directly after a write, so finishing a
  * puzzle meant knowing which other panels existed.
  *
- * It shrank under tabs: the elo charts split into one per track, so each now
- * watches only its own, and the spend strip moved off the trophies panel to
- * the home tab, taking `metrics`' dependency on `math` with it.
+ * It shrank under tabs — the spend strip moved off the trophies panel to the
+ * home tab, taking `metrics`' dependency on `math` with it — and again when the
+ * rating charts came out, which took the two `elo-*` entries with them.
  */
 const WATCHES = {
-  "elo-math": ["math"],
-  "elo-chess": ["chess"],
   metrics: ["games"],
   // Generating a problem is the one action in the app that spends real money,
   // and the spend strip lives in this panel.
@@ -84,24 +82,24 @@ const HISTORY_KEYS = ["math", "chess", "daylog"];
  * layout — there is no separate ordering table to disagree with it.
  */
 const PANELS = [
-  // home — the checklist, then the year, then everything backward-looking.
-  // The bee sits beside the word of the day: both are vocabulary, and the two
-  // chips are adjacent for the same reason.
-  todayPanel, activity, word, spelling, calendar, daylog, areas, archive,
+  // home — the year, and then the two cards about the day as a whole. The
+  // checklist that used to head this tab is gone: the chips said the same thing
+  // the statusline's ring says on every tab, and the heatmap under them was
+  // already the better answer to "did I keep this up". `renderChips` still runs
+  // on every store change — it owns the completion write and the statusline —
+  // it simply has no panel to draw into now.
+  activity, calendar, daylog,
   // math — the problem is the hero; the trick and the deck are the two things
   // that make the next one easier.
-  math, tricks, theorem, deck, mathElo,
+  math, tricks, theorem, deck,
   // politics
   debate, patterns, debateStats, politics,
-  // newsletters
-  reading, misc,
-  // games
-  games, metrics,
+  // dailies — no hero, in pairs: the two vocabulary cells, the two games cells,
+  // the two hobbies, and then the day's article across the bottom.
+  word, spelling, games, metrics, chess, piano, reading,
   // markets — the portfolio is the hero; the movements list is the frame it
   // is read against.
   portfolio, markets, finance,
-  // hobbies
-  chess, piano, chessElo,
   // health
   health,
 ];
