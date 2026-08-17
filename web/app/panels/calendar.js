@@ -31,11 +31,61 @@ const DEFAULT_OPEN = 8 * 60;
 const DEFAULT_CLOSE = 21 * 60;
 const PX_PER_MIN = 0.9;
 
-// Seven hues that are not gold. Gold means "done" everywhere else in this app
-// and has one job; a calendar that happened to sort seventh must not look
-// finished. Assigned by position in the account's own calendar list, so the
-// mapping is stable between renders without being written down anywhere.
-const HUES = [205, 262, 12, 152, 322, 38, 96];
+// Twelve hues, none of them gold — gold means "done" everywhere else in this
+// app and has one job, so a calendar that happened to sort seventh must not
+// look finished. Twelve and no more: these have to be told apart at a glance
+// on a 3px border, and a palette fine enough to never collide is a palette
+// whose neighbours are the same colour.
+const HUES = [205, 262, 12, 152, 322, 96, 178, 288, 66, 232, 340, 128];
+
+function hash(name) {
+  // djb2, xor variant. Any stable string hash does; this one is short and has
+  // no surprises for ASCII calendar names.
+  let h = 5381;
+  for (let i = 0; i < name.length; i++) h = ((h * 33) ^ name.charCodeAt(i)) >>> 0;
+  return h >>> 0;
+}
+
+/**
+ * Assign each calendar a hue: name -> colour, stable and distinct.
+ *
+ * Two properties are wanted and they pull against each other. A calendar
+ * should keep its colour when *other* calendars come and go — otherwise
+ * creating one repaints the whole week and the colour you had learned for
+ * Classes now means something else. And no two should share, or the legend
+ * stops being able to answer which is which.
+ *
+ * Assigning by position in the account list gets distinctness and loses
+ * stability: a calendar inserted anywhere but the end shifts every colour
+ * after it. Assigning by hash alone gets stability and loses distinctness —
+ * on this account it collided twice with only nine calendars, because the
+ * birthday paradox is unkind at these sizes.
+ *
+ * The two cannot both hold in general — a colour that never depends on the
+ * rest of the set *is* a pure hash — so distinctness wins, because a repeated
+ * colour stops the legend answering the one question it exists for. Hash picks
+ * a *preferred* hue and ties probe forward, with the calendars walked in name
+ * order so the result never depends on what gcalcli happened to list first.
+ *
+ * What that costs is bounded and measured: on this account's nine calendars,
+ * deleting any one moves at most one other, and adding one moves none or two.
+ * Both are pinned by tests. Past twelve calendars a repeat is unavoidable and
+ * the earlier names alphabetically keep theirs.
+ */
+export function hueMap(names) {
+  const taken = new Map();
+  const used = new Set();
+  for (const name of [...names].sort()) {
+    const preferred = hash(name) % HUES.length;
+    let hue = HUES[preferred];
+    for (let step = 1; used.has(hue) && step < HUES.length; step++) {
+      hue = HUES[(preferred + step) % HUES.length];
+    }
+    used.add(hue);
+    taken.set(name, hue);
+  }
+  return taken;
+}
 
 const minutes = (hhmm) => {
   const [h, m] = hhmm.split(":").map(Number);
@@ -154,7 +204,7 @@ export default {
       return date;
     });
 
-    const colour = new Map(week.calendars.map((cal, i) => [cal.name, HUES[i % HUES.length]]));
+    const hues = hueMap(week.calendars.map((c) => c.name));
     box.setCalendars(week.calendars.filter((c) => c.writable).map((c) => c.name));
 
     const byDay = new Map(days.map((d) => [isoOf(d), { allDay: [], timed: [] }]));
@@ -193,12 +243,12 @@ export default {
           el("div.cal-allday-gutter", { text: "all-day" }),
           ...days.map((date) =>
             el("div.cal-allday", null,
-              ...byDay.get(isoOf(date)).allDay.map((event) => chip(event, colour)))),
+              ...byDay.get(isoOf(date)).allDay.map((event) => chip(event, hues)))),
           el("div.cal-ruler", null, ...ruler(open, close)),
-          ...days.map((date) => column(byDay.get(isoOf(date)), date, open, colour)),
+          ...days.map((date) => column(byDay.get(isoOf(date)), date, open, hues)),
         ),
       ),
-      legend(week.calendars, colour),
+      legend(week.calendars, hues),
       box.node,
       feedStamp(week.feed),
     );
@@ -253,7 +303,7 @@ function ruler(open, close) {
   return rows;
 }
 
-function column(bucket, date, open, colour) {
+function column(bucket, date, open, hues) {
   const today = isoOf(date) === api.today();
   const blocks = pack(bucket.timed).map((event) => {
     const width = 100 / event.of;
@@ -264,7 +314,7 @@ function column(bucket, date, open, colour) {
         `height:${(event.to - event.from) * PX_PER_MIN}px`,
         `left:${event.column * width}%`,
         `width:calc(${width}% - 2px)`,
-        `--hue:${colour.get(event.calendar) ?? HUES[0]}`,
+        `--hue:${hues.get(event.calendar) ?? HUES[0]}`,
       ].join(";"),
       title: `${event.title}\n${clock(event.from)}–${clock(event.to)}\n${event.calendar}`,
     },
@@ -287,18 +337,18 @@ function nowLine(open) {
   });
 }
 
-function chip(event, colour) {
+function chip(event, hues) {
   return el("span.cal-chip", {
-    style: `--hue:${colour.get(event.calendar) ?? HUES[0]}`,
+    style: `--hue:${hues.get(event.calendar) ?? HUES[0]}`,
     text: event.title,
     title: `${event.title}\n${event.calendar}`,
   });
 }
 
-function legend(calendars, colour) {
+function legend(calendars, hues) {
   return el("div.cal-legend", null,
     ...calendars.map((cal) =>
-      el("span.cal-key", { style: `--hue:${colour.get(cal.name)}` }, el("i"), cal.name)),
+      el("span.cal-key", { style: `--hue:${hues.get(cal.name)}` }, el("i"), cal.name)),
   );
 }
 

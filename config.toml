@@ -313,7 +313,9 @@ unlock_seconds = 300
 command = ["gcalcli", "--nocolor"]
 cache_seconds = 300
 timeout_seconds = 60
-list_cache_seconds = 86400
+# Not a performance budget: this is how long before a calendar you just made
+# can be typed into, and how long a deleted one stays on offer. `list` is 0.27s.
+list_cache_seconds = 300
 # The classifier's training window, and how often it is re-read from gcalcli.
 history_days = 1095
 history_days_ahead = 180

@@ -11,7 +11,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { pack, windowFor } from "../../web/app/panels/calendar.js";
+import { hueMap, pack, windowFor } from "../../web/app/panels/calendar.js";
+
+// His actual nine, which is the set the collision behaviour has to hold for.
+const REAL = [
+  "Special Events", "Piano App Deadlines", "Tests", "Classes", "Hobbies",
+  "Homework", "Meals", "Holidays in United States", "Systems Programming FA25",
+];
 
 const at = (from, to, title = "") => ({ from, to, title });
 const layout = (packed, title) => packed.find((e) => e.title === title);
@@ -86,5 +92,71 @@ describe("windowFor", () => {
 
   it("never narrows past the default for a mid-morning week", () => {
     assert.deepEqual(windowFor([at(600, 660)]), [8 * 60, 21 * 60]);
+  });
+});
+
+describe("hueMap", () => {
+  it("gives every calendar on this account its own hue", () => {
+    const hues = hueMap(REAL);
+    assert.equal(new Set(hues.values()).size, REAL.length);
+  });
+
+  it("does not depend on the order gcalcli listed them in", () => {
+    const forward = hueMap(REAL);
+    const backward = hueMap([...REAL].reverse());
+    for (const name of REAL) assert.equal(forward.get(name), backward.get(name));
+  });
+
+  // Perfect stability and guaranteed distinctness cannot both hold. A colour
+  // that never depends on the rest of the set is a pure hash, and a pure hash
+  // collides — it did, twice, on these nine names. Distinctness wins, because a
+  // repeated colour stops the legend answering the one question it exists for,
+  // so what is pinned here is that the *churn* is tiny rather than absent. The
+  // scheme this replaced assigned by list position and moved every calendar
+  // after the one that changed.
+  const churn = (before, after, names) =>
+    names.filter((n) => after.has(n) && after.get(n) !== before.get(n));
+
+  it("moves at most one other calendar when any one is deleted", () => {
+    const before = hueMap(REAL);
+    for (const dropped of REAL) {
+      const after = hueMap(REAL.filter((n) => n !== dropped));
+      const moved = churn(before, after, REAL);
+      assert.ok(moved.length <= 1, `deleting ${dropped} moved ${moved.length}: ${moved}`);
+      assert.equal(new Set(after.values()).size, REAL.length - 1);
+    }
+  });
+
+  it("moves few or none when one is added", () => {
+    const before = hueMap(REAL);
+    for (const added of ["Thesis", "Research", "Travel", "Gym", "Zzz"]) {
+      const after = hueMap([...REAL, added]);
+      const moved = churn(before, after, REAL);
+      assert.ok(moved.length <= 2, `adding ${added} moved ${moved.length}: ${moved}`);
+      assert.equal(new Set(after.values()).size, REAL.length + 1);
+    }
+  });
+
+  it("barely disturbs the others when one is renamed", () => {
+    // A rename is a delete and an add at once, so it carries both bounds --
+    // measured at 0, 1 and 2 depending on the new name.
+    const before = hueMap(REAL);
+    for (const to of ["Deep Work", "Food", "Dining", "Zebra"]) {
+      const after = hueMap(REAL.map((n) => (n === "Meals" ? to : n)));
+      const moved = churn(before, after, REAL);
+      assert.ok(moved.length <= 2, `renaming to ${to} moved ${moved.length}: ${moved}`);
+      assert.equal(new Set(after.values()).size, REAL.length);
+    }
+  });
+
+  it("still answers when there are more calendars than hues", () => {
+    const many = [...Array(20)].map((_, i) => `Calendar ${i}`);
+    const hues = hueMap(many);
+    assert.equal(hues.size, 20);
+    assert.ok([...hues.values()].every((h) => Number.isFinite(h)));
+  });
+
+  it("never assigns gold, which means done everywhere else", () => {
+    for (const hue of hueMap(REAL).values()) assert.ok(hue < 38 || hue > 58, `hue ${hue}`);
   });
 });

@@ -151,6 +151,16 @@ class CalendarClassifier:
     def fitted(self) -> bool:
         return self._pipeline is not None
 
+    @property
+    def targets(self) -> list[str]:
+        """The writable calendars this model was fitted against.
+
+        Read by the caller to notice that the account's calendars have changed
+        since the fit, which is the trigger to refit. A copy, so nobody can
+        mutate the model's idea of the world by holding the list.
+        """
+        return list(self._targets)
+
     # -- predicting ---------------------------------------------------------
 
     def predict(self, title: str) -> Prediction:
@@ -186,13 +196,23 @@ class CalendarClassifier:
             log.exception("calendar classifier failed on %r", title[:80])
             return [(c, 0.0) for c in self._targets]
         scored = sorted(
-            zip(classes, (float(p) for p in probabilities), strict=True),
+            (
+                pair
+                for pair in zip(classes, (float(p) for p in probabilities), strict=True)
+                # A class that is no longer a writable calendar is dropped
+                # rather than ranked. The model outlives the account it was
+                # fitted on by however long it takes to notice a deletion, and
+                # in that window predicting a calendar that no longer exists
+                # sends `--calendar` to gcalcli for something it cannot match --
+                # which surfaces as a failed add rather than as a wrong guess.
+                if pair[0] in self._targets
+            ),
             key=lambda pair: pair[1],
             reverse=True,
         )
-        # Writable calendars the model never saw still belong in the cycle --
-        # a new calendar has no history by definition, and leaving it out
-        # would make it unreachable from the box.
+        # ...and writable calendars the model never saw still belong in the
+        # cycle: a calendar created this morning has no history by definition,
+        # and leaving it out would make it unreachable from the box.
         seen = {c for c, _ in scored}
         return scored + [(c, 0.0) for c in self._targets if c not in seen]
 

@@ -751,8 +751,15 @@ class CalendarSettings(Base):
     cache_seconds: int = Field(default=300, ge=0)
     timeout_seconds: int = Field(default=60, gt=0)
 
-    list_cache_seconds: int = Field(default=86_400, ge=0)
-    """The calendar *list* barely changes and is read on every add."""
+    list_cache_seconds: int = Field(default=300, ge=0)
+    """How long the account's calendar list is trusted.
+
+    Was a day, on the reasoning that calendars are made every few months. That
+    was the wrong quantity to optimise: `gcalcli list` measures 0.27s, and this
+    number is not a performance budget but *the delay before a calendar you
+    just created can be typed into*. Five minutes because it also bounds how
+    long a deleted calendar stays on offer.
+    """
 
     warm_on_start: bool = True
     """Fit the quick-add classifier in a background thread at boot.

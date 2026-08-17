@@ -161,6 +161,44 @@ def test_an_unfittable_history_still_answers():
     assert clf.predict("final exam").calendar == "Tests"  # the rule does not need a model
 
 
+def test_a_calendar_that_no_longer_exists_is_never_predicted():
+    """The model outlives the account it was fitted on.
+
+    Between a calendar being deleted and the refit that notices, the old class
+    is still in the pipeline. Predicting it would send `--calendar` to gcalcli
+    for something it cannot match, which fails the write instead of merely
+    guessing wrong — so it is filtered out of the ranking on the way past.
+    """
+    clf = _fitted()
+    assert clf.predict("cassie bday").calendar == "Homework"
+
+    # Homework is gone; everything else stays. No refit yet.
+    clf._targets = [c for c in WRITABLE if c != "Homework"]
+    prediction = clf.predict("cassie bday")
+    assert prediction.calendar != "Homework"
+    assert "Homework" not in [c for c, _ in prediction.ranked]
+    assert set(clf._targets) == {c for c, _ in prediction.ranked}
+
+
+def test_a_brand_new_calendar_is_reachable_before_it_has_any_history():
+    """It cannot be predicted — nothing has ever been filed there — but it has
+    to be in the cycle, or the box is the one place you cannot use it."""
+    clf = _fitted()
+    clf._targets = [*WRITABLE, "Thesis"]
+    ranked = [c for c, _ in clf.predict("read chapter 4").ranked]
+    assert "Thesis" in ranked
+    assert set(ranked) == set(clf._targets)
+
+
+def test_targets_is_a_copy():
+    """The caller compares this against the live calendar list to decide
+    whether to refit; handing out the internal list would let it drift."""
+    clf = _fitted()
+    got = clf.targets
+    got.append("Nonsense")
+    assert "Nonsense" not in clf.targets
+
+
 def test_rules_name_calendars_that_have_to_exist():
     """A rule pointing at a calendar this account does not have is skipped."""
     clf = CalendarClassifier("Special Events")
