@@ -17,6 +17,7 @@
 import * as api from "./api.js";
 import { el, mount } from "./dom.js";
 import { focusPanel, markDone } from "./panel.js";
+import { weightToday } from "./panels/checkin.js";
 import { completionWrite, store } from "./store.js";
 
 function tasks() {
@@ -109,6 +110,24 @@ function tasks() {
       label: "paper triage",
       done: Boolean(s.papers.surfaced) && s.papers.surfaced.status !== "surfaced",
       panel: "reading",
+    },
+    {
+      // Weight *and* the questionnaire — the two halves are useless apart. A
+      // weight series with no readiness beside it cannot tell a cut from
+      // under-recovery, and readiness with no weight cannot tell either from
+      // making weight badly.
+      //
+      // Required, which takes the day from ten to eleven. That is the point of
+      // putting it here rather than leaving it to discipline: the derived
+      // numbers are all windowed means, and a series answered four mornings a
+      // week produces baselines that drift for reasons that have nothing to do
+      // with training. Logging the session is deliberately NOT a chip — some
+      // days there is no session, and a task you cannot finish on a rest day
+      // would put a perfect day out of reach.
+      id: "checkin",
+      label: "morning check-in",
+      done: weightToday(s) !== null && Boolean(s.health.readiness_today),
+      panel: "checkin",
     },
     { id: "log", label: "day log", done: Boolean(s.daylog), panel: "log" },
   ].filter(

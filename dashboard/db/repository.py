@@ -25,12 +25,14 @@ from ..models.common import (
     ChessStatus,
     DebateStatus,
     Deck,
+    EntrySource,
     Game,
     HealthMetric,
     MathOutcome,
     MathStatus,
     PaperStatus,
     Provenance,
+    SessionKind,
     Track,
 )
 from .connection import transaction
@@ -2016,13 +2018,47 @@ class Repository:
 
     # -- health / log / completion -----------------------------------------
 
-    def log_health(self, metric: HealthMetric, date: dt.date, value: float) -> d.HealthEntry:
+    def log_health(
+        self,
+        metric: HealthMetric,
+        date: dt.date,
+        value: float,
+        source: EntrySource = EntrySource.manual,
+    ) -> d.HealthEntry:
+        """Upsert one daily scalar. **A sync never overwrites a hand entry.**
+
+        That rule is enforced here, in the WHERE of the DO UPDATE, rather than
+        in the importer -- there is one place to get it wrong instead of one
+        place per caller. A manual write always lands; a `garmin` write lands
+        only on a row that is absent or was itself written by a sync.
+
+        The failure this prevents is small and infuriating: you notice the
+        watch scored a restless night as five hours, you fix it, and the next
+        morning's sync puts five hours back. After the third time you stop
+        correcting anything, and the series quietly becomes the watch's opinion
+        rather than the truth.
+        """
         row = self.conn.execute(
-            "INSERT INTO health_entry (metric, date, value) VALUES (?, ?, ?) "
-            "ON CONFLICT (metric, date) DO UPDATE SET value = excluded.value RETURNING *",
-            (HealthMetric(metric).value, _iso(date), value),
+            "INSERT INTO health_entry (metric, date, value, source) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (metric, date) DO UPDATE SET value = excluded.value, "
+            "source = excluded.source "
+            "WHERE excluded.source = 'manual' OR health_entry.source = 'garmin' "
+            "RETURNING *",
+            (HealthMetric(metric).value, _iso(date), value, EntrySource(source).value),
         ).fetchone()
+        # The WHERE can suppress the write entirely, and RETURNING then yields
+        # nothing. That is a no-op rather than an error -- the sync did its job
+        # by declining -- so report the row that won.
+        if row is None:
+            return self.health_entry(metric, date)  # type: ignore[return-value]
         return d.HealthEntry(**dict(row))
+
+    def health_entry(self, metric: HealthMetric, date: dt.date) -> d.HealthEntry | None:
+        row = self.conn.execute(
+            "SELECT * FROM health_entry WHERE metric = ? AND date = ?",
+            (HealthMetric(metric).value, _iso(date)),
+        ).fetchone()
+        return d.HealthEntry(**dict(row)) if row else None
 
     def health_series(self, metric: HealthMetric, limit: int = 30) -> list[d.HealthEntry]:
         rows = self.conn.execute(
@@ -2030,6 +2066,92 @@ class Repository:
             (HealthMetric(metric).value,),
         ).fetchall()
         return [d.HealthEntry(**dict(r)) for r in rows[-limit:]]
+
+    # -- readiness / sessions ----------------------------------------------
+
+    def log_readiness(
+        self,
+        date: dt.date,
+        sleep_quality: int,
+        fatigue: int,
+        soreness: int,
+        stress: int,
+        motivation: int,
+    ) -> d.Readiness:
+        row = self.conn.execute(
+            "INSERT INTO readiness "
+            "(date, sleep_quality, fatigue, soreness, stress, motivation) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (date) DO UPDATE SET "
+            "sleep_quality = excluded.sleep_quality, fatigue = excluded.fatigue, "
+            "soreness = excluded.soreness, stress = excluded.stress, "
+            "motivation = excluded.motivation RETURNING *",
+            (_iso(date), sleep_quality, fatigue, soreness, stress, motivation),
+        ).fetchone()
+        return d.Readiness(**dict(row))
+
+    def readiness(self, date: dt.date) -> d.Readiness | None:
+        row = self.conn.execute("SELECT * FROM readiness WHERE date = ?", (_iso(date),)).fetchone()
+        return d.Readiness(**dict(row)) if row else None
+
+    def readiness_history(self, limit: int = 60) -> list[d.Readiness]:
+        """The most recent `limit` answered mornings, oldest first. Two months
+        covers the 30-day baseline with room for the gaps in it."""
+        rows = self.conn.execute(
+            "SELECT * FROM readiness ORDER BY date DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [d.Readiness(**dict(r)) for r in reversed(rows)]
+
+    def add_session(
+        self,
+        date: dt.date,
+        kind: SessionKind,
+        rpe: int,
+        minutes: int,
+        note: str | None = None,
+        garmin_activity_id: int | None = None,
+    ) -> d.TrainingSession:
+        """Append a session. Never an upsert -- two-a-days are the normal case,
+        and a second session today is a second row, not a correction of the
+        first."""
+        row = self.conn.execute(
+            "INSERT INTO training_session "
+            "(date, kind, rpe, minutes, note, garmin_activity_id) "
+            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+            (
+                _iso(date),
+                SessionKind(kind).value,
+                rpe,
+                minutes,
+                note or None,
+                garmin_activity_id,
+            ),
+        ).fetchone()
+        return d.TrainingSession(**dict(row))
+
+    def delete_session(self, session_id: int) -> bool:
+        cur = self.conn.execute("DELETE FROM training_session WHERE id = ?", (session_id,))
+        return cur.rowcount > 0
+
+    def sessions_on(self, date: dt.date) -> list[d.TrainingSession]:
+        rows = self.conn.execute(
+            "SELECT * FROM training_session WHERE date = ? ORDER BY id", (_iso(date),)
+        ).fetchall()
+        return [d.TrainingSession(**dict(r)) for r in rows]
+
+    def sessions(self) -> list[d.TrainingSession]:
+        """Every session ever logged, oldest first.
+
+        Deliberately unwindowed. `health.py` gates its ratios on how much
+        history exists, and it measures that from the oldest row it is handed
+        -- so feeding it a trailing 28 days would make every third day of
+        logging look like a full month of it, and the gates would pass
+        immediately. The gates are the whole point, so the caller passes
+        everything and lets `daily_load` do the windowing. A year of two-a-days
+        is under a thousand rows; none of it crosses the wire.
+        """
+        rows = self.conn.execute("SELECT * FROM training_session ORDER BY date, id").fetchall()
+        return [d.TrainingSession(**dict(r)) for r in rows]
 
     def daylog(self, date: dt.date) -> str | None:
         row = self.conn.execute("SELECT text FROM daylog WHERE date = ?", (_iso(date),)).fetchone()

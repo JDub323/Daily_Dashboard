@@ -34,7 +34,7 @@ export const TABS = [
   { id: "politics", label: "politics", blurb: "the week's issue, the prep, and the argument" },
   { id: "dailies", label: "dailies", blurb: "the word, the bee, the games, the puzzle, the paper" },
   { id: "markets", label: "markets", blurb: "quotes and the money pages" },
-  { id: "health", label: "health", blurb: "weight and sleep" },
+  { id: "health", label: "health", blurb: "the block, and whether you're recovering from it" },
 ];
 
 const byId = new Map(TABS.map((tab) => [tab.id, tab]));

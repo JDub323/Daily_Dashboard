@@ -19,6 +19,7 @@ import { invalidateTrickArchive } from "./modals/tricks.js";
 import { initNav, resetToTab } from "./nav.js";
 import { mountAll, refreshLive, register, rerender, rerenderAll, resetCollapse } from "./panel.js";
 import calendar from "./panels/calendar.js";
+import checkin from "./panels/checkin.js";
 import chess from "./panels/chess.js";
 import daylog from "./panels/daylog.js";
 import debate from "./panels/debate.js";
@@ -34,6 +35,7 @@ import patterns from "./panels/patterns.js";
 import piano from "./panels/piano.js";
 import portfolio from "./panels/portfolio.js";
 import reading from "./panels/reading.js";
+import session from "./panels/session.js";
 import spelling from "./panels/spelling.js";
 import { activity } from "./panels/stats.js";
 import theorem from "./panels/theorem.js";
@@ -70,6 +72,15 @@ const WATCHES = {
   // outside it — without this the sheet says 6/8 and the card behind it still
   // says the set is untouched.
   tricks: ["tricks"],
+  // All three health panels read the one `health` slice, and every write to it
+  // is a write to the whole thing: logging a session moves this week's load,
+  // the ratio and the monotony on the hero, and logging a weight moves the
+  // chart the hero draws. So each of the three watches the slice rather than
+  // re-rendering itself after its own POST — otherwise the two panels that did
+  // not do the writing sit there stale.
+  health: ["health"],
+  checkin: ["health"],
+  session: ["health"],
 };
 
 /** Store keys whose writes make the cached /api/history fetch stale. */
@@ -103,8 +114,10 @@ const PANELS = [
   // markets — the portfolio is the hero; the movements list is the frame it
   // is read against.
   portfolio, markets, finance,
-  // health
-  health,
+  // health — the readout is the hero, and the two things you actually type sit
+  // under it in the order the day asks for them: the check-in in the morning,
+  // the session in the evening.
+  health, checkin, session,
 ];
 
 async function loadConfig() {

@@ -236,6 +236,13 @@ def _week_start(date: dt.date, starts_on: int) -> dt.date:
     return date - dt.timedelta(days=(date.weekday() - starts_on) % 7)
 
 
+def _describe_change(before: list[str], after: list[str]) -> str:
+    """"+Thesis, -Meals" -- what moved, for the one line the refit logs."""
+    gone = [c for c in before if c not in after]
+    new = [c for c in after if c not in before]
+    return ", ".join([*(f"+{c}" for c in new), *(f"-{c}" for c in gone)]) or "reordered"
+
+
 def _fit_calendar_model(state: Any, fetch: Feeds, repo: Repository, *, force: bool = False) -> None:
     """Fit on the account's history plus every correction.
 
@@ -246,10 +253,36 @@ def _fit_calendar_model(state: Any, fetch: Feeds, repo: Repository, *, force: bo
     """
     clf: calclass.CalendarClassifier = state.calendar_clf
     with state.calendar_fit_lock:
-        if clf.fitted and not force:
-            return
+        # The calendar list is read *before* deciding whether to refit, and
+        # that ordering is the whole of this function's robustness to calendars
+        # being created, renamed or deleted. Fitting once at boot froze the set
+        # of calendars the box would ever offer: a calendar made afterwards was
+        # missing from the Tab cycle until a restart, and one deleted afterwards
+        # stayed in the model, could still be predicted, and failed at gcalcli
+        # with "No available calendar to use".
+        #
+        # Cheap enough to check every time: `gcalcli list` measures 0.27s and is
+        # cached for `list_cache_seconds`, so this is a dict lookup nearly
+        # always, and a refit only happens when the answer actually changed.
         try:
             writable = [c.name for c in fetch.calendars() if c.writable]
+        except (FeedError, OSError) as e:
+            # Keep whatever model is already fitted -- a momentarily unreachable
+            # gcalcli is not a reason to forget the classifier.
+            if not clf.fitted:
+                clf.unavailable = f"could not read the calendar list ({e})"
+                log.warning("calendar classifier: %s", clf.unavailable)
+            return
+
+        if clf.fitted and not force and writable == clf.targets:
+            return
+        if clf.fitted and writable != clf.targets:
+            log.info(
+                "calendar set changed (%s); refitting",
+                _describe_change(clf.targets, writable),
+            )
+
+        try:
             samples = calclass.samples_from_events(
                 fetch.calendar_history(dt.date.today()), writable
             )
@@ -1423,10 +1456,43 @@ def _register(app: FastAPI) -> None:
 
     # -- health / log / completion -----------------------------------------
 
+    # Each of these returns the whole panel rather than the row it wrote. The
+    # derived block is a function of the entire history, so a session logged at
+    # 6pm moves this week's load, the ratio and the monotony at once -- handing
+    # back one row would leave the browser to recompute three numbers it has
+    # deliberately never been taught to compute.
+
     @app.post("/api/health")
-    def health(repo: Repo, body: api.HealthLogRequest) -> list[api.HealthSeries]:
-        repo.log_health(body.metric, body.date, body.value)
-        return state.health_series(repo)
+    def health_log(repo: Repo, body: api.HealthLogRequest) -> api.HealthPanel:
+        repo.log_health(body.metric, body.date, body.value, body.source)
+        return state.health_panel(repo, body.date)
+
+    @app.post("/api/readiness")
+    def readiness(repo: Repo, body: api.ReadinessRequest) -> api.HealthPanel:
+        repo.log_readiness(
+            body.date,
+            body.sleep_quality,
+            body.fatigue,
+            body.soreness,
+            body.stress,
+            body.motivation,
+        )
+        return state.health_panel(repo, body.date)
+
+    @app.post("/api/session")
+    def session_add(repo: Repo, body: api.SessionRequest) -> api.HealthPanel:
+        repo.add_session(body.date, body.kind, body.rpe, body.minutes, body.note)
+        return state.health_panel(repo, body.date)
+
+    @app.post("/api/session/delete")
+    def session_delete(repo: Repo, body: api.SessionDeleteRequest) -> api.HealthPanel:
+        # POST rather than DELETE, and the id in the body rather than the path,
+        # because the response needs `date` to rebuild the panel -- and "today"
+        # is the browser's to name, never this process's. A DELETE with the id
+        # in the path would have had the server reach for its own clock.
+        if not repo.delete_session(body.session_id):
+            raise LookupError(f"no session {body.session_id}")
+        return state.health_panel(repo, body.date)
 
     @app.post("/api/daylog")
     def daylog(repo: Repo, body: api.DayLogRequest) -> dict[str, bool]:

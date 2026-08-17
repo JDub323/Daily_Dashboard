@@ -17,11 +17,13 @@ from dashboard.db.schema import SCHEMA_VERSION, migrate
 from dashboard.models import domain as d
 from dashboard.models.common import (
     ChessOutcome,
+    EntrySource,
     Game,
     HealthMetric,
     MathOutcome,
     PaperStatus,
     Provenance,
+    SessionKind,
     Track,
 )
 
@@ -429,9 +431,57 @@ def test_the_schema_ties_queue_pos_to_the_queued_status(db):
 def test_health_is_an_upsert_per_metric_and_day(repo):
     repo.log_health(HealthMetric.weight, TODAY, 172.0)
     repo.log_health(HealthMetric.weight, TODAY, 171.5)
-    repo.log_health(HealthMetric.sleep, TODAY, 84.0)
+    repo.log_health(HealthMetric.sleep_score, TODAY, 84.0)
     assert [e.value for e in repo.health_series(HealthMetric.weight)] == [171.5]
-    assert [e.value for e in repo.health_series(HealthMetric.sleep)] == [84.0]
+    assert [e.value for e in repo.health_series(HealthMetric.sleep_score)] == [84.0]
+
+
+def test_a_sync_never_overwrites_a_hand_entry(repo):
+    """The rule that keeps a correction from having to be made twice."""
+    repo.log_health(HealthMetric.sleep_hours, TODAY, 7.5, EntrySource.manual)
+    kept = repo.log_health(HealthMetric.sleep_hours, TODAY, 5.0, EntrySource.garmin)
+    assert kept.value == 7.5
+    assert kept.source is EntrySource.manual
+
+
+def test_a_sync_may_replace_its_own_earlier_reading(repo):
+    repo.log_health(HealthMetric.sleep_hours, TODAY, 5.0, EntrySource.garmin)
+    updated = repo.log_health(HealthMetric.sleep_hours, TODAY, 6.25, EntrySource.garmin)
+    assert updated.value == 6.25
+    assert updated.source is EntrySource.garmin
+
+
+def test_a_hand_entry_always_wins_over_what_is_there(repo):
+    repo.log_health(HealthMetric.sleep_hours, TODAY, 5.0, EntrySource.garmin)
+    fixed = repo.log_health(HealthMetric.sleep_hours, TODAY, 7.0, EntrySource.manual)
+    assert fixed.value == 7.0
+    assert fixed.source is EntrySource.manual
+
+
+# --- readiness / sessions --------------------------------------------------
+
+
+def test_readiness_is_one_row_a_day_and_scores_out_of_25(repo):
+    repo.log_readiness(TODAY, 3, 3, 3, 3, 3)
+    row = repo.log_readiness(TODAY, 5, 4, 4, 3, 5)
+    assert row.score == 21
+    assert repo.readiness(TODAY) == row
+
+
+def test_a_second_session_today_is_a_second_row_not_a_correction(repo):
+    """Two-a-days are ordinary in camp. An upsert here would silently eat the
+    morning run when the evening's sparring was logged."""
+    repo.add_session(TODAY, SessionKind.roadwork, 4, 30)
+    repo.add_session(TODAY, SessionKind.sparring, 9, 45)
+    sessions = repo.sessions_on(TODAY)
+    assert [s.load for s in sessions] == [120, 405]
+
+
+def test_deleting_a_session_reports_whether_it_existed(repo):
+    session = repo.add_session(TODAY, SessionKind.boxing, 6, 60)
+    assert repo.delete_session(session.id) is True
+    assert repo.delete_session(session.id) is False
+    assert repo.sessions_on(TODAY) == []
 
 
 def test_completion_pct_is_computed_never_stored(repo):

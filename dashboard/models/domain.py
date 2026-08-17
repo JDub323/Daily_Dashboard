@@ -17,6 +17,7 @@ from .common import (
     DebateSide,
     DebateStatus,
     Deck,
+    EntrySource,
     FactStance,
     HealthMetric,
     MathStatus,
@@ -24,6 +25,7 @@ from .common import (
     Provenance,
     Rating,
     Score,
+    SessionKind,
     Track,
     Url,
 )
@@ -672,6 +674,62 @@ class HealthEntry(Base):
     value: float = Field(gt=0)
     """UNIQUE(metric, date) -- the find-then-mutate-else-append dance becomes
     a single UPSERT."""
+
+    source: EntrySource = EntrySource.manual
+    """Who wrote it. `manual` outranks `garmin` and a sync must respect that;
+    the rule lives in `Repository.log_health` so there is one place to get it
+    wrong."""
+
+
+class Readiness(Base):
+    """The morning questionnaire. Five items, one row a day.
+
+    All five run 1 = worst, 5 = best -- see the migration for why that diverges
+    from how Hooper is published. `score` is the sum, so 5 is the floor and 25
+    the ceiling, and it is deliberately never compared against an absolute
+    threshold: what a 17 means is entirely a question of what your own 17s have
+    meant lately.
+    """
+
+    date: dt.date
+    sleep_quality: int = Field(ge=1, le=5)
+    fatigue: int = Field(ge=1, le=5)
+    soreness: int = Field(ge=1, le=5)
+    stress: int = Field(ge=1, le=5)
+    motivation: int = Field(ge=1, le=5)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def score(self) -> int:
+        return (
+            self.sleep_quality + self.fatigue + self.soreness + self.stress + self.motivation
+        )
+
+
+class TrainingSession(Base):
+    """One session. Many per day is normal and supported.
+
+    `load` is session-RPE -- rpe x minutes -- which is the load metric that
+    works for a sport a wrist optical sensor cannot measure. It is computed
+    rather than stored for the same reason `pct` is absent from
+    `day_completion`: storing it beside its two inputs lets the three disagree.
+    """
+
+    id: int
+    date: dt.date
+    kind: SessionKind
+    rpe: int = Field(ge=1, le=10)
+    minutes: int = Field(ge=1, le=600)
+    note: str | None = Field(default=None, max_length=200)
+
+    garmin_activity_id: int | None = None
+    """Set only by an import, and UNIQUE, so re-running a sync cannot
+    double-count a session that is already in the table."""
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def load(self) -> int:
+        return self.rpe * self.minutes
 
 
 class DayLog(Base):

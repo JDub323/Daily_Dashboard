@@ -15,7 +15,7 @@ import pytest
 from dashboard import content, feeds
 from dashboard.models import api
 from dashboard.models import domain as d
-from dashboard.models.common import Track
+from dashboard.models.common import HealthMetric, Track
 
 from .conftest import TODAY
 
@@ -67,10 +67,20 @@ def test_state_on_an_empty_database_is_a_full_payload(client):
     assert body["chess"]["summary"]["rating"] == 1400
     assert body["math"]["problem"] is None
     assert body["games"]["wordle_streak"] == 0
-    assert body["health"] == [
-        {"metric": "weight", "points": []},
-        {"metric": "sleep", "points": []},
-    ]
+    assert [s["metric"] for s in body["health"]["series"]] == [m.value for m in HealthMetric]
+    assert all(s["points"] == [] for s in body["health"]["series"])
+    assert body["health"]["readiness_today"] is None
+    assert body["health"]["sessions_today"] == []
+    # Four weeks of rest days rather than an empty list — the bar chart's gaps
+    # are data, so the zeros are sent rather than inferred.
+    assert len(body["health"]["loads"]) == 28
+    # Nothing derived says anything on day one, which is the point of it.
+    derived = body["health"]["derived"]
+    assert derived["acwr"] is None
+    assert derived["monotony"] is None
+    assert derived["weight_ema"] is None
+    assert derived["readiness_baseline"] is None
+    assert derived["week_load"] == 0
 
 
 def test_the_server_honours_a_date_that_is_not_its_own_today(client):
@@ -758,13 +768,69 @@ def test_an_empty_add_prompt_is_rejected(client):
 # --- health / log / completion ---------------------------------------------
 
 
-def test_health_upserts_and_returns_both_series(client):
+def test_health_upserts_and_returns_the_whole_panel(client):
     client.post("/api/health", json={"date": DATE, "metric": "weight", "value": 172.4})
-    series = client.post(
+    body = client.post(
         "/api/health", json={"date": DATE, "metric": "weight", "value": 171.9}
     ).json()
-    weight = next(s for s in series if s["metric"] == "weight")
+    weight = next(s for s in body["series"] if s["metric"] == "weight")
     assert weight["points"] == [[DATE, 171.9]]
+
+
+def test_readiness_round_trips_and_scores_out_of_25(client):
+    body = client.post(
+        "/api/readiness",
+        json={
+            "date": DATE,
+            "sleep_quality": 4,
+            "fatigue": 3,
+            "soreness": 2,
+            "stress": 4,
+            "motivation": 5,
+        },
+    ).json()
+    assert body["readiness_today"]["score"] == 18
+
+
+@pytest.mark.parametrize("field", ["sleep_quality", "fatigue", "soreness", "stress", "motivation"])
+def test_a_readiness_answer_outside_one_to_five_is_rejected(client, field):
+    payload = {
+        "date": DATE,
+        "sleep_quality": 3,
+        "fatigue": 3,
+        "soreness": 3,
+        "stress": 3,
+        "motivation": 3,
+    } | {field: 6}
+    assert client.post("/api/readiness", json=payload).status_code == 422
+
+
+def test_two_sessions_in_a_day_both_stand_and_their_load_sums(client):
+    client.post(
+        "/api/session", json={"date": DATE, "kind": "roadwork", "rpe": 4, "minutes": 30}
+    )
+    body = client.post(
+        "/api/session", json={"date": DATE, "kind": "sparring", "rpe": 9, "minutes": 45}
+    ).json()
+    assert [s["load"] for s in body["sessions_today"]] == [120, 405]
+    assert body["derived"]["week_load"] == 525
+
+
+def test_deleting_a_session_removes_it_from_the_load(client):
+    added = client.post(
+        "/api/session", json={"date": DATE, "kind": "boxing", "rpe": 6, "minutes": 60}
+    ).json()
+    session_id = added["sessions_today"][0]["id"]
+    body = client.post(
+        "/api/session/delete", json={"date": DATE, "session_id": session_id}
+    ).json()
+    assert body["sessions_today"] == []
+    assert body["derived"]["week_load"] == 0
+
+
+def test_deleting_a_session_that_is_gone_is_a_404(client):
+    response = client.post("/api/session/delete", json={"date": DATE, "session_id": 999})
+    assert response.status_code == 404
 
 
 def test_a_non_positive_weight_is_rejected(client):
@@ -884,6 +950,71 @@ def test_the_calendar_list_says_which_ones_are_writable(client, monkeypatch):
         "Tests": True,
         "Holidays in United States": False,
     }
+
+
+def test_a_calendar_created_after_boot_becomes_usable(client, monkeypatch):
+    """The classifier is fitted once at boot, so the account it was fitted
+    against has to be re-checked rather than assumed."""
+    live = ["Special Events", "Tests"]
+    monkeypatch.setattr(
+        feeds.Feeds,
+        "calendars",
+        lambda self: [api.CalendarInfo(name=n, access="owner") for n in live],
+    )
+    monkeypatch.setattr(feeds.Feeds, "calendar_history", lambda self, today: [])
+    written: dict = {}
+    monkeypatch.setattr(
+        feeds.Feeds, "add_calendar_event", lambda self, **kw: written.update(kw) or "created"
+    )
+
+    offered = lambda: {  # noqa: E731
+        g["calendar"]
+        for g in client.post(
+            "/api/calendar/preview", json={"text": "read chapter 4", "today": DATE}
+        ).json()["ranked"]
+    }
+    assert offered() == {"Special Events", "Tests"}
+
+    live.append("Thesis")
+    assert offered() == {"Special Events", "Tests", "Thesis"}
+    # ...and it can be written to, not merely listed.
+    client.post(
+        "/api/calendar/add",
+        json={"text": "read chapter 4", "today": DATE, "calendar": "Thesis"},
+    )
+    assert written["calendar"] == "Thesis"
+
+
+def test_a_deleted_calendar_stops_being_offered(client, monkeypatch):
+    live = ["Special Events", "Tests"]
+    monkeypatch.setattr(
+        feeds.Feeds,
+        "calendars",
+        lambda self: [api.CalendarInfo(name=n, access="owner") for n in live],
+    )
+    monkeypatch.setattr(feeds.Feeds, "calendar_history", lambda self, today: [])
+    monkeypatch.setattr(feeds.Feeds, "add_calendar_event", lambda self, **kw: "created")
+
+    resolve = lambda: client.post(  # noqa: E731
+        "/api/calendar/preview", json={"text": "final exam", "today": DATE}
+    ).json()
+    assert resolve()["calendar"] == "Tests"  # the rule fires
+
+    live.remove("Tests")
+    body = resolve()
+    # The rule names a calendar that is gone, so it is skipped rather than
+    # producing an add that gcalcli cannot satisfy.
+    assert body["calendar"] == "Special Events"
+    assert "Tests" not in [g["calendar"] for g in body["ranked"]]
+
+    # And an override to it is refused now, where it would have been accepted.
+    assert (
+        client.post(
+            "/api/calendar/add",
+            json={"text": "final exam", "today": DATE, "calendar": "Tests"},
+        ).status_code
+        == 409
+    )
 
 
 def test_an_override_is_recorded_and_used(client, monkeypatch):

@@ -26,11 +26,13 @@ from pydantic import Field, computed_field, model_validator
 from .common import (
     Base,
     ChessOutcome,
+    EntrySource,
     FactStance,
     HealthMetric,
     MathOutcome,
     Rating,
     Score,
+    SessionKind,
     Url,
 )
 from .domain import (
@@ -43,9 +45,11 @@ from .domain import (
     MathProblem,
     Paper,
     RatingEvent,
+    Readiness,
     SpellingWord,
     TheoremCard,
     TopicInfo,
+    TrainingSession,
     Trick,
     WordGrade,
     WordOfDay,
@@ -329,6 +333,32 @@ class PokedokuLogRequest(DateBody):
 class HealthLogRequest(DateBody):
     metric: HealthMetric
     value: float = Field(gt=0)
+
+    source: EntrySource = EntrySource.manual
+    """Defaulted rather than required: everything the browser posts is typed by
+    hand, and only an importer has any business saying otherwise."""
+
+
+class ReadinessRequest(DateBody):
+    """All five at once. The panel posts the whole row on every tap, so a
+    half-answered questionnaire is not a state the table can be in."""
+
+    sleep_quality: int = Field(ge=1, le=5)
+    fatigue: int = Field(ge=1, le=5)
+    soreness: int = Field(ge=1, le=5)
+    stress: int = Field(ge=1, le=5)
+    motivation: int = Field(ge=1, le=5)
+
+
+class SessionRequest(DateBody):
+    kind: SessionKind
+    rpe: int = Field(ge=1, le=10)
+    minutes: int = Field(ge=1, le=600)
+    note: str | None = Field(default=None, max_length=200)
+
+
+class SessionDeleteRequest(DateBody):
+    session_id: int
 
 
 class DayLogRequest(DateBody):
@@ -825,6 +855,54 @@ class HealthSeries(Base):
     points: list[tuple[dt.date, float]] = Field(default_factory=list)
 
 
+class HealthDerived(Base):
+    """Everything computed rather than typed. See `dashboard/health.py`.
+
+    Nearly every field is nullable, and that is the design: each one is absent
+    until there is enough history behind it to be worth acting on, and the
+    panel renders an absent field as nothing at all rather than as a dash or a
+    zero. A quiet health tab in week one is the correct health tab.
+    """
+
+    acwr: float | None = None
+    """This week's mean daily load over your four-week normal."""
+
+    monotony: float | None = None
+    week_load: int = 0
+    prev_week_load: int = 0
+
+    weight_ema: float | None = None
+    weight_per_week: float | None = None
+
+    readiness_week: float | None = None
+    """Mean score over the last seven answered mornings."""
+
+    readiness_baseline: float | None = None
+    readiness_sd: float | None = None
+    readiness_dip_days: int = 0
+    """Consecutive mornings a full SD below baseline. The panel speaks at 3."""
+
+
+class HealthPanel(Base):
+    """The health tab's whole payload.
+
+    Replaces the bare `list[HealthSeries]` the boot used to carry. The series
+    alone could only ever produce two charts; the questions this tab exists to
+    answer -- am I recovering, am I training enough, which way is my weight
+    going -- need the sessions and the derived block beside them.
+    """
+
+    series: list[HealthSeries] = Field(default_factory=list)
+    readiness_today: Readiness | None = None
+    sessions_today: list[TrainingSession] = Field(default_factory=list)
+
+    loads: list[tuple[dt.date, float]] = Field(default_factory=list)
+    """Daily load over the last four weeks, rest days included as zero -- the
+    bar chart, and the reason it has gaps in it."""
+
+    derived: HealthDerived = Field(default_factory=HealthDerived)
+
+
 class DashboardState(Base):
     """The boot payload. A response projection assembled from many tables --
     no longer the storage format, which is what let the old one be
@@ -841,7 +919,7 @@ class DashboardState(Base):
     games: GamesPanel
     theorems: TheoremsPanel
     papers: PapersPanel
-    health: list[HealthSeries] = Field(default_factory=list)
+    health: HealthPanel = Field(default_factory=HealthPanel)
     daylog: str | None = None
     completion: list[DayCompletion] = Field(default_factory=list)
     perfect_day_streak: int = 0

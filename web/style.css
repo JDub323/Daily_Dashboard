@@ -662,6 +662,31 @@ kbd { font: inherit; font-size: var(--t-meta); border: 1px solid var(--border); 
 .chart-title { font-size: var(--t-meta); color: var(--dim); display: flex; justify-content: space-between; }
 .line-chart { width: 100%; max-height: 80px; }
 svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(--faint); }
+/* Two charts side by side on the training hero, stacking under ~560px —
+   they answer different questions and are never compared to each other. */
+.chart-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--s4); }
+.load-bars { width: 100%; max-height: 60px; }
+
+/* ---- health: the readout and the two logging panels ---- */
+
+/* The verdicts. Body-sized rather than --t-meta on purpose: these are the
+   sentences the tab exists to produce, and the charts under them are the
+   supporting evidence, not the other way round. */
+.verdicts { margin: var(--s3) 0 var(--s2); display: flex; flex-direction: column; gap: var(--s2); }
+.verdict-line { line-height: 1.55; border-left: 2px solid var(--border); padding-left: var(--s3); }
+.verdict-line.bad { border-left-color: var(--bad); }
+.verdict-line.dim { border-left-color: var(--border); color: var(--dim); }
+
+/* A 1–5 or 1–10 row. Wraps rather than scrolls: on a narrow window a second
+   line of buttons is fine, and a scroller hides the 5 you were reaching for. */
+.scale { display: flex; flex-wrap: wrap; gap: var(--s1); margin: var(--s1) 0 var(--s3); }
+.scale > button { flex: 1 1 auto; min-width: 2.2em; }
+/* Cyan, not gold: an answered item is *current*, not finished. Gold has one
+   job in this app and it is completion — the chip going gold is the day's
+   check-in being done, which is a different statement from "you tapped 4". */
+.scale > button.on { border-color: var(--accent-dim); color: var(--accent); background: var(--panel2); }
+.scale-row { margin-bottom: var(--s1); }
+.scale-row > .row { margin: 0; }
 
 /* ---- wordle / pokedoku trophy grids ---- */
 .wgrid { display: inline-grid; grid-template-columns: repeat(5, 16px); gap: 2px; margin: var(--s1) var(--s2) var(--s1) 0; vertical-align: top; }

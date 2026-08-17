@@ -16,7 +16,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import NamedTuple
 
-from . import content, debate, scoring, spelling, tricks
+from . import content, debate, health, scoring, spelling, tricks
 from .config import Settings
 from .db.repository import ARGUMENT_AREA, TRICK_AREA, Repository
 from .models import api
@@ -27,7 +27,10 @@ HISTORY_LIMIT = 40
 """Rating events sent to the elo charts. The chart plots the last 40 anyway;
 shipping the whole history was pure payload."""
 
-HEALTH_LIMIT = 30
+HEALTH_LIMIT = 90
+"""Days of each daily scalar sent to the charts. Was 30 -- a weight series
+wants to cover a training block, not a month, because the whole reason to draw
+it is to see the direction over one."""
 
 
 # --- shared ----------------------------------------------------------------
@@ -711,6 +714,49 @@ def health_series(repo: Repository) -> list[api.HealthSeries]:
     ]
 
 
+def health_panel(repo: Repository, today: dt.date) -> api.HealthPanel:
+    """The health tab, assembled.
+
+    The sessions are read whole (see `Repository.sessions`) and windowed here,
+    so what crosses the wire is four weeks of daily totals rather than every
+    session ever logged. `health.py` still sees the full history, which is what
+    lets it refuse to answer until it has enough of one.
+    """
+    sessions = repo.sessions()
+    entries = repo.readiness_history()
+
+    window_start = today - dt.timedelta(days=health.CHRONIC_DAYS - 1)
+    loads = health.daily_load(sessions, window_start, today)
+
+    week = health.window_load(loads, today, health.ACUTE_DAYS)
+    prev_week = health.window_load(
+        loads, today - dt.timedelta(days=health.ACUTE_DAYS), health.ACUTE_DAYS
+    )
+
+    weight = repo.health_series(HealthMetric.weight, HEALTH_LIMIT)
+    trend = health.weight_trend([(e.date, e.value) for e in weight])
+    baseline = health.readiness_baseline(entries, today)
+
+    return api.HealthPanel(
+        series=health_series(repo),
+        readiness_today=repo.readiness(today),
+        sessions_today=repo.sessions_on(today),
+        loads=sorted(loads.items()),
+        derived=api.HealthDerived(
+            acwr=health.acwr(sessions, today),
+            monotony=health.monotony(sessions, today),
+            week_load=int(week),
+            prev_week_load=int(prev_week),
+            weight_ema=trend[0] if trend else None,
+            weight_per_week=trend[1] if trend else None,
+            readiness_week=health.readiness_mean(entries, today, health.ACUTE_DAYS),
+            readiness_baseline=baseline[0] if baseline else None,
+            readiness_sd=baseline[1] if baseline else None,
+            readiness_dip_days=health.readiness_dip(entries, today),
+        ),
+    )
+
+
 # --- the boot payload ------------------------------------------------------
 
 
@@ -727,7 +773,7 @@ def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.Dash
         games=games_panel(repo, today),
         theorems=theorems_panel(repo, today),
         papers=papers_panel(repo, today),
-        health=health_series(repo),
+        health=health_panel(repo, today),
         daylog=repo.daylog(today),
         completion=repo.completions(),
         perfect_day_streak=scoring.streak(repo.perfect_days(), today),

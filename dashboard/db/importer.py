@@ -290,8 +290,13 @@ def import_state(repo: Repository, state: dict, problems: list[dict]) -> ImportR
         rep.count("paper")
 
     # -- health / log / completion / topics ---------------------------------
-    for metric in (HealthMetric.weight, HealthMetric.sleep):
-        for e in state.get("health", {}).get(metric.value, []):
+    # state.json spelled the sleep score `sleep`; schema 17 renamed it, so the
+    # legacy key is mapped rather than looked up by enum value.
+    for key, metric in (
+        ("weight", HealthMetric.weight),
+        ("sleep", HealthMetric.sleep_score),
+    ):
+        for e in state.get("health", {}).get(key, []):
             repo.log_health(metric, _date(e["date"]), e["v"])
             rep.count("health_entry")
 

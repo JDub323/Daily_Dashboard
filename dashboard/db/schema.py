@@ -1089,6 +1089,94 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX calendar_correction_created ON calendar_correction (created);
         """,
     ),
+    (
+        17,
+        """
+        -- The health tab becomes a training log, because the watch changed and
+        -- the question changed with it. Two numbers on two charts is not
+        -- something you can act on; "your load is 60% of your four-week norm"
+        -- is.
+        --
+        -- `metric` is part of the table definition, so widening it is a rebuild
+        -- rather than an ALTER -- the same dance rating_event has done twice.
+        --
+        -- `source` is not decoration. It carries the one rule that keeps a
+        -- later import from being destructive: a hand-typed row is never
+        -- overwritten by a sync. Without it, correcting a bad sleep reading
+        -- means correcting it again tomorrow, and the morning after that.
+        CREATE TABLE health_entry_v2 (
+            metric  TEXT NOT NULL CHECK (metric IN (
+                        'weight', 'sleep_hours', 'time_in_bed',
+                        'sleep_score', 'hrv', 'resting_hr', 'body_battery')),
+            date    TEXT NOT NULL
+                         CHECK (date IS strftime('%Y-%m-%d', date)),
+            value   REAL NOT NULL CHECK (value > 0),
+            source  TEXT NOT NULL DEFAULT 'manual'
+                         CHECK (source IN ('manual', 'garmin')),
+            PRIMARY KEY (metric, date)     -- find-then-mutate becomes UPSERT
+        ) STRICT;
+
+        -- `sleep` becomes `sleep_score`. It always was the score -- the panel
+        -- that wrote it was labelled "sleep score" and charted a 0-100 number
+        -- -- so this is a rename, and the rows carry across. The name is
+        -- changed because `sleep_hours` now sits beside it, and two columns
+        -- where one is called "sleep" and the other "sleep hours" is an
+        -- invitation to put hours in the wrong one.
+        INSERT INTO health_entry_v2 (metric, date, value, source)
+            SELECT CASE metric WHEN 'sleep' THEN 'sleep_score' ELSE metric END,
+                   date, value, 'manual'
+              FROM health_entry;
+
+        DROP TABLE health_entry;
+        ALTER TABLE health_entry_v2 RENAME TO health_entry;
+
+        -- The morning questionnaire: the Hooper index plus motivation.
+        --
+        -- Every item runs 1 = worst, 5 = best, INCLUDING the three published
+        -- the other way round (fatigue, soreness and stress are normally
+        -- 1 = none). Uniform direction is worth diverging from the literature
+        -- for: a scale where four items agree and one is inverted is a sign
+        -- error waiting to happen, and it would happen silently -- the
+        -- composite would still be a plausible number, just wrong. The panel
+        -- labels carry the direction so the answer matches the intent.
+        CREATE TABLE readiness (
+            date           TEXT PRIMARY KEY
+                                CHECK (date IS strftime('%Y-%m-%d', date)),
+            sleep_quality  INTEGER NOT NULL CHECK (sleep_quality BETWEEN 1 AND 5),
+            fatigue        INTEGER NOT NULL CHECK (fatigue       BETWEEN 1 AND 5),
+            soreness       INTEGER NOT NULL CHECK (soreness      BETWEEN 1 AND 5),
+            stress         INTEGER NOT NULL CHECK (stress        BETWEEN 1 AND 5),
+            motivation     INTEGER NOT NULL CHECK (motivation    BETWEEN 1 AND 5)
+        ) STRICT;
+
+        -- Sessions, and deliberately many per day -- a two-a-day is an
+        -- ordinary week in camp, and PRIMARY KEY (date) would have the
+        -- evening's sparring quietly replace the morning's run. Load sums over
+        -- the day.
+        --
+        -- rpe x minutes is the point of this table. It is the load metric that
+        -- survives contact with a sport the watch cannot read: wrist heart rate
+        -- under wraps and gloves is not something a training decision should
+        -- rest on.
+        CREATE TABLE training_session (
+            id       INTEGER PRIMARY KEY,
+            date     TEXT NOT NULL
+                          CHECK (date IS strftime('%Y-%m-%d', date)),
+            kind     TEXT NOT NULL CHECK (kind IN (
+                          'boxing', 'sparring', 'roadwork', 'strength',
+                          'conditioning', 'other')),
+            rpe      INTEGER NOT NULL CHECK (rpe     BETWEEN 1 AND 10),
+            minutes  INTEGER NOT NULL CHECK (minutes BETWEEN 1 AND 600),
+            note     TEXT CHECK (note IS NULL OR length(note) BETWEEN 1 AND 200),
+            -- NULL when hand-logged; the import's idempotency key when it is
+            -- not, so re-running a sync cannot double-count a session.
+            garmin_activity_id INTEGER UNIQUE
+        ) STRICT;
+
+        -- Every read here is a window ending today: "the last 28 days".
+        CREATE INDEX training_session_date ON training_session (date);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

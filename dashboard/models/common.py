@@ -210,8 +210,59 @@ class PaperStatus(StrEnum):
 
 
 class HealthMetric(StrEnum):
+    """The daily scalars -- one number per metric per day.
+
+    Only `weight` is typed by hand for good. The rest are what a Garmin sync
+    fills in; until it exists they are typed too, which is why every one of
+    them is a plain number rather than something only an import could produce.
+    """
+
     weight = "weight"
-    sleep = "sleep"
+    """lb, first thing, before anything else."""
+
+    sleep_hours = "sleep_hours"
+    """Hours actually asleep, as the watch scores it."""
+
+    time_in_bed = "time_in_bed"
+    """Hours between lights-out and getting up. Kept apart from `sleep_hours`
+    because the gap between the two *is* the signal -- nine in bed and six
+    asleep is a different problem from six of each."""
+
+    sleep_score = "sleep_score"
+    """Garmin's 0-100. Was called `sleep` before the units were pinned down."""
+
+    hrv = "hrv"
+    """Overnight average, ms."""
+
+    resting_hr = "resting_hr"
+    body_battery = "body_battery"
+    """At wake. Watched, not acted on -- the formula behind it is Garmin's."""
+
+
+class EntrySource(StrEnum):
+    """Who wrote a health row.
+
+    The whole reason this exists: `manual` outranks `garmin`, so a sync may
+    never overwrite a correction you made by hand. See `Repository.log_health`.
+    """
+
+    manual = "manual"
+    garmin = "garmin"
+
+
+class SessionKind(StrEnum):
+    boxing = "boxing"
+    """Bag, pads, drills -- the ordinary session."""
+
+    sparring = "sparring"
+    """Separate from `boxing` on purpose: it is the one that costs the most to
+    recover from at the same RPE, and a camp is partly the question of how
+    much of it you did."""
+
+    roadwork = "roadwork"
+    strength = "strength"
+    conditioning = "conditioning"
+    other = "other"
 
 
 class Game(StrEnum):
