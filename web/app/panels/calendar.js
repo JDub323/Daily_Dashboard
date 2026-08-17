@@ -167,7 +167,9 @@ export function windowFor(timed) {
 
 export default {
   id: "cal",
-  title: "week",
+  // No heading. `.cal-head` below already names the week on screen, and a 21px
+  // "week" above it was a second title for the same thing. See panel.js.
+  title: "",
   tab: "home",
   slot: "hero",
   hero: true,
@@ -178,6 +180,12 @@ export default {
   // an opinion about it, and a redraw from the live timer must not silently
   // put you back on this week while you are reading next week's.
   offset: 0,
+
+  // The picker's selection, "" meaning auto. Held on the panel rather than in
+  // the box because every add re-renders the panel and so rebuilds the box:
+  // filing three things onto Homework in a row should not mean choosing it
+  // three times.
+  target: "",
 
   async render(node) {
     const box = quickAdd(this, node);
@@ -354,14 +362,26 @@ function legend(calendars, hues) {
 
 // --- the add box -----------------------------------------------------------
 //
-// One input. Typing resolves a preview server-side — the same parse and the
-// same classifier the write will use, so the line under the box is what is
-// about to happen rather than a second implementation of it that can drift.
+// An input, and a picker for where the event goes. Typing resolves a preview
+// server-side — the same parse and the same classifier the write will use, so
+// the line under the box is what is about to happen rather than a second
+// implementation of it that can drift. Enter commits.
 //
-// Enter commits. Tab cycles the calendar, which is the whole reason the guess
-// is shown at all: on this account's history the classifier names the right
-// calendar first about 60% of the time and has it in the top two about 88% of
-// the time, so the usual repair is one key rather than a menu.
+// The picker's default is `auto`, meaning "whatever the classifier decided",
+// and the preview then names the calendar it landed on so `auto` is never a
+// black box. On this account's history `auto` is right about two thirds of the
+// time and has the right answer in its top two about nine tenths of the time,
+// which is exactly why the picker exists beside it rather than instead of it.
+//
+// Choosing a calendar explicitly is also the training signal: the server
+// records it against what it would have guessed, so the same phrasing stops
+// being wrong.
+//
+// Only writable calendars are listed. A `reader` calendar — the US holidays
+// feed, a shared course calendar — is drawn in the grid and can never be
+// written to, and offering it would be offering a guaranteed failure.
+
+const AUTO = "";
 
 const SOURCE_LABEL = {
   rule: "rule",
@@ -376,36 +396,65 @@ function quickAdd(panel, node) {
     spellcheck: false,
     autocomplete: "off",
   });
+  const picker = el("select.cal-picker", {
+    title: "which calendar to add to — Tab cycles",
+    "aria-label": "target calendar",
+  });
   const preview = el("div.cal-preview");
-  const wrap = el("div.cal-add", null, input, preview);
+  const wrap = el("div.cal-add", null, el("div.cal-add-row", null, input, picker), preview);
 
   let resolved = null;
-  let override = null;
   let writable = [];
   let timer = null;
   let sequence = 0;
 
+  /** The picker is the single source of truth; `auto` defers to the model. */
+  const chosen = () => picker.value || null;
+
+  const setCalendars = (names) => {
+    writable = names;
+    mount(picker,
+      el("option", { value: AUTO, text: "auto" }),
+      ...names.map((name) => el("option", { value: name, text: name })),
+    );
+    // Restore the panel's choice, and fall back to auto if that calendar is
+    // gone — deleting the calendar you had selected must not leave the box
+    // pointed at something that cannot be written to.
+    picker.value = names.includes(panel.target) ? panel.target : AUTO;
+    panel.target = picker.value;
+  };
+
   const draw = () => {
     if (!resolved) return void mount(preview);
+    const override = chosen();
     const target = override ?? resolved.calendar;
     const date = parseISO(resolved.date);
     const day = `${DAY_NAMES[(date.getDay() + 6) % 7]} ${MONTHS[date.getMonth()]} ${date.getDate()}`;
     mount(preview,
-      el("span.cal-pill", { text: target, title: "Tab to change calendar" }),
+      el("span.cal-pill", { text: target }),
       el("span.cal-pv-title", { text: resolved.title }),
       el("span.cal-pv-when", {
         text: `${day} · ${resolved.start ? `${resolved.start}–${resolved.end}` : "all day"}`,
       }),
-      el("span.cal-pv-src", { text: override ? "override" : SOURCE_LABEL[resolved.source] }),
+      el("span.cal-pv-src", {
+        // Under `auto` this says how the calendar was arrived at. Once you have
+        // picked one it says so, because "learned" beside a calendar you chose
+        // by hand would be claiming credit for your decision.
+        text: override ? "chosen" : SOURCE_LABEL[resolved.source],
+      }),
       resolved.warning ? el("span.cal-pv-warn", { text: resolved.warning }) : null,
     );
   };
+
+  picker.addEventListener("change", () => {
+    panel.target = picker.value;
+    draw();
+  });
 
   const resolve = async () => {
     const text = input.value.trim();
     if (!text) {
       resolved = null;
-      override = null;
       draw();
       return;
     }
@@ -431,18 +480,17 @@ function quickAdd(panel, node) {
   });
 
   input.addEventListener("keydown", async (event) => {
-    if (event.key === "Tab" && resolved) {
+    if (event.key === "Tab" && picker.options.length > 1) {
       // Tab switches dashboard tabs everywhere else, so this has to stop the
-      // app-level handler as well as the browser's own focus move.
+      // app-level handler as well as the browser's own focus move. It steps the
+      // picker rather than keeping a parallel notion of the target, so the
+      // keyboard and the mouse cannot disagree — and it wraps through `auto`,
+      // which is how you get back to the guess after overruling it.
       event.preventDefault();
       event.stopPropagation();
-      const order = [...new Set([
-        ...resolved.ranked.map((g) => g.calendar).filter((c) => writable.includes(c)),
-        ...writable,
-      ])];
-      if (!order.length) return;
-      const at = order.indexOf(override ?? resolved.calendar);
-      override = order[(at + (event.shiftKey ? -1 : 1) + order.length) % order.length];
+      const n = picker.options.length;
+      picker.selectedIndex = (picker.selectedIndex + (event.shiftKey ? -1 : 1) + n) % n;
+      panel.target = picker.value;
       draw();
       return;
     }
@@ -450,7 +498,7 @@ function quickAdd(panel, node) {
       event.stopPropagation();
       input.value = "";
       resolved = null;
-      override = null;
+      picker.value = AUTO;
       draw();
       return;
     }
@@ -465,27 +513,33 @@ function quickAdd(panel, node) {
     if (!resolved) await resolve();
     if (!resolved) return;
 
-    const target = override;
+    const target = chosen();
     input.disabled = true;
+    picker.disabled = true;
     mount(preview, el("span.faint", { text: "adding…" }));
     try {
       await api.postRaw("/api/calendar/add", {
         text,
         today: api.today(),
+        // Omitted under `auto`: the server then uses its own prediction and
+        // records no correction, which is right — nothing was corrected.
         ...(target ? { calendar: target } : {}),
       });
       input.value = "";
       resolved = null;
-      override = null;
       input.disabled = false;
+      picker.disabled = false;
+      // The picker keeps its selection across an add. Filing three things onto
+      // Homework in a row should not mean choosing it three times.
       await panel.render(node);
       // That render replaced the box; put the caret back in the new one.
       node.querySelector(".cal-input")?.focus();
     } catch (error) {
       input.disabled = false;
+      picker.disabled = false;
       mount(preview, el("span.cal-pv-warn", { text: `failed: ${error.message}` }));
     }
   });
 
-  return { node: wrap, setCalendars: (names) => void (writable = names) };
+  return { node: wrap, setCalendars };
 }

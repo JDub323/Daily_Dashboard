@@ -90,12 +90,17 @@ export function mountAll() {
     // worth is the whole width by definition.
     if (!def.hero) card.style.setProperty("--span", def.span ?? 2);
 
-    const head = el("h2", { text: def.title });
+    // A panel may decline a heading, and then there is no <h2> at all rather
+    // than an empty one holding its line-height open. The week grid is the case
+    // that wanted it: its own header already says which week is on screen, so a
+    // 21px "week" above that was a second title for the same thing.
+    //
+    // A collapsible panel cannot decline, because its heading *is* its toggle —
+    // there is no separate chevron, the heading is already the full width of
+    // the card and is the thing you would reach for.
+    const head = def.title || def.collapsible ? el("h2", { text: def.title ?? "" }) : null;
 
-    // A collapsible panel's heading is also its toggle. No separate chevron
-    // button: the heading is already the full width of the card and is the
-    // thing you would reach for.
-    if (def.collapsible) {
+    if (def.collapsible && head) {
       head.classList.add("collapse-toggle");
       head.append(el("span.panel-summary"));
       head.addEventListener("click", () => {
@@ -105,7 +110,7 @@ export function mountAll() {
     }
 
     const body = el("div.body");
-    card.append(head, body);
+    card.append(...(head ? [head] : []), body);
     slotNode(def.tab, def.slot).append(card);
     def.node = body;
     def.card = card;

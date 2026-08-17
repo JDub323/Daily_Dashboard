@@ -7,14 +7,15 @@ back a few hundred labelled titles without anyone annotating anything.
 What that data is *not* is clean, and the design here follows from having read
 it rather than from what the calendars are called:
 
-    Meals     Learn Python | Read | Schedule Week | Write about McCarthy
     Homework  patty bday | do taxes | Career Fair | beerio kart tourney
     Tests     Data Structures Final Exam | Probability Midterm 1 | PUTNAM EXAM
+    Classes   ASME Kickoff Meeting | All Souls' Day prayer service | lectures
 
-Two of the seven writable calendars have contents that match their names. So
+Barely any of the writable calendars have contents that match their names -- a
+since-deleted `Meals` held "Learn Python", "Read" and "Schedule Week". So
 keyword rules keyed on the *name* -- "dinner" is a meal, "hw" is homework --
-would be confidently wrong on this account, and the two that survive here are
-the two the history actually supports. Everything else is learned, because the
+would be confidently wrong on this account, and the ones that survive here are
+the ones the history actually supports. Everything else is learned, because the
 history is the only thing that knows "bday" files under Homework.
 
 It also means there is a ceiling. Where the same phrasing has genuinely gone to
@@ -60,6 +61,9 @@ RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     # to the lectures of the same name. The word means the same thing whether
     # or not this calendar has happened to use it before.
     (re.compile(r"\b(tests?|exams?|midterms?|finals?|quiz(?:zes)?)\b", re.I), "Tests"),
+    # Kept although `Piano App Deadlines` has since been deleted: every rule is
+    # guarded on its calendar existing, so this one simply never fires now, and
+    # it costs nothing to have it work again if the calendar comes back.
     (re.compile(r"\bpiano\s+(app|deadline)", re.I), "Piano App Deadlines"),
 )
 

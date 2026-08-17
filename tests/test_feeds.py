@@ -453,3 +453,97 @@ def test_the_puzzle_keeps_only_what_survived_deleting_the_board(fetcher, monkeyp
     assert puzzle.rating == 1520
     assert not hasattr(puzzle, "pgn")
     assert not hasattr(puzzle, "solution")
+
+
+# --- gcalcli's stale calendar cache ----------------------------------------
+#
+# The failure this covers took the whole calendar panel down. gcalcli caches
+# the account's calendar list in a file it writes once and never expires; this
+# account's was three months old. A calendar deleted in Google stayed in that
+# cache, `agenda` with no `--calendar` queried it, Google answered 404 notFound,
+# and gcalcli exited 1 — so one deleted calendar meant no week at all, and the
+# only cure was knowing to run `gcalcli --refresh` by hand.
+
+STALE_CACHE_ERROR = """Traceback (most recent call last):
+  File "/usr/bin/gcalcli", line 8, in <module>
+    sys.exit(main())
+  File "/usr/lib/python3/dist-packages/gcalcli/cli.py", line 252, in main
+    gcal.AgendaQuery(start=parsed_args.start, end=parsed_args.end)
+googleapiclient.errors.HttpError: <HttpError 404 when requesting \
+https://www.googleapis.com/calendar/v3/calendars/c_29339%40group.calendar.google.com/events\
+?timeMin=2026-08-17T00%3A00%3A00-04%3A00 returned "Not Found". Details: \
+"[{'domain': 'global', 'reason': 'notFound', 'message': 'Not Found'}]">"""
+
+
+def test_a_deleted_calendar_in_the_cache_is_recognised():
+    assert feeds._is_stale_cache(STALE_CACHE_ERROR)
+
+
+def test_an_unrelated_failure_is_not_treated_as_a_stale_cache():
+    """A blanket retry would double every genuine error and hide that it
+    happened twice."""
+    assert not feeds._is_stale_cache("gcalcli: error: unrecognized arguments: --tsv")
+    assert not feeds._is_stale_cache("No available calendar to use")
+    # A 404 naming an *event* is an ordinary race with something being deleted
+    # mid-agenda, and refreshing the calendar list would not help it.
+    assert not feeds._is_stale_cache(
+        '<HttpError 404 when requesting .../events/abc123 returned "Not Found". '
+        "Details: \"[{'reason': 'notFound'}]\">"
+    )
+
+
+def test_the_panel_is_shown_the_exception_not_the_top_of_the_traceback():
+    """The old code sliced the first 200 characters, which is `sys.exit(main())`
+    and two frames of gcalcli's argument parsing — identical for every possible
+    error, and what the panel actually displayed."""
+    message = feeds._short_gcalcli_error(STALE_CACHE_ERROR)
+    assert "Traceback" not in message
+    assert "sys.exit" not in message
+    assert message.startswith("<HttpError 404")  # module path dropped
+    assert len(message) <= 200
+
+
+def test_a_one_line_gcalcli_error_survives_intact():
+    assert feeds._short_gcalcli_error("No available calendar to use") == (
+        "No available calendar to use"
+    )
+    assert feeds._short_gcalcli_error("   ") == "gcalcli failed"
+
+
+def test_a_stale_cache_is_refreshed_once_and_the_call_retried(fetcher, monkeypatch):
+    calls: list[tuple[str, ...]] = []
+
+    def fake(args, *, timeout=None):
+        calls.append(tuple(args))
+        failed = len([c for c in calls if c and c[0] == "agenda"]) == 1
+        return subprocess.CompletedProcess(
+            args=list(args),
+            returncode=1 if failed else 0,
+            stdout="" if failed else "start_date\tstart_time\n",
+            stderr=STALE_CACHE_ERROR if failed else "",
+        )
+
+    monkeypatch.setattr(feeds.Feeds, "_run_gcalcli", lambda self, args, *, timeout=None: fake(args))
+    out = fetcher.gcalcli("agenda", "2026-08-17", "2026-08-24")
+
+    assert out.startswith("start_date")
+    assert calls == [
+        ("agenda", "2026-08-17", "2026-08-24"),
+        ("--refresh", "list"),
+        ("agenda", "2026-08-17", "2026-08-24"),
+    ]
+
+
+def test_a_second_failure_after_refreshing_is_reported(fetcher, monkeypatch):
+    """Recovery is attempted once. Failing again is a real error, and pretending
+    otherwise would loop."""
+    monkeypatch.setattr(
+        feeds.Feeds,
+        "_run_gcalcli",
+        lambda self, args, *, timeout=None: subprocess.CompletedProcess(
+            args=list(args), returncode=1, stdout="", stderr=STALE_CACHE_ERROR
+        ),
+    )
+    with pytest.raises(feeds.FeedError) as caught:
+        fetcher.gcalcli("agenda", "2026-08-17", "2026-08-24")
+    assert "404" in str(caught.value)

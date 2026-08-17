@@ -411,13 +411,47 @@ class Feeds:
         an immediate EOFError, with the menu it was about to draw sitting in
         stderr where it reads as the bug report it is.
         """
+        result = self._run_gcalcli(args, timeout=timeout)
+        if result.returncode == 0:
+            return result.stdout
+
+        message = (result.stderr or result.stdout).strip()
+
+        # A calendar deleted in Google stays in gcalcli's own cache, which is
+        # written once and never expires -- this account's was three months
+        # old. `agenda` with no `--calendar` then queries every cached calendar
+        # including the dead one, Google answers 404 notFound, and gcalcli exits
+        # 1. One deleted calendar took down the entire week, and the only cure
+        # was knowing to run `gcalcli --refresh` by hand.
+        #
+        # So the cure is automatic, once, and only for this signature: refresh
+        # the calendar list and try again. Anything else, or a second failure,
+        # is reported as it always was -- a blanket retry would double every
+        # genuine error and hide the fact that it happened twice.
+        if _is_stale_cache(message):
+            log.warning("gcalcli names a calendar Google no longer has; refreshing its cache")
+            self._run_gcalcli(("--refresh", "list"), timeout=timeout)
+            # The list this process is holding named the dead calendar too.
+            self.invalidate("calendarlist")
+            result = self._run_gcalcli(args, timeout=timeout)
+            if result.returncode == 0:
+                log.info("gcalcli recovered after a cache refresh")
+                return result.stdout
+            message = (result.stderr or result.stdout).strip()
+
+        log.error("gcalcli %s exited %s: %s", args, result.returncode, message)
+        raise FeedError(_short_gcalcli_error(message))
+
+    def _run_gcalcli(
+        self, args: tuple[str, ...] | list[str], *, timeout: float | None
+    ) -> subprocess.CompletedProcess[str]:
         cfg = self.settings.calendar
         argv = [*cfg.command, *args]
         if os.name == "nt":
             argv = ["wsl", "-e", *argv]
         limit = cfg.timeout_seconds if timeout is None else timeout
         try:
-            r = subprocess.run(
+            return subprocess.run(
                 argv,
                 capture_output=True,
                 text=True,
@@ -429,11 +463,6 @@ class Feeds:
             raise FeedError(f"{cfg.command[0]} not found on PATH") from e
         except subprocess.TimeoutExpired as e:
             raise FeedError(f"{cfg.command[0]} timed out after {limit}s") from e
-        if r.returncode != 0:
-            message = (r.stderr or r.stdout).strip()
-            log.error("gcalcli %s exited %s: %s", args, r.returncode, message)
-            raise FeedError(message[:200] or "gcalcli failed")
-        return r.stdout
 
     def calendar(self, start: dt.date, days: int = 7) -> Cached[CalendarResponse]:
         return self.cached(
@@ -615,6 +644,36 @@ def _maybe_date(value: str) -> dt.date | None:
         return dt.date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _is_stale_cache(message: str) -> bool:
+    """Does this failure mean gcalcli asked about a calendar that is gone?
+
+    Matched on both halves rather than on "404" alone: a 404 naming an *event*
+    is an ordinary race with something being deleted mid-agenda, and refreshing
+    the calendar list would not help it.
+    """
+    return "notFound" in message and "/calendars/" in message
+
+
+def _short_gcalcli_error(message: str) -> str:
+    """The one line worth putting in a panel.
+
+    gcalcli fails by letting a Python traceback reach stderr, and the old code
+    showed the *first* 200 characters of it -- which is `sys.exit(main())` and
+    two frames of gcalcli's own argument parsing, identical for every possible
+    error. The exception is on the last line, so that is what gets shown, and
+    the traceback stays in the log where it is useful.
+    """
+    lines = [line.strip() for line in message.splitlines() if line.strip()]
+    if not lines:
+        return "gcalcli failed"
+    last = lines[-1]
+    # "googleapiclient.errors.HttpError: <HttpError 404 ...>" -> drop the
+    # module path, which is never the interesting half.
+    if ":" in last and last.split(":", 1)[0].count(".") >= 2:
+        last = last.split(":", 1)[1].strip()
+    return last[:200] or "gcalcli failed"
 
 
 def _parse_agenda(tsv: str) -> list[CalendarEvent]:

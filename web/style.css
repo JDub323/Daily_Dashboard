@@ -921,3 +921,41 @@ input.cal-input:focus { outline: 1px solid var(--accent-dim); outline-offset: -1
 .cal-pv-when { color: var(--dim); font-variant-numeric: tabular-nums; }
 .cal-pv-src { color: var(--faint); }
 .cal-pv-warn { color: var(--bad); opacity: .85; }
+
+/* The picker sits on the same row as the box and is sized to its content — the
+   input is what you type into, so it keeps the width. `auto` is the first
+   option and the default; only writable calendars follow it, because a reader
+   calendar cannot be written to and offering one is offering a failure. */
+.cal-add-row { display: flex; gap: var(--s2); align-items: stretch; }
+.cal-add-row > input { flex: 1; min-width: 0; }
+
+select.cal-picker {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--t-body);
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  max-width: 18ch;
+}
+select.cal-picker:hover:not(:disabled) { border-color: var(--accent); }
+select.cal-picker:focus { outline: 1px solid var(--accent-dim); outline-offset: -1px; }
+select.cal-picker:disabled { opacity: .4; cursor: default; }
+/* The open dropdown is painted by the OS and does not inherit the page's dark
+   ground — without this the list is dark text on dark. */
+select.cal-picker option { background: var(--panel2); color: var(--fg); }
+
+/* A hero that declined its heading still needs air at the top, or it reads as a
+   card that lost its title rather than one that never wanted one. */
+.panel.hero > .body:first-child { padding-top: var(--s1); }
+
+/* Below the one-column breakpoint the picker was winning the row — 148px of
+   dropdown against 122px of text box, when the box is the thing you type a
+   whole sentence into. It goes underneath and takes the full width instead. */
+@media (max-width: 620px) {
+  .cal-add-row { flex-wrap: wrap; }
+  .cal-add-row > input { flex: 1 1 100%; }
+  select.cal-picker { flex: 1 1 100%; max-width: none; }
+}
