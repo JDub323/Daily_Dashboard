@@ -1192,6 +1192,21 @@ class CalendarResponse(Base):
     """
 
 
+class ClassifierStatus(Base):
+    """What the model is, after a retrain was asked for.
+
+    Returned rather than a bare 204 because "it retrained" and "it retrained
+    and found four more events than last time" are different answers, and the
+    second is the one that tells you whether pressing the button did anything.
+    """
+
+    fitted: bool
+    samples: int
+    calendars: list[str] = Field(default_factory=list)
+    corrections: int = 0
+    unavailable: str | None = None
+
+
 class CalendarGuess(Base):
     calendar: str
     score: float

@@ -420,7 +420,41 @@ function quickAdd(panel, node) {
     "aria-label": "target calendar",
   });
   const preview = el("div.cal-preview");
-  const wrap = el("div.cal-add", null, el("div.cal-add-row", null, input, picker), preview);
+
+  // `auto` refits itself at boot, when a calendar appears or disappears, and
+  // after every correction — but none of those re-read the event history,
+  // which is cached for a day and is most of what it learns from. On a server
+  // left running, this is the only way to say "look at my calendars again".
+  const retrain = el("button.ghost.cal-retrain", {
+    text: "retrain auto",
+    title: "re-read the calendars and refit the model that fills in “auto”",
+    onclick: async () => {
+      retrain.disabled = true;
+      const said = retrain.textContent;
+      retrain.textContent = "retraining…";
+      try {
+        const status = await api.postRaw("/api/calendar/retrain", {});
+        mount(preview,
+          el("span.cal-pv-src", {
+            text: status.fitted
+              ? `refitted on ${status.samples} events across ${status.calendars.length}` +
+                ` calendars${status.corrections ? `, ${status.corrections} corrections` : ""}`
+              : (status.unavailable ?? "could not fit a model"),
+          }),
+        );
+      } catch (error) {
+        mount(preview, el("span.cal-pv-warn", { text: `retrain failed: ${error.message}` }));
+      } finally {
+        retrain.disabled = false;
+        retrain.textContent = said;
+      }
+    },
+  });
+
+  const wrap = el("div.cal-add", null,
+    el("div.cal-add-row", null, input, picker, retrain),
+    preview,
+  );
 
   let resolved = null;
   let writable = [];

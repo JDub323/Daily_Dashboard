@@ -110,6 +110,11 @@ class CalendarClassifier:
         self._targets: list[str] = []
         self.unavailable: str | None = None
         """Why there is no model, if there is not. Shown in the panel."""
+        self.sample_count = 0
+        """How many labelled titles the current model was fitted on.
+
+        Reported back by the retrain button, because "it retrained" and "it
+        retrained and found four more events" are different answers."""
 
     # -- fitting ------------------------------------------------------------
 
@@ -123,6 +128,7 @@ class CalendarClassifier:
         if len({s.calendar for s in usable}) < 2:
             with self._lock:
                 self._pipeline, self._classes = None, []
+            self.sample_count = len(usable)
             self.unavailable = "not enough labelled history to fit a model"
             log.info("calendar classifier: %s", self.unavailable)
             return
@@ -144,6 +150,7 @@ class CalendarClassifier:
         with self._lock:
             self._pipeline = pipeline
             self._classes = list(pipeline.named_steps["clf"].classes_)
+        self.sample_count = len(usable)
         self.unavailable = None
         log.info(
             "calendar classifier fitted on %d titles across %d calendars",

@@ -749,6 +749,30 @@ def _register(app: FastAPI) -> None:
         got = fetch.calendar(start, 7)
         return got.value.model_copy(update={"feed": _feed_meta(got)})
 
+    @app.post("/api/calendar/retrain")
+    def calendar_retrain(request: Request, fetch: Fetch, repo: Repo) -> api.ClassifierStatus:
+        """Refit the quick-add classifier now, against a freshly read account.
+
+        The model already refits on its own -- at boot, whenever a calendar is
+        created or deleted, and immediately after every correction. What none of
+        those do is re-read the *history*, which is cached for a day and is the
+        bulk of the training data. So on a server left running, events filed
+        since this morning are invisible to it, and the one thing you cannot do
+        from the box is say "look again".
+        """
+        fetch.invalidate("calendarhistory")
+        fetch.invalidate("calendarlist")
+        _fit_calendar_model(request.app.state, fetch, repo, force=True)
+
+        clf: calclass.CalendarClassifier = request.app.state.calendar_clf
+        return api.ClassifierStatus(
+            fitted=clf.fitted,
+            samples=clf.sample_count,
+            calendars=clf.targets,
+            corrections=len(repo.calendar_corrections()),
+            unavailable=clf.unavailable,
+        )
+
     @app.post("/api/calendar/preview")
     def calendar_preview(
         request: Request, fetch: Fetch, repo: Repo, body: api.CalendarAddRequest

@@ -959,3 +959,11 @@ select.cal-picker option { background: var(--panel2); color: var(--fg); }
   .cal-add-row > input { flex: 1 1 100%; }
   select.cal-picker { flex: 1 1 100%; max-width: none; }
 }
+
+/* Sits with the box rather than in the header: it is about the classifier that
+   fills in `auto`, which is a property of the add box, not of the week. Quiet
+   by default — it is a thing you press rarely and never in a hurry. */
+button.cal-retrain { flex: 0 0 auto; font-size: var(--t-meta); white-space: nowrap; }
+@media (max-width: 620px) {
+  button.cal-retrain { flex: 1 1 100%; }
+}

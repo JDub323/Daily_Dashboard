@@ -1285,3 +1285,59 @@ def test_a_reordered_calendar_list_does_not_refit(client, monkeypatch):
     live.append("Classes")
     assert preview().status_code == 200
     assert len(histories) > fitted_once
+
+
+def test_retrain_rereads_the_history_the_daily_cache_would_have_hidden(client, monkeypatch):
+    """The button exists for exactly one thing the automatic triggers miss.
+
+    `auto` already refits at boot, when a calendar appears or disappears, and
+    after every correction — but the event history behind it is cached for a
+    day, so on a long-running server nothing filed since this morning reaches
+    the model. Retrain drops that cache first.
+    """
+    monkeypatch.setattr(
+        feeds.Feeds,
+        "calendars",
+        lambda self: [
+            api.CalendarInfo(name=n, access="owner") for n in ("Special Events", "Tests")
+        ],
+    )
+    events = [
+        api.CalendarEvent(date=TODAY, title="Final Exam", calendar="Tests"),
+        api.CalendarEvent(date=TODAY, title="Blue and Gold Game", calendar="Special Events"),
+    ]
+    reads = []
+
+    def history(self, today):
+        reads.append(today)
+        return list(events)
+
+    monkeypatch.setattr(feeds.Feeds, "calendar_history", history)
+
+    client.post("/api/calendar/preview", json={"text": "lunch friday", "today": DATE})
+    assert len(reads) == 1
+
+    # Something filed since. Without a retrain the model never sees it: the
+    # calendar set is unchanged, so nothing triggers a refit.
+    events.append(api.CalendarEvent(date=TODAY, title="Probability Midterm", calendar="Tests"))
+    client.post("/api/calendar/preview", json={"text": "lunch friday", "today": DATE})
+    assert len(reads) == 1, "an ordinary preview must not refetch the history"
+
+    body = client.post("/api/calendar/retrain", json={}).json()
+    assert len(reads) == 2
+    assert body["fitted"] is True
+    assert body["samples"] == 3
+    assert sorted(body["calendars"]) == ["Special Events", "Tests"]
+
+
+def test_retrain_reports_why_when_it_cannot_fit(client, monkeypatch):
+    monkeypatch.setattr(
+        feeds.Feeds,
+        "calendars",
+        lambda self: [api.CalendarInfo(name="Tests", access="owner")],
+    )
+    monkeypatch.setattr(feeds.Feeds, "calendar_history", lambda self, today: [])
+    body = client.post("/api/calendar/retrain", json={}).json()
+    assert body["fitted"] is False
+    assert body["samples"] == 0
+    assert "not enough" in body["unavailable"]
