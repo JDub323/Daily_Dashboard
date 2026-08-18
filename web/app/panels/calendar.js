@@ -188,9 +188,23 @@ export default {
   target: "",
 
   async render(node) {
-    const box = quickAdd(this, node);
+    // The add box outlives the render, and has to. Building a fresh one each
+    // time threw away whatever was half-typed the moment the five-minute live
+    // refresh landed — and took the picker's selection with it.
+    this.box ??= quickAdd(this, node);
+    const box = this.box;
+    const focus = box.focusState();
 
-    mount(node, el("div.faint", { text: "loading the week…" }));
+    // Shown on the first paint only. Replacing the week with a one-line
+    // placeholder on *every* render collapsed the card to a sliver and sprang
+    // it back — on every add, every page of the arrows, and every five-minute
+    // refresh. The week already on screen is a better thing to look at while
+    // the next one loads than the word "loading", and the swap below is one
+    // synchronous replace, so nothing flickers between them.
+    if (!node.querySelector(".cal")) {
+      mount(node, el("div.faint", { text: "loading the week…" }));
+    }
+
     let week;
     try {
       week = await api.get("/api/calendar", { date: api.today(), weeks: this.offset });
@@ -202,6 +216,7 @@ export default {
         el("div.row", null, el("button", { text: "retry", onclick: () => this.render(node) })),
         box.node,
       );
+      box.restoreFocus(focus);
       return;
     }
 
@@ -260,6 +275,10 @@ export default {
       box.node,
       feedStamp(week.feed),
     );
+    // `mount` detaches every child before re-appending, and detaching an input
+    // blurs it — so a refresh that fired while you were typing would leave the
+    // text in place and the caret nowhere.
+    box.restoreFocus(focus);
     return refreshAfter(week.feed);
   },
 };
@@ -412,6 +431,10 @@ function quickAdd(panel, node) {
   const chosen = () => picker.value || null;
 
   const setCalendars = (names) => {
+    // The picker now outlives the render, so rebuilding its options on every
+    // refresh would be replacing a control the user may have open, for no
+    // reason. Only a genuine change to the account's calendars redraws it.
+    if (names.length === writable.length && names.every((n, i) => n === writable[i])) return;
     writable = names;
     mount(picker,
       el("option", { value: AUTO, text: "auto" }),
@@ -531,9 +554,11 @@ function quickAdd(panel, node) {
       picker.disabled = false;
       // The picker keeps its selection across an add. Filing three things onto
       // Homework in a row should not mean choosing it three times.
+      //
+      // This render redraws the grid around the box rather than replacing it,
+      // so the week does not blink out and back while the new event is fetched.
       await panel.render(node);
-      // That render replaced the box; put the caret back in the new one.
-      node.querySelector(".cal-input")?.focus();
+      input.focus();
     } catch (error) {
       input.disabled = false;
       picker.disabled = false;
@@ -541,5 +566,22 @@ function quickAdd(panel, node) {
     }
   });
 
-  return { node: wrap, setCalendars };
+  return {
+    node: wrap,
+    setCalendars,
+
+    /** What the caret was doing before a re-render, or null if it was elsewhere. */
+    focusState: () =>
+      document.activeElement === input
+        ? { start: input.selectionStart, end: input.selectionEnd }
+        : null,
+
+    restoreFocus: (state) => {
+      if (!state) return;
+      input.focus();
+      input.setSelectionRange(state.start, state.end);
+    },
+
+    focus: () => input.focus(),
+  };
 }
