@@ -12,12 +12,38 @@
 // Self Evaluation is switched on. It will not replace this panel — a Garmin
 // activity is a thing that got recorded, and a session is a thing you decided
 // to do. Hand-logging stays the primary path.
+//
+// --- logging one without the mouse ------------------------------------------
+//
+// Enter takes the keyboard and walks the four fields in the order you know
+// them: a letter picks the kind, a digit picks the RPE, and the caret lands in
+// the minutes box. Enter there goes to the note, Enter there logs it. Five or
+// six keystrokes for a session, which is about what it should cost when you are
+// standing in a gym doorway.
+//
+// `0` is RPE 10 — it is the key next to 9 and there is no RPE 0, so the row
+// reads 1…9,0 the way a phone keypad does. Kinds go by first letter, except
+// that sparring took `s` first, so strength is `t`. The letter is printed on
+// each button rather than left in the cheatsheet, for the same reason the tabs
+// print their digit.
 
 import * as api from "../api.js";
+import { beginCapture, captureLabel, endCapture } from "../capture.js";
 import { el, mount } from "../dom.js";
 import { put, store } from "../store.js";
 
-const KINDS = ["boxing", "sparring", "roadwork", "strength", "conditioning", "other"];
+/** `kind: key`. Alphabetical collision resolved once, here: sparring is `s`,
+ *  so strength — the one you reach for less often — is `t`. */
+const KINDS = {
+  boxing: "b",
+  sparring: "s",
+  roadwork: "r",
+  strength: "t",
+  conditioning: "c",
+  other: "o",
+};
+
+const BY_KEY = new Map(Object.entries(KINDS).map(([kind, key]) => [key, kind]));
 
 /** The anchors that stop RPE 7 drifting into RPE 5 over a long camp. */
 const RPE_ANCHOR = {
@@ -25,16 +51,52 @@ const RPE_ANCHOR = {
   6: "working", 7: "hard", 8: "very hard", 9: "near maximal", 10: "everything",
 };
 
+const OWNER = "session";
+
+// --- state that outlives a render -------------------------------------------
+//
+// A session posts on the last keystroke and the store notifies, which rebuilds
+// this body — so the half-filled form cannot live in a render closure. It also
+// should not: deleting one of today's sessions redraws the panel too, and
+// losing a kind and an RPE to that would be its own small annoyance.
+
+/** `null`, `"kind"` or `"rpe"` — which field the keyboard is on. */
+let stage = null;
+let kind = "boxing";
+let rpe = 0;
+/** The current render's key handler, highlighter and end-of-capture paint.
+ *  Rebound on every draw, because all three close over nodes the draw has just
+ *  replaced. */
+let handlers = null;
+
+const label = () => `session ▸ ${stage}`;
+
+/** (Re)take the keyboard for whatever stage we are on. */
+function take() {
+  if (!handlers) return;
+  beginCapture({
+    owner: OWNER,
+    label: label(),
+    onKey: handlers.onKey,
+    onEnd: handlers.onEnd,
+  });
+  handlers.paintStage();
+}
+
 export default {
-  id: "session",
+  id: OWNER,
   title: "log a session",
   tab: "health",
   slot: "grid",
   span: 3,
 
+  onEnter() {
+    stage = "kind";
+    take();
+    return true;
+  },
+
   async render(node) {
-    let kind = "boxing";
-    let rpe = 0;
     const message = el("span.faint");
 
     const minutes = el("input", {
@@ -43,18 +105,37 @@ export default {
       step: "1",
       inputmode: "numeric",
       placeholder: "minutes",
+      onkeydown: (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        // Straight on to the note rather than logging here. The note is the
+        // field you skip, so it is the one that should cost a keystroke to
+        // skip rather than a keystroke to reach.
+        note.focus();
+        note.select();
+      },
     });
-    const note = el("input", { placeholder: "note (optional)", maxlength: 200 });
-    const anchor = el("span.faint");
+
+    const note = el("input", {
+      placeholder: "note (optional)",
+      maxlength: 200,
+      onkeydown: (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        log();
+      },
+    });
+
+    const anchor = el("span.faint", { text: rpe ? RPE_ANCHOR[rpe] : "" });
 
     const kindRow = el("div.scale", null,
-      ...KINDS.map((k) =>
-        el("button.tiny", {
+      ...Object.entries(KINDS).map(([k, key]) =>
+        el("button.tiny.keyed", {
           text: k,
+          dataset: { key },
           class: k === kind ? "on" : "",
           onclick: (e) => {
-            kind = k;
-            for (const b of kindRow.children) b.classList.toggle("on", b.textContent === k);
+            pickKind(k);
             e.currentTarget.blur();
           },
         }),
@@ -65,32 +146,104 @@ export default {
       ...Array.from({ length: 10 }, (_, i) => i + 1).map((n) =>
         el("button.tiny", {
           text: String(n),
-          onclick: () => {
-            rpe = n;
-            for (const b of rpeRow.children) b.classList.toggle("on", b.textContent === String(n));
-            anchor.textContent = RPE_ANCHOR[n];
-          },
+          class: n === rpe ? "on" : "",
+          onclick: () => pickRpe(n),
         }),
       ),
     );
 
-    const log = el("button.primary", {
-      text: "log session",
-      onclick: async () => {
-        const mins = Number.parseInt(minutes.value, 10);
-        if (!rpe) return void (message.textContent = "pick an RPE");
-        if (!Number.isInteger(mins) || mins < 1) return void (message.textContent = "minutes?");
-        try {
-          // `put` notifies and this panel watches the slice, so the redraw —
-          // here and on the hero — happens once, from one place.
-          put("health", await api.post("/api/session", {
-            kind, rpe, minutes: mins, note: note.value.trim() || null,
-          }));
-        } catch (error) {
-          message.textContent = `failed: ${error.message}`;
-        }
-      },
+    /** Paint a kind choice, from a click or from its letter. */
+    function pickKind(k) {
+      kind = k;
+      for (const b of kindRow.children) b.classList.toggle("on", b.textContent === k);
+    }
+
+    function pickRpe(n) {
+      rpe = n;
+      for (const b of rpeRow.children) b.classList.toggle("on", b.textContent === String(n));
+      anchor.textContent = RPE_ANCHOR[n];
+    }
+
+    async function log() {
+      const mins = Number.parseInt(minutes.value, 10);
+      if (!rpe) return void (message.textContent = "pick an RPE");
+      if (!Number.isInteger(mins) || mins < 1) return void (message.textContent = "minutes?");
+      try {
+        // `put` notifies and this panel watches the slice, so the redraw —
+        // here and on the hero — happens once, from one place.
+        put("health", await api.post("/api/session", {
+          kind, rpe, minutes: mins, note: note.value.trim() || null,
+        }));
+        // A logged session is finished with: the next one is a fresh form
+        // rather than the last one's numbers waiting to be logged twice.
+        rpe = 0;
+        stage = null;
+        endCapture(OWNER);
+      } catch (error) {
+        message.textContent = `failed: ${error.message}`;
+      }
+    }
+
+    const keyHint = el("span.faint", {
+      text: stage === null ? "⏎ to log one" : "letter · digit · ⏎",
     });
+
+    /** Highlight whichever field the keyboard is on. */
+    function paintStage() {
+      kindRow.classList.toggle("on-row", stage === "kind");
+      rpeRow.classList.toggle("on-row", stage === "rpe");
+      keyHint.textContent = stage === null ? "⏎ to log one" : "letter · digit · ⏎";
+    }
+
+    /** Esc, a tab switch, or a key the form does not use. Also the ordinary
+     *  hand-off to the minutes box — the caret is a better cursor than a
+     *  highlighted row, so there is nothing left to show. */
+    function onEnd() {
+      stage = null;
+      paintStage();
+    }
+
+    /** Move the keyboard to the RPE row. */
+    function toRpe() {
+      stage = "rpe";
+      paintStage();
+      captureLabel(label());
+    }
+
+    /** Off the buttons and into the boxes — the caret takes over from here. */
+    function toMinutes() {
+      stage = null;
+      paintStage();
+      endCapture(OWNER);
+      minutes.focus();
+      minutes.select();
+    }
+
+    function onKey(e) {
+      if (stage === "kind" && BY_KEY.has(e.key)) {
+        pickKind(BY_KEY.get(e.key));
+        toRpe();
+        return true;
+      }
+      // Digits answer the RPE from either stage — landing on the panel and
+      // typing `7` means the same thing whether or not you changed the kind,
+      // and boxing is the default because it is most of them.
+      if (/^[0-9]$/.test(e.key)) {
+        pickRpe(e.key === "0" ? 10 : Number(e.key));
+        toMinutes();
+        return true;
+      }
+      if (e.key === "Enter") {
+        if (stage === "kind") toRpe();
+        else if (rpe) toMinutes();
+        return true;
+      }
+      return false;
+    }
+
+    handlers = { onKey, paintStage, onEnd };
+
+    const logButton = el("button.primary", { text: "log session", onclick: log });
 
     const today = store.state.health.sessions_today;
     const logged = today.length
@@ -121,17 +274,32 @@ export default {
         )
       : el("div.faint.divider", { text: "nothing logged today" });
 
+    // Every box gets its name above it, in the same small type, so the column
+    // reads as four labelled fields rather than three and a stray unit. The
+    // unit lives in the minutes placeholder, where it is a hint about what to
+    // type rather than a word sitting beside the box afterwards.
     mount(node,
+      el("div.row.spread.gap", null,
+        el("span.faint", { text: "type" }),
+        keyHint,
+      ),
       kindRow,
       el("div.row.spread.gap", null,
         el("span.faint", { text: "RPE" }),
         anchor,
       ),
       rpeRow,
-      el("div.row", null, minutes, el("span.faint", { text: "min" })),
+      el("span.faint", { text: "time" }),
+      el("div.row", null, minutes),
+      el("span.faint", { text: "notes" }),
       el("div.row", null, note),
-      el("div.row", null, log, message),
+      el("div.row", null, logButton, message),
       logged,
     );
+
+    // Re-taken after a redraw, because the handlers above close over nodes
+    // this render has just replaced.
+    if (stage === null) paintStage();
+    else take();
   },
 };

@@ -660,7 +660,12 @@ kbd { font: inherit; font-size: var(--t-meta); border: 1px solid var(--border); 
 /* ---- charts ---- */
 .chart-block { margin: var(--s2) 0 var(--s1); }
 .chart-title { font-size: var(--t-meta); color: var(--dim); display: flex; justify-content: space-between; }
-.line-chart { width: 100%; max-height: 80px; }
+/* `display: block` is load-bearing, not tidiness: an inline SVG is a
+   non-replaced inline box, and ResizeObserver silently declines to observe
+   those — no callback, ever, not even the initial one. `charts.js` fits its
+   coordinate space to this element's measured width, so left inline the chart
+   would sit at its fallback 300px forever on a 547px card. */
+.line-chart { display: block; width: 100%; max-height: 80px; }
 svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(--faint); }
 /* Two charts side by side on the training hero, stacking under ~560px —
    they answer different questions and are never compared to each other. */
@@ -687,6 +692,25 @@ svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(-
 .scale > button.on { border-color: var(--accent-dim); color: var(--accent); background: var(--panel2); }
 .scale-row { margin-bottom: var(--s1); }
 .scale-row > .row { margin: 0; }
+
+/* The row the keyboard is on while a panel is filling itself in — the ladder
+   cursor. Cyan and a left bar rather than the item ring: this is a cursor
+   *inside* a card, and boxing the whole row in an outline read as a second
+   focused panel sitting inside the focused one.
+
+   The negative margin cancels the padding, so the labels stay on the same
+   left edge whether or not the row is current — a cursor that shifts the text
+   it lands on is a cursor you notice for the wrong reason. */
+.scale-row.on-row, .scale.on-row {
+  border-left: 2px solid var(--accent);
+  padding-left: var(--s2);
+  margin-left: calc(-1 * var(--s2) - 2px);
+}
+
+/* The letter that picks a session kind, printed on the button — same argument
+   as the digit on a tab: a shortcut you have to look up is one you never
+   learn. */
+button.tiny.keyed::before { content: attr(data-key) " "; color: var(--accent-dim); }
 
 /* ---- wordle / pokedoku trophy grids ---- */
 .wgrid { display: inline-grid; grid-template-columns: repeat(5, 16px); gap: 2px; margin: var(--s1) var(--s2) var(--s1) 0; vertical-align: top; }

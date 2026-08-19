@@ -22,13 +22,18 @@
 //
 // Shift is not in that list either, because Shift-Tab is a binding.
 
+import { capturing, endCapture, takeKey } from "./capture.js";
 import { chipTasks, openNextUnfinished, required, score } from "./chips.js";
 import { $, el } from "./dom.js";
 import * as nav from "./nav.js";
+import { panelEnter } from "./panel.js";
 import { TABS, activateNth, cycle } from "./tabs.js";
 import { openModal, toast } from "./ui.js";
 
 const EDITABLE = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+
+/** Keys that are only ever held, never pressed at something. */
+const MODIFIERS = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock", "Dead"]);
 
 function isTyping(target) {
   return Boolean(target) && (EDITABLE.has(target.tagName) || target.isContentEditable);
@@ -81,9 +86,25 @@ const BINDINGS = [
   },
   {
     keys: ["enter"],
-    hint: "press the panel's only button, or step inside it · shift-enter always steps inside",
+    hint: "fill this panel in from the keyboard, press its only button, or step "
+      + "inside it · shift-enter always steps inside",
     match: (e) => e.key === "Enter",
-    run: (e) => nav.enter({ descend: e.shiftKey }),
+    run: (e) => {
+      // The panel first, and only unshifted: Shift-Enter stays the way into
+      // item mode on a card that has taken Enter for something of its own.
+      if (!e.shiftKey && panelEnter()) return;
+      nav.enter({ descend: e.shiftKey });
+    },
+  },
+  {
+    keys: ["1", "…", "5"],
+    hint: "on the check-in and the session log: answer the highlighted row and "
+      + "drop to the next one · esc gives the digits back to the tabs",
+    // Dispatched by the capture layer, ahead of the table. Listed here because
+    // the sheet is the map, and a mode whose keys are undocumented is one you
+    // will not use twice.
+    match: () => false,
+    run: () => {},
   },
   {
     keys: ["i"],
@@ -191,6 +212,9 @@ export function initKeys() {
       // The blur is what makes it a *move* and not a move-while-still-typing:
       // nav returns to panel mode on the card it lands on.
       if (isTyping(e.target)) e.target.blur();
+      // Leaving the card is leaving its keyboard: a capture that survived the
+      // move would eat digits meant for the panel you just arrived at.
+      endCapture();
       e.preventDefault();
       nav.move(key, { toPanels: true });
       return;
@@ -200,7 +224,10 @@ export function initKeys() {
     // text box, and ui.js owns it while a modal is up.
     if (e.key === "Escape") {
       if (modalOpen()) return;
-      nav.escape();
+      // One press, one layer, outermost first — the capture, then the mode.
+      // Esc out of the ladder should leave the ring on the card you were
+      // filling in, which is what makes it safe to press when unsure.
+      if (!endCapture()) nav.escape();
       e.preventDefault();
       return;
     }
@@ -212,6 +239,25 @@ export function initKeys() {
     if (isTyping(e.target)) {
       if (e.key === "Tab" && nav.cycleField(e.shiftKey ? -1 : 1)) e.preventDefault();
       return;
+    }
+
+    // A panel filling itself in gets the keys before the table does — that is
+    // what buys the digits back from the tab switches for as long as the ladder
+    // is up.
+    //
+    // A key it declines both ends the capture and then does its normal job, so
+    // there is one rule to hold: the ladder owns the keys it uses, and anything
+    // else drops you out of it. Without that, `h` moved the focus ring to the
+    // next card while the digits still belonged to the card you had left.
+    if (capturing()) {
+      if (takeKey(e)) {
+        e.preventDefault();
+        return;
+      }
+      // A bare modifier is not a key you pressed at anything — holding Shift
+      // to type `?` fires its own keydown first, and ending on that would make
+      // every shifted key look like two.
+      if (!MODIFIERS.has(e.key)) endCapture();
     }
 
     // The hint layer eats the next key whatever it is — that is what buys it

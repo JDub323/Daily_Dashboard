@@ -28,7 +28,7 @@ If the page says **"didn't send any data"**, something else already owns the por
 PY=~/.local/share/daily-dashboard/venv/bin; $PY/python -m pytest && npm test && $PY/ruff check . && $PY/ruff format --check .
 ```
 
-392 Python tests and 33 JavaScript ones; none touch the network, the API, `dashboard.db`, or `state.json`. The JS runner is node's built-in `node --test`, so there is nothing to `npm install`.
+860 Python tests and 91 JavaScript ones; none touch the network, the API, `dashboard.db`, or `state.json`. The JS runner is node's built-in `node --test`, so there is nothing to `npm install`.
 
 The suite is weighted toward the code that was hardest to check by hand: the elo curve, the hint penalty, the theorem draw, streaks, the LaTeX-in-JSON repair, the cache's exception policy and staleness flag, the day-rollover guards, the double-submit guards, and the `state.json` importer's PROVENANCE/PRESERVE rules.
 
@@ -65,6 +65,7 @@ web/                  the front end — native ES modules, no build step
     chips.js    what counts as a day — the completion write and the `n` order
     tabs.js     the six sections, and which pane a panel mounts into
     nav.js      the focus ring — what h/j/k/l actually move
+    capture.js  a panel borrowing the keyboard while you fill it in
     keys.js     the bindings, as data; the cheatsheet is generated from them
     panels/     one file per panel
     modals/     theorems, math, tricks, day logs (the archives) + trickset
@@ -95,6 +96,17 @@ after `Enter` descends into a panel, between the links and controls inside it.
 first/last panel, `n` opens the next unfinished task, `?` lists the lot. The
 bindings are data in `keys.js`; the cheatsheet is generated from the same list
 that dispatches them.
+
+A panel can also **take the keyboard** while you fill it in (`capture.js`),
+which is how the two health forms are logged without the mouse. On the
+check-in, `Enter` puts the caret in the weight box and `Enter` again commits it
+and starts the questionnaire, where `1`–`5` answers the highlighted row and
+drops to the next one (`j`/`k` to move without answering). On the session log,
+`Enter` starts it, a letter picks the kind (`t` is strength — sparring took
+`s`), a digit picks the RPE (`0` is 10) and lands the caret in the minutes box,
+`Enter` goes to the note and `Enter` there logs it. While a capture is up the
+digits belong to the panel; `Esc` — or any key the panel does not use — gives
+them back to the tabs.
 
 ## Key mechanics
 

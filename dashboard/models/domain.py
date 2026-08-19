@@ -689,6 +689,12 @@ class Readiness(Base):
     the ceiling, and it is deliberately never compared against an absolute
     threshold: what a 17 means is entirely a question of what your own 17s have
     meant lately.
+
+    What the *panel* shows is no longer this: fatigue, soreness and stress are
+    presented counting up in the thing they name, because "5 fatigue = fresh"
+    is a scale you have to translate before you can answer it. The flip happens
+    in `web/app/panels/checkin.js` and nowhere else, so this column keeps one
+    meaning across every row ever written and every mean taken over them.
     """
 
     date: dt.date

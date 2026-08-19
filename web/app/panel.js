@@ -1,7 +1,7 @@
 // The panel harness: mount, render, and turn a thrown error into a retry.
 
 import { el, mount } from "./dom.js";
-import { focusPanelNode, repaint } from "./nav.js";
+import { focusPanelNode, focusedPanel, repaint } from "./nav.js";
 import { activate, slotNode } from "./tabs.js";
 
 const registry = new Map();
@@ -166,6 +166,26 @@ export function focusPanel(id) {
   def.card.scrollIntoView({ behavior: "smooth", block: "center" });
   def.card.classList.add("flash");
   setTimeout(() => def.card.classList.remove("flash"), 1200);
+}
+
+/**
+ * Let the focused panel own Enter.
+ *
+ * A panel may export `onEnter()`, returning true if it took the key. That is
+ * how the two logging panels start their number ladder: on a card of
+ * twenty-five tiny buttons, `nav.enter` can only descend into item mode and
+ * walk them one at a time, which is the ceremony the ladder exists to remove.
+ *
+ * Here rather than in nav.js because nav addresses panels by element id and
+ * has never known the registry existed — this file is where the two meet.
+ */
+export function panelEnter() {
+  const cardId = focusedPanel();
+  if (!cardId) return false;
+  for (const def of registry.values()) {
+    if (def.card?.id === cardId) return Boolean(def.onEnter?.());
+  }
+  return false;
 }
 
 export function markDone(id, done) {

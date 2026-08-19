@@ -89,14 +89,45 @@ export function repaint() {
   const list = items();
   if (itemIndex >= list.length) itemIndex = list.length - 1;
   list[itemIndex]?.classList.add("nav-item");
-  $("#st-mode").textContent = "items";
+  paintMode();
+}
+
+/**
+ * What the mode segment says, when something has borrowed the keyboard.
+ *
+ * Held here rather than written straight to the DOM by the borrower, because
+ * the borrower is not the only thing that paints it. Blurring a text box to
+ * start the check-in ladder queues a deferred `setMode("panels")` — see the
+ * focusout listener — which would land a moment later and quietly overwrite
+ * the label with "panels" while the ladder was still up.
+ */
+let borrowed = null;
+
+function paintMode() {
+  $("#st-mode").textContent = borrowed ?? mode;
 }
 
 function setMode(next) {
   mode = next;
-  $("#st-mode").textContent = next;
+  paintMode();
   repaint();
 }
+
+/**
+ * Borrow the mode segment. `showMode()` with no argument gives it back.
+ *
+ * The mode itself is untouched either way: a capture is something happening
+ * *inside* panel mode, and Esc out of one should leave the ring exactly where
+ * it was.
+ */
+export function showMode(text = null) {
+  borrowed = text;
+  paintMode();
+}
+
+/** The focused panel's element id, or null. `panel.js` maps it to a
+ *  definition — nav itself knows nothing about the registry. */
+export const focusedPanel = () => panelId;
 
 function show(node) {
   node?.scrollIntoView({ block: "nearest", behavior: "smooth" });
