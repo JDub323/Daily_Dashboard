@@ -42,36 +42,65 @@ describe("completionWrite", () => {
   it("addresses the write to the day the counts were read off, not to today", () => {
     // The bug, stated as a test: the state is yesterday's, so the row is
     // yesterday's, even though the clock now says otherwise.
-    const write = completionWrite(state(YESTERDAY), 8, 8);
-    assert.deepEqual(write, { date: YESTERDAY, done: 8, total: 8 });
+    const write = completionWrite(state(YESTERDAY), 4, 4, 0);
+    assert.deepEqual(write, { date: YESTERDAY, done: 4, total: 4, bonus: 0 });
     assert.notEqual(write.date, today());
   });
 
   it("returns null when the stored row already matches", () => {
     // The old client recomputed a float pct and compared it against a stored
     // float, which differed often enough to fire a write on every page load.
-    const current = state(YESTERDAY, [{ date: YESTERDAY, done: 3, total: 8 }]);
-    assert.equal(completionWrite(current, 3, 8), null);
+    const current = state(YESTERDAY, [{ date: YESTERDAY, done: 3, total: 4, bonus: 2 }]);
+    assert.equal(completionWrite(current, 3, 4, 2), null);
   });
 
   it("writes when the count changed", () => {
-    const current = state(YESTERDAY, [{ date: YESTERDAY, done: 3, total: 8 }]);
-    assert.deepEqual(completionWrite(current, 4, 8), { date: YESTERDAY, done: 4, total: 8 });
+    const current = state(YESTERDAY, [{ date: YESTERDAY, done: 3, total: 4, bonus: 0 }]);
+    assert.deepEqual(
+      completionWrite(current, 4, 4, 0),
+      { date: YESTERDAY, done: 4, total: 4, bonus: 0 },
+    );
   });
 
   it("writes when the total changed but the done count did not", () => {
     // A chip added or removed changes what "perfect" means for the day, so
     // comparing `done` alone would leave a stale total behind.
-    const current = state(YESTERDAY, [{ date: YESTERDAY, done: 8, total: 8 }]);
-    assert.deepEqual(completionWrite(current, 8, 9), { date: YESTERDAY, done: 8, total: 9 });
+    const current = state(YESTERDAY, [{ date: YESTERDAY, done: 4, total: 4, bonus: 0 }]);
+    assert.deepEqual(
+      completionWrite(current, 4, 5, 0),
+      { date: YESTERDAY, done: 4, total: 5, bonus: 0 },
+    );
+  });
+
+  it("writes when only the points moved", () => {
+    // The ordinary case for the optional layer: the required four are already
+    // in, and every extra after that changes nothing but the bonus. Comparing
+    // done/total alone would drop those writes on the floor and the day would
+    // be recorded as having earned whatever it had banked by 4/4.
+    const current = state(YESTERDAY, [{ date: YESTERDAY, done: 4, total: 4, bonus: 3 }]);
+    assert.deepEqual(
+      completionWrite(current, 4, 4, 5),
+      { date: YESTERDAY, done: 4, total: 4, bonus: 5 },
+    );
+  });
+
+  it("treats a row from before the split as having earned nothing", () => {
+    // Rows written before `bonus` existed come back without the field. Reading
+    // that as undefined would make the comparison false forever and the client
+    // would POST on every store change for the rest of that day.
+    const current = state(YESTERDAY, [{ date: YESTERDAY, done: 4, total: 4 }]);
+    assert.equal(completionWrite(current, 4, 4, 0), null);
   });
 
   it("ignores rows for other days", () => {
     // The completion list is the whole history, not just today.
     const current = state(YESTERDAY, [
-      { date: "2026-07-30", done: 8, total: 8 },
-      { date: today(), done: 8, total: 8 },
+      { date: "2026-07-30", done: 4, total: 4, bonus: 0 },
+      { date: today(), done: 4, total: 4, bonus: 0 },
     ]);
-    assert.deepEqual(completionWrite(current, 8, 8), { date: YESTERDAY, done: 8, total: 8 });
+    assert.deepEqual(
+      completionWrite(current, 4, 4, 2),
+      { date: YESTERDAY, done: 4, total: 4, bonus: 2 },
+    );
   });
 });

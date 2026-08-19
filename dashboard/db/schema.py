@@ -1177,6 +1177,28 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX training_session_date ON training_session (date);
         """,
     ),
+    (
+        18,
+        """
+        -- The day splits into two layers: a required core the ring counts, and
+        -- everything else, which now pays points instead of being owed.
+        --
+        -- `bonus` is stored rather than derived because the points come from
+        -- *today's* chips. A month from now the client may weigh the optional
+        -- half differently, or not offer half of it, and what a given day
+        -- actually earned would be unrecoverable -- the same reason `done` and
+        -- `total` sit in the row instead of being recomputed from the panels.
+        --
+        -- Defaulted to 0, which reads every pre-existing row as "core only".
+        -- That is not a lie about those days: they were counted under a
+        -- denominator that already included the optional work.
+        --
+        -- No upper CHECK. `total` bounds the required half; the optional half
+        -- has no ceiling worth freezing into the schema.
+        ALTER TABLE day_completion ADD COLUMN bonus INTEGER NOT NULL DEFAULT 0
+            CHECK (bonus >= 0);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

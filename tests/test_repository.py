@@ -497,6 +497,26 @@ def test_perfect_days_are_only_the_complete_ones(repo):
     assert repo.perfect_days() == [TODAY]
 
 
+def test_points_from_the_optional_half_round_trip(repo):
+    row = repo.set_completion(TODAY, 4, 4, 6)
+    assert row.bonus == 6
+    assert repo.completions()[0].bonus == 6
+
+
+def test_points_default_to_zero_for_callers_that_have_none(repo):
+    """The importer reads state.json, which predates the split entirely."""
+    assert repo.set_completion(TODAY, 4, 4).bonus == 0
+
+
+def test_points_are_no_part_of_a_perfect_day(repo):
+    """The whole point of the split: the streak is counted off the required
+    four, and a pile of optional work neither earns a perfect day nor spoils
+    one."""
+    repo.set_completion(TODAY, 4, 4, 0)
+    repo.set_completion(TODAY - dt.timedelta(days=1), 3, 4, 11)
+    assert repo.perfect_days() == [TODAY]
+
+
 # --- the speed bonus, end to end -------------------------------------------
 
 PARS = {"putnam-early": 40}

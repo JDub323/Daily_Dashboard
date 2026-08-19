@@ -22,7 +22,7 @@
 //
 // Shift is not in that list either, because Shift-Tab is a binding.
 
-import { chipTasks, openNextUnfinished, required } from "./chips.js";
+import { chipTasks, openNextUnfinished, required, score } from "./chips.js";
 import { $, el } from "./dom.js";
 import * as nav from "./nav.js";
 import { TABS, activateNth, cycle } from "./tabs.js";
@@ -151,10 +151,13 @@ const BINDINGS = [
 const ALT_MOVE = { KeyH: "h", KeyJ: "j", KeyK: "k", KeyL: "l" };
 
 function openHelp() {
-  // The required ones, matching the statusline. Two surfaces disagreeing about
-  // how much of the day is left is worse than either number alone.
-  const tasks = required(chipTasks());
+  // The required ones, matching the statusline — both layers, in the same
+  // shape. Two surfaces disagreeing about how much of the day is left is worse
+  // than either number alone.
+  const list = chipTasks();
+  const tasks = required(list);
   const done = tasks.filter((task) => task.done).length;
+  const { earned, available } = score(list);
   openModal("keyboard", (body) => {
     body.replaceChildren(
       el("div.faint.small", {
@@ -168,7 +171,8 @@ function openHelp() {
         ]),
       ),
       el("div.faint.small.gap", {
-        text: `${done}/${tasks.length} done today · each section's digit is printed on its tab`,
+        text: `${done}/${tasks.length} required done today · +${earned} of ${available} pts `
+          + "· each section's digit is printed on its tab",
       }),
     );
   });

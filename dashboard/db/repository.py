@@ -2164,12 +2164,15 @@ class Repository:
             (_iso(date), text),
         )
 
-    def set_completion(self, date: dt.date, done: int, total: int) -> d.DayCompletion:
+    def set_completion(
+        self, date: dt.date, done: int, total: int, bonus: int = 0
+    ) -> d.DayCompletion:
         row = self.conn.execute(
-            "INSERT INTO day_completion (date, done, total) VALUES (?, ?, ?) "
-            "ON CONFLICT (date) DO UPDATE SET done = excluded.done, total = excluded.total "
+            "INSERT INTO day_completion (date, done, total, bonus) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (date) DO UPDATE SET done = excluded.done, total = excluded.total, "
+            "bonus = excluded.bonus "
             "RETURNING *",
-            (_iso(date), done, total),
+            (_iso(date), done, total, bonus),
         ).fetchone()
         return d.DayCompletion(**dict(row))
 

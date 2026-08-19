@@ -845,6 +845,37 @@ def test_completion_computes_pct_rather_than_storing_it(client):
     assert body["pct"] == pytest.approx(0.375)
 
 
+def test_completion_carries_the_points_from_the_optional_half(client):
+    body = client.post(
+        "/api/completion", json={"date": DATE, "done": 4, "total": 4, "bonus": 7}
+    ).json()
+    assert body["bonus"] == 7
+    # Points sit beside the ring rather than inside it: 4/4 is still 4/4.
+    assert body["pct"] == pytest.approx(1.0)
+
+
+def test_completion_updates_the_points_alone(client):
+    """The ordinary evening: the required four are already in, and every extra
+    after that moves nothing but the bonus."""
+    client.post("/api/completion", json={"date": DATE, "done": 4, "total": 4, "bonus": 3})
+    body = client.post(
+        "/api/completion", json={"date": DATE, "done": 4, "total": 4, "bonus": 5}
+    ).json()
+    assert body["bonus"] == 5
+
+
+def test_completion_without_points_reads_as_none(client):
+    body = client.post("/api/completion", json={"date": DATE, "done": 3, "total": 4}).json()
+    assert body["bonus"] == 0
+
+
+def test_completion_rejects_negative_points(client):
+    response = client.post(
+        "/api/completion", json={"date": DATE, "done": 4, "total": 4, "bonus": -1}
+    )
+    assert response.status_code == 422
+
+
 def test_completion_rejects_more_done_than_total(client):
     """A 422 naming the fields, not a 500 from the table's CHECK."""
     response = client.post("/api/completion", json={"date": DATE, "done": 9, "total": 8})

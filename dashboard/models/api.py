@@ -369,6 +369,11 @@ class CompletionRequest(DateBody):
     done: int = Field(ge=0)
     total: int = Field(gt=0)
 
+    bonus: int = Field(default=0, ge=0)
+    """The optional half, in points. Not part of done/total -- see
+    `DayCompletion.bonus`. Defaulted rather than required so a client that
+    predates the split still posts a valid body."""
+
     @model_validator(mode="after")
     def _done_within_total(self) -> CompletionRequest:
         """Expressed here as well as in the table's CHECK.

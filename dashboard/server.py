@@ -1540,7 +1540,7 @@ def _register(app: FastAPI) -> None:
 
     @app.post("/api/completion")
     def completion(repo: Repo, body: api.CompletionRequest) -> api.DayCompletion:
-        return repo.set_completion(body.date, body.done, body.total)
+        return repo.set_completion(body.date, body.done, body.total, body.bonus)
 
     # Anything left under /api is a client bug, and it should say so in JSON.
     # Without this the catch-all mount below swallows it and StaticFiles

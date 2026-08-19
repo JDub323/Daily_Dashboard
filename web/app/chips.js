@@ -13,6 +13,43 @@
 // when some particular tab is showing. Every pane is mounted at boot — hidden,
 // not absent — so the count is correct from whichever tab you happen to be
 // standing on when you finish something.
+//
+// --- the two layers ---------------------------------------------------------
+//
+// The list used to be eleven things you owed, and the ring was `done/11`. That
+// made every task equally load-bearing, which meant none of them were: a day
+// where the math got done and the Pokedoku did not scored the same as its
+// opposite. Worse, it made a perfect day rare enough to stop meaning anything,
+// and the streak counted off it spent most of its life at zero.
+//
+// So the day is layered now:
+//
+//   required   the math tab minus the deck — the problem, the trick, the
+//              theorem — plus the morning check-in. Four things. This is the
+//              ring, this is what `perfect ✦` means, and this is the only thing
+//              the streak is counted off. Small on purpose: a floor you can
+//              hold every day is worth more than a ceiling you reach twice a
+//              month.
+//
+//   optional   everything else, worth `points`. Still tracked, still turns its
+//              panel gold, still walked by `n` once the core is clear — what it
+//              no longer does is stand between you and a perfect day. The
+//              points are the reason to do them anyway, and they are written to
+//              `day_completion.bonus`, so a heavy day is still legible a month
+//              later rather than evaporating at midnight.
+//
+// Why those four. The three math cells are the only ones on the list that
+// compound — the problem moves an elo, and the trick and the theorem are the
+// deck that makes the next problem cheaper — so doing them on the days you do
+// not feel like it is the whole point of the app. The check-in is here for the
+// opposite reason: it is thirty seconds of typing whose value is *entirely* in
+// being unbroken, because everything derived from it is a windowed mean, and a
+// series answered four mornings a week produces baselines that drift for
+// reasons that have nothing to do with training.
+//
+// The weights are a judgement call and meant to be edited. The rule they follow
+// is minutes-and-attention, not importance: the ballot is an evening, the chess
+// puzzle and the word are a real sitting each, and a Wordle is a Wordle.
 
 import * as api from "./api.js";
 import { el, mount } from "./dom.js";
@@ -23,43 +60,12 @@ import { completionWrite, store } from "./store.js";
 function tasks() {
   const s = store.state;
   // Filtered at the end: an unconfigured debate has no chip at all, rather
-  // than a chip that can never go gold. A task nobody can finish would make a
-  // perfect day unreachable, and the streak is counted off exactly that.
+  // than a chip that can never go gold. That was about the denominator — an
+  // unfinishable required task put a perfect day out of reach — and it still
+  // is for the four that remain. For the rest it is about the points: a total
+  // whose maximum you cannot reach is a score against a moving target.
   return [
     { id: "math", label: "math problem", done: s.math.status !== "open", panel: "math" },
-    { id: "chess", label: "chess puzzle", done: s.chess.status !== "open", panel: "chess" },
-    { id: "word", label: "word of day", done: Boolean(s.word?.grade), panel: "word" },
-    {
-      // Beside the word of the day, because they are the same half of the day
-      // — one grows the vocabulary, the other stops autocorrect quietly taking
-      // the spelling of it away. Different words entirely: the bee draws from
-      // `spelling.json` and never touches what the word panel generated.
-      id: "spelling",
-      label: "spelling bee",
-      done: s.spelling.status === "done",
-      panel: "spelling",
-    },
-    // `optional` — still tracked, still gold when done, but out of the
-    // denominator. These two are the only things on the list that somebody
-    // else schedules: the puzzle exists whether or not it suits your day, and
-    // a ring that says 8/10 because the NYT published a Wordle is measuring
-    // their calendar rather than yours. The streaks and the average in the
-    // games panel are untouched — this changes what a perfect day *requires*,
-    // not what gets recorded.
-    {
-      id: "wordle",
-      label: "wordle",
-      done: Boolean(s.games.wordle_today),
-      panel: "games",
-      optional: true,
-    },
-    {
-      id: "pokedoku",
-      label: "pokedoku",
-      done: Boolean(s.games.pokedoku_today),
-      panel: "games",
-      optional: true,
-    },
     {
       // Done means the *marked set* is submitted. The challenge is optional
       // and deliberately not part of this: a chip that only went gold when you
@@ -73,43 +79,14 @@ function tasks() {
     {
       // Done means answered, not merely drawn. The boot payload never draws,
       // so an unopened day shows `today: null` — which is correctly not done.
+      //
+      // The recall, not the deck. Curating theorems is something you do when
+      // you meet one, not something the day asks for, and the `theorem deck`
+      // panel beside this one has never had a chip.
       id: "theorem",
       label: "theorem recall",
       done: s.theorems.recalled !== null,
       panel: "theorem",
-    },
-    {
-      // What "done" means changes with the day, and it has to: a chip that is
-      // unreachable on some days would make `perfect_days` (done = total)
-      // unreachable with it, and the streak it feeds is the reason the
-      // denominator has to stay honest. On a reading day the debt is the
-      // week's required articles plus the facts they produce; on a debate day
-      // it is the ballot.
-      //
-      // `unread_required` is 0 when the overnight task left no list, so a
-      // night it did not run degrades the reading day to the facts alone
-      // rather than making it impossible.
-      id: "debate",
-      label: s.debate.reading_day ? "issue reading" : "debate",
-      done: s.debate.reading_day
-        ? s.debate.unread_required === 0 && s.debate.facts_today.length >= s.debate.min_facts
-        : s.debate.session?.status === "scored",
-      panel: "debate",
-    },
-    {
-      // Same rule as the theorem chip: done means answered, not merely drawn.
-      // Hidden when the deck is empty rather than permanently red — an
-      // unfinishable task would put a perfect day out of reach.
-      id: "patterns",
-      label: "argument pattern",
-      done: s.patterns.recalled !== null,
-      panel: "patterns",
-    },
-    {
-      id: "paper",
-      label: "paper triage",
-      done: Boolean(s.papers.surfaced) && s.papers.surfaced.status !== "surfaced",
-      panel: "reading",
     },
     {
       // Weight *and* the questionnaire — the two halves are useless apart. A
@@ -117,19 +94,88 @@ function tasks() {
       // under-recovery, and readiness with no weight cannot tell either from
       // making weight badly.
       //
-      // Required, which takes the day from ten to eleven. That is the point of
-      // putting it here rather than leaving it to discipline: the derived
-      // numbers are all windowed means, and a series answered four mornings a
-      // week produces baselines that drift for reasons that have nothing to do
-      // with training. Logging the session is deliberately NOT a chip — some
-      // days there is no session, and a task you cannot finish on a rest day
-      // would put a perfect day out of reach.
+      // Logging the session is deliberately NOT a chip — some days there is no
+      // session, and a task you cannot finish on a rest day would put a perfect
+      // day out of reach.
       id: "checkin",
       label: "morning check-in",
       done: weightToday(s) !== null && Boolean(s.health.readiness_today),
       panel: "checkin",
     },
-    { id: "log", label: "day log", done: Boolean(s.daylog), panel: "log" },
+
+    // --- optional: points, not obligations ---------------------------------
+    {
+      id: "chess",
+      label: "chess puzzle",
+      done: s.chess.status !== "open",
+      panel: "chess",
+      points: 2,
+    },
+    { id: "word", label: "word of day", done: Boolean(s.word?.grade), panel: "word", points: 2 },
+    {
+      // Beside the word of the day, because they are the same half of the day
+      // — one grows the vocabulary, the other stops autocorrect quietly taking
+      // the spelling of it away. Different words entirely: the bee draws from
+      // `spelling.json` and never touches what the word panel generated.
+      id: "spelling",
+      label: "spelling bee",
+      done: s.spelling.status === "done",
+      panel: "spelling",
+      points: 1,
+    },
+    {
+      // What "done" means changes with the day, and it has to: what a day is
+      // worth should not depend on which half of the week it landed in. On a
+      // reading day the debt is the week's required articles plus the facts
+      // they produce; on a debate day it is the ballot.
+      //
+      // `unread_required` is 0 when the overnight task left no list, so a
+      // night it did not run degrades the reading day to the facts alone
+      // rather than making it impossible.
+      //
+      // The heaviest thing on the list, and priced like it.
+      id: "debate",
+      label: s.debate.reading_day ? "issue reading" : "debate",
+      done: s.debate.reading_day
+        ? s.debate.unread_required === 0 && s.debate.facts_today.length >= s.debate.min_facts
+        : s.debate.session?.status === "scored",
+      panel: "debate",
+      points: 3,
+    },
+    {
+      // Same rule as the theorem chip: done means answered, not merely drawn.
+      // Hidden when the deck is empty rather than permanently red.
+      id: "patterns",
+      label: "argument pattern",
+      done: s.patterns.recalled !== null,
+      panel: "patterns",
+      points: 1,
+    },
+    {
+      id: "paper",
+      label: "paper triage",
+      done: Boolean(s.papers.surfaced) && s.papers.surfaced.status !== "surfaced",
+      panel: "reading",
+      points: 2,
+    },
+    {
+      // These two are the only things on the list somebody else schedules: the
+      // puzzle exists whether or not it suits your day. That was the argument
+      // for making them optional first, and it survives the split unchanged.
+      id: "wordle",
+      label: "wordle",
+      done: Boolean(s.games.wordle_today),
+      panel: "games",
+      points: 1,
+    },
+    {
+      id: "pokedoku",
+      label: "pokedoku",
+      done: Boolean(s.games.pokedoku_today),
+      panel: "games",
+      points: 1,
+    },
+    { id: "log", label: "day log", done: Boolean(s.daylog), panel: "log", points: 1 },
   ].filter(
     (task) =>
       (task.id !== "debate" || s.debate.enabled)
@@ -144,16 +190,33 @@ export function chipTasks() {
   return tasks();
 }
 
-/** The ones a perfect day is counted from. Optional chips are shown and
- *  tracked; they are simply not owed. */
-export const required = (list) => list.filter((task) => !task.optional);
+/**
+ * The ones a perfect day is counted from — the four with no `points`.
+ *
+ * A task is required exactly when it is worth no points, which keeps the
+ * distinction in one place: there is no second `optional` flag that can fall
+ * out of step with the weights.
+ */
+export const required = (list) => list.filter((task) => !task.points);
+
+/** The other layer. */
+export const optional = (list) => list.filter((task) => task.points);
+
+/** Points banked out of the ones on offer today. */
+export function score(list) {
+  const layer = optional(list);
+  return {
+    earned: layer.reduce((sum, task) => sum + (task.done ? task.points : 0), 0),
+    available: layer.reduce((sum, task) => sum + task.points, 0),
+  };
+}
 
 /**
  * Jump to the next thing you have not done. The ritual key, `n`.
  *
  * Required first, and optional only once nothing is owed — so `n` walks the
- * day you have to do and then offers the games, rather than parking you on
- * Wordle while the math problem is still open.
+ * four you actually owe and only then starts offering points, rather than
+ * parking you on Wordle while the math problem is still open.
  *
  * False when there is nothing left at all, so the caller can say so rather
  * than silently doing nothing — which is indistinguishable from a broken
@@ -170,21 +233,24 @@ export function openNextUnfinished() {
 
 export async function renderChips() {
   const list = tasks();
-  // The count is over the required ones only. Optional tasks are still tracked
-  // and still turn their panel gold — what they no longer do is stand between
-  // you and a perfect day. Rows already in `day_completion` keep the total they
-  // were written with, so the heatmap and the streak stay true about the days
-  // they describe.
+  // The ring counts the required four and nothing else. Rows already in
+  // `day_completion` keep the total they were written with, so the heatmap and
+  // the streak stay true about the days they describe: a day recorded as 8/11
+  // is still shown as 8/11, it is simply not the shape today is measured in.
   const counted = required(list);
   const done = counted.filter((task) => task.done).length;
-  const extra = list.filter((task) => task.optional && task.done).length;
+  const { earned, available } = score(list);
 
   mount(document.querySelector("#st-completion"),
     el("span.completion-ring", { text: `${done}/${counted.length}` }),
     done === counted.length ? " perfect ✦" : " done",
-    // Said rather than hidden: a finished optional chip should visibly count
-    // for something, or it reads as a task the ring is ignoring.
-    extra ? el("span.faint", { text: ` · +${extra}` }) : null,
+    // Said rather than hidden, and said at zero too once the core is clear: a
+    // layer you only hear about once you are already scoring is one you forget
+    // exists. `of N` is what stops the number being unreadable — +4 is a good
+    // day or a poor one depending entirely on what was on offer.
+    earned || done === counted.length
+      ? el("span.faint", { text: ` · +${earned} of ${available} pts` })
+      : null,
   );
 
   for (const id of ["math", "chess", "debate"]) {
@@ -198,7 +264,7 @@ export async function renderChips() {
   //
   // `completionWrite` also decides which *day* the write belongs to, which is
   // not necessarily today — see its comment.
-  const write = completionWrite(store.state, done, counted.length);
+  const write = completionWrite(store.state, done, counted.length, earned);
   if (!write) return;
 
   const row = await api.post("/api/completion", write);

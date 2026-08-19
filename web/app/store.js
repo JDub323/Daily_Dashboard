@@ -67,9 +67,17 @@ export function dayHasTurned() {
  * `perfect_days` (done = total) then counts that day as perfect. The streak
  * grew on its own overnight.
  */
-export function completionWrite(state, done, total) {
+export function completionWrite(state, done, total, bonus = 0) {
   const date = state.date;
   const stored = state.completion.find((row) => row.date === date);
-  if (stored && stored.done === done && stored.total === total) return null;
-  return { date, done, total };
+  // `bonus` is compared like the other two, and it has to be: it moves on days
+  // the required count does not — finishing a Wordle after a perfect 4/4 is
+  // the ordinary case — and comparing done/total alone would drop that write
+  // on the floor. Rows written before the column existed report 0, so the
+  // first optional task of such a day writes once and then settles.
+  if (stored && stored.done === done && stored.total === total
+      && (stored.bonus ?? 0) === bonus) {
+    return null;
+  }
+  return { date, done, total, bonus };
 }

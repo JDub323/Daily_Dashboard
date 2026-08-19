@@ -32,7 +32,14 @@ const MAX_WEEKS = 53;
 /** Local midnight for an ISO date, via noon — see the piano panel's day index. */
 const at = (iso) => new Date(`${iso}T12:00:00`);
 
-/** Five buckets: nothing, then four shades of how much of the day got done. */
+/**
+ * Five buckets: nothing, then four shades of how much of the day got done.
+ *
+ * The required half only. Points deliberately do not lift a square: the grid
+ * answers "did you keep this up", and a day that skipped the math problem and
+ * banked six points elsewhere is not a day you kept it up. The points are in
+ * the tooltip, and their run is the line under the streak.
+ */
 function level(row) {
   if (!row || !row.done) return 0;
   const pct = row.done / row.total;
@@ -40,6 +47,13 @@ function level(row) {
   if (pct >= 0.7) return 3;
   if (pct >= 0.4) return 2;
   return 1;
+}
+
+/** `2026-08-18 — 4/4 done · +6 pts`. */
+function cellTitle(iso, row) {
+  if (!row) return `${iso} — nothing recorded`;
+  const core = `${iso} — ${row.done}/${row.total} done`;
+  return row.bonus ? `${core} · +${row.bonus} pts` : core;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -97,13 +111,38 @@ function heatmap() {
       }
       const iso = api.localISO(day);
       const row = byDate.get(iso);
-      cells.push(el(`div.hm-cell.hm-${level(row)}`, {
-        title: row ? `${iso} — ${row.done}/${row.total} done` : `${iso} — nothing recorded`,
-      }));
+      cells.push(el(`div.hm-cell.hm-${level(row)}`, { title: cellTitle(iso, row) }));
     }
   }
 
   return { cells, labels, weeks, rows };
+}
+
+/**
+ * `+14 pts this week · 302 all time` — the optional layer's own scoreboard.
+ *
+ * A week rather than a day, because that is the window the points are actually
+ * for. The statusline already says what today is worth and resets at midnight;
+ * what it cannot tell you is whether the extras are still happening at all,
+ * which is a question about a run of days.
+ *
+ * `?? 0` throughout: rows written before the split have no `bonus`, and a
+ * NaN here would take the whole hero down over an arithmetic detail.
+ */
+function pointsLine(rows, today) {
+  const total = rows.reduce((sum, row) => sum + (row.bonus ?? 0), 0);
+  if (!total) return null;
+  const since = new Date(today);
+  since.setDate(since.getDate() - 6);
+  const week = rows
+    .filter((row) => at(row.date) >= since)
+    .reduce((sum, row) => sum + (row.bonus ?? 0), 0);
+  return el("div.faint.small", {
+    text: `+${week} pts this week · ${total} all time`,
+    title: "points come from the optional half of the day — the games, the "
+      + "word, the ballot, the paper. The ring above counts only the four "
+      + "required ones.",
+  });
 }
 
 // --- spend ------------------------------------------------------------------
@@ -214,6 +253,7 @@ export const activity = {
           el("div.faint.small", {
             text: `${rows.length} day${rows.length === 1 ? "" : "s"} recorded · ${perfect} perfect`,
           }),
+          pointsLine(rows, at(api.today())),
         ),
         spendSlot,
       ),
@@ -227,7 +267,7 @@ export const activity = {
       el("div.row.gap", null,
         el("span.faint.small", { text: "less" }),
         ...[0, 1, 2, 3, 4].map((n) => el(`div.hm-cell.hm-${n}`)),
-        el("span.faint.small", { text: "more · full square = every task done" }),
+        el("span.faint.small", { text: "more · full square = the required four" }),
       ),
     );
 

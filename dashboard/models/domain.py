@@ -742,6 +742,16 @@ class DayCompletion(Base):
     done: int = Field(ge=0)
     total: int = Field(gt=0)
 
+    bonus: int = Field(default=0, ge=0)
+    """Points from the optional half of the day.
+
+    Deliberately outside `done`/`total`: the required core is what a perfect
+    day is counted off, and folding the optional work back into the
+    denominator is exactly what made a perfect day depend on whether the NYT
+    published a Wordle. Defaulted so rows written before the split -- and the
+    importer, which has no notion of points -- read as core only.
+    """
+
     @computed_field
     @property
     def pct(self) -> float:
