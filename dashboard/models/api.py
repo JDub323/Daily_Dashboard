@@ -57,6 +57,7 @@ from .domain import (
     Readiness,
     SpellingWord,
     TheoremCard,
+    TodoItem,
     TopicInfo,
     TrainingSession,
     Trick,
@@ -1483,6 +1484,13 @@ class CalendarGuess(Base):
     score: float
 
 
+class AliasHit(Base):
+    """One alias that fired on a line, and what it stood for."""
+
+    key: str
+    name: str
+
+
 class ResolvedEvent(Base):
     """What one line of typing was understood to mean, before anything is written.
 
@@ -1499,9 +1507,17 @@ class ResolvedEvent(Base):
     end: str | None = None
 
     calendar: str
-    source: str = Field(pattern=r"^(rule|model|correction|fallback)$")
+    source: str = Field(pattern=r"^(rule|model|correction|fallback|subject|default|chosen)$")
     """Which stage decided. Shown in the preview, because "why did it pick
-    that" is the first question a wrong guess raises."""
+    that" is the first question a wrong guess raises.
+
+    The last three are the todo layer's and are not interchangeable with
+    `fallback`, which means "the model had nothing useful to say". `default` is
+    the opposite of that -- a confident prior, not a shrug -- and labelling it
+    "no guess" in the preview would misreport the one decision the box makes
+    most often. `calendar_correction.source` is still the original closed set;
+    the mapping between them lives in `server._CORRECTION_SOURCE`.
+    """
 
     ranked: list[CalendarGuess] = Field(default_factory=list)
     """Every writable calendar, best first. The UI cycles this with Tab, so the
@@ -1510,6 +1526,95 @@ class ResolvedEvent(Base):
     warning: str | None = None
     """Set when the text parsed but something about it is worth saying -- no
     time found, an end before its start, a date read as next week."""
+
+    # -- the todo half ------------------------------------------------------
+    #
+    # The box writes two kinds of thing and the fields below are how it says
+    # which. There is no mode switch and no sigil: the target calendar decides,
+    # because the picker that chooses it was already on screen and already
+    # says where the thing is going. See `[todo].todo_calendars`.
+
+    raw: str = ""
+    """The line as typed, before aliases were expanded. The box puts this back
+    when a line fails, so a rejected paste is edited rather than retyped."""
+
+    aliases: list[AliasHit] = Field(default_factory=list)
+    """Which aliases fired, in the order they appear. Drives the indicator on
+    the box -- the whole point of which is that a *forgotten* alias, or one
+    misspelled, looks different from one that worked, before Enter."""
+
+    is_todo: bool = False
+    """Whether this becomes a tracked item as well as an event."""
+
+    recurrence: str | None = None
+    """Human-readable, e.g. "every week × 12". Null for a one-off."""
+
+    dates: list[dt.date] = Field(default_factory=list)
+    """Every day this line writes to. One entry unless it repeats."""
+
+    error: str | None = None
+    """Why this line cannot be written at all. A `warning` still commits; this
+    does not. The one that matters is a line with no day in it -- see
+    `todo.resolve`, which refuses rather than defaulting to today."""
+
+
+class CalendarPreview(Base):
+    """Every line in the box, read. Writes nothing."""
+
+    lines: list[ResolvedEvent] = Field(default_factory=list)
+    calendars: list[str] = Field(default_factory=list)
+    """Writable calendars, best first -- the picker's contents."""
+
+
+class CalendarWrite(Base):
+    """What one commit did.
+
+    Split rather than aggregated, because the box does different things with
+    the halves: what was written disappears, and what failed stays behind with
+    its error attached. Committing the good lines and keeping the bad ones is
+    the only behaviour that makes a forty-line paste with one typo in it worth
+    pasting -- all-or-nothing punishes the other thirty-nine.
+    """
+
+    written: list[ResolvedEvent] = Field(default_factory=list)
+    failed: list[ResolvedEvent] = Field(default_factory=list)
+    events: int = 0
+    """Google events created. More than `len(written)` when something repeats."""
+
+
+class TodoAlias(Base):
+    key: str
+    name: str
+    calendar: str | None = None
+
+
+class TodoPanel(Base):
+    items: list[TodoItem] = Field(default_factory=list)
+    aliases: list[TodoAlias] = Field(default_factory=list)
+    """The legend behind the `?`. Sent with the panel rather than fetched on
+    demand -- it is five lines of text and one fewer round trip."""
+
+    default_calendar: str = "Homework"
+    todo_calendars: list[str] = Field(default_factory=list)
+
+
+class TodoWriteRequest(Base):
+    text: str = Field(min_length=1, max_length=8000)
+    """The whole box, newline-separated. One line was the old contract; a
+    semester's reading list is the case this exists for."""
+
+    today: dt.date | None = None
+    calendar: str | None = None
+    """The picker. None means `auto` -- defer to the classifier."""
+
+
+class TodoDoneRequest(Base):
+    todo_id: int
+    done: bool = True
+
+    today: dt.date | None = None
+    """The browser's date, for the window the panel comes back with. The clock
+    belongs to the client here as it does everywhere else."""
 
 
 # --- the portfolio ---------------------------------------------------------

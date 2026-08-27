@@ -47,7 +47,10 @@ MONDAY = dt.date(2026, 8, 17)
         ("gym monday", "Gym", "2026-08-17", None, None),
         ("gym next monday", "Gym", "2026-08-24", None, None),
         ("flight home dec 20 all day", "Flight home", "2026-12-20", None, None),
-        ("pset 4 due tomorrow", "Pset 4 due", "2026-08-18", None, None),
+        # "due" and "by" are fillers once the date has been lifted out. They
+        # only ever glued the day to the thing that is due on it.
+        ("pset 4 due tomorrow", "Pset 4", "2026-08-18", None, None),
+        ("thornhill chapter 3 due by thursday", "Thornhill chapter 3", "2026-08-20", None, None),
     ],
 )
 def test_lines_that_get_typed(text, title, date, start, end):

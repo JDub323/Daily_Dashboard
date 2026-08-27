@@ -1314,6 +1314,61 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX meal_log_date ON meal_log (date);
         """,
     ),
+    (
+        21,
+        """
+        -- The todo list. One row per *occurrence*, never per repetition:
+        -- "every tuesday" writes twelve rows and twelve Google events, because
+        -- `gcalcli add` has no recurrence flag and because deleting one week's
+        -- reading has to leave the other weeks standing. `series` ties them
+        -- back together for display; it is a grouping key, not a parent row.
+        CREATE TABLE todo (
+            id          INTEGER PRIMARY KEY,
+            created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+
+            -- What was typed, before aliases were expanded. Kept so the box
+            -- can put a mistaken line back the way it was written rather than
+            -- the way it was understood.
+            raw         TEXT    NOT NULL,
+            title       TEXT    NOT NULL CHECK (length(title) BETWEEN 1 AND 300),
+            subject     TEXT,   -- the expanded alias, or NULL for a plain task
+            calendar    TEXT    NOT NULL,
+
+            due_date    TEXT    NOT NULL
+                                CHECK (due_date IS strftime('%Y-%m-%d', due_date)),
+            -- NULL together: an all-day item is the normal case and a timed
+            -- one is the exception, so the absence of a clock is the default
+            -- rather than a sentinel hour.
+            start_time  TEXT    CHECK (start_time IS NULL OR length(start_time) = 5),
+            end_time    TEXT    CHECK (end_time IS NULL OR length(end_time) = 5),
+
+            series      TEXT,   -- shared by every occurrence of one repetition
+
+            -- The handle on the Google event. `event_id` is decoded out of the
+            -- URL that `gcalcli add --details url` prints; either may be NULL
+            -- when that decode fails, and the pair being NULL is precisely the
+            -- condition under which completing an item cannot delete anything
+            -- and says so instead of guessing at a search string.
+            event_id    TEXT,
+            event_url   TEXT,
+
+            done_at     TEXT,
+            -- Whether the Google event is gone. Separate from `done_at`
+            -- because the two genuinely come apart: the item is finished the
+            -- moment it is ticked, and the delete is a network call that can
+            -- fail afterwards without un-finishing it.
+            event_deleted INTEGER NOT NULL DEFAULT 0 CHECK (event_deleted IN (0, 1)),
+
+            -- Table-level, and therefore last: SQLite allows no column
+            -- definitions after the first table constraint.
+            CHECK ((start_time IS NULL) = (end_time IS NULL))
+        ) STRICT;
+
+        CREATE INDEX todo_due ON todo (due_date);
+        CREATE INDEX todo_open ON todo (done_at, due_date);
+        CREATE INDEX todo_series ON todo (series) WHERE series IS NOT NULL;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

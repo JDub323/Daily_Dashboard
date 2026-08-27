@@ -32,6 +32,7 @@ import socket
 import subprocess
 import threading
 import time
+import uuid
 import webbrowser
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -43,7 +44,6 @@ from fastapi.staticfiles import StaticFiles
 
 from . import (
     calclass,
-    calparse,
     content,
     debate,
     feeds,
@@ -55,6 +55,7 @@ from . import (
     spelling,
     spend,
     state,
+    todo,
     tricks,
     webauthn,
 )
@@ -232,6 +233,27 @@ Today = Annotated[dt.date, Query(description="the browser's local date")]
 # pays for it, every one after is a matrix multiply.
 
 
+# What the picker sends to mean "let the classifier decide". Everything else it
+# sends is a calendar name, and `None` -- the picker's own default, labelled
+# `auto` -- means the deterministic policy in `_target`. The two are not the
+# same thing and the naming has to keep saying so: `auto` is subject, rule,
+# then Homework, and never consults the model.
+MODEL_PICK = "model"
+
+# `calendar_correction.source` is a closed set in the schema, written when the
+# only stages were the classifier's. The two the todo layer adds are both
+# fixed decisions rather than opinions, so they file as what they are: a
+# subject's own calendar is a rule, and the Homework default is a fallback.
+_CORRECTION_SOURCE = {
+    "rule": "rule",
+    "model": "model",
+    "correction": "correction",
+    "fallback": "fallback",
+    "subject": "rule",
+    "default": "fallback",
+}
+
+
 def _week_start(date: dt.date, starts_on: int) -> dt.date:
     """The Monday (or Sunday) of `date`'s week."""
     return date - dt.timedelta(days=(date.weekday() - starts_on) % 7)
@@ -326,28 +348,158 @@ def _warm_calendar_model(app: FastAPI) -> None:
         log.exception("calendar classifier warm-up failed")
 
 
-def _resolve(
-    state: Any, fetch: Feeds, repo: Repository, body: api.CalendarAddRequest
-) -> tuple[calparse.Parsed, api.ResolvedEvent]:
-    """The parse and the guess, together.
+def _target(
+    state: Any, cfg: Settings, resolved: todo.Resolved, picked: str | None
+) -> tuple[str, str]:
+    """Which calendar this line goes to, and how that was decided.
 
-    Both are returned because the write needs the `Parsed` -- `when()` and
-    `duration_minutes` are on it -- and parsing a second time inside the add
-    route would be two places that have to agree about what a line means.
+    Four stages, most specific first, and the ordering is the whole policy:
+
+      the picker      an explicit choice is never second-guessed
+      the subject     `[todo.subjects].calendar`, where one names its own
+      the rule        `calclass.RULES` -- "test", "exam", "final" mean Tests
+      the default     Homework, because a thing with a due date is homework
+
+    The learned model is deliberately *not* in that list. It sits behind the
+    picker's `auto`, and only there. On this account it is right about two
+    thirds of the time, which is a fine assistant and a poor default -- and the
+    thing it would be overruling is a prior that holds for nineteen lines in
+    twenty. Choosing `auto` asks for the guess; not choosing it should not.
     """
-    parsed = calparse.parse(body.text, body.today or dt.date.today())
-    _fit_calendar_model(state, fetch, repo)
-    prediction = state.calendar_clf.predict(parsed.title)
-    return parsed, api.ResolvedEvent(
-        title=parsed.title,
-        date=parsed.date,
-        start=parsed.start.strftime("%H:%M") if parsed.start else None,
-        end=parsed.end.strftime("%H:%M") if parsed.end else None,
-        calendar=prediction.calendar,
-        source=prediction.source,
-        ranked=[api.CalendarGuess(calendar=c, score=s) for c, s in prediction.ranked],
-        warning=parsed.warning or state.calendar_clf.unavailable,
+    if picked:
+        return picked, "chosen"
+    if resolved.parsed is None:
+        return cfg.todo.default_calendar, "fallback"
+
+    # Every configured name is checked against the account before it is used,
+    # the same way `calclass.RULES` are. A `[todo]` block naming a calendar
+    # that has since been renamed would otherwise send gcalcli a `--calendar`
+    # it cannot match, and that surfaces as a failed write rather than as the
+    # misconfiguration it is.
+    writable = set(state.calendar_clf.targets)
+
+    for hit in resolved.hits:
+        if hit.calendar and (not writable or hit.calendar in writable):
+            return hit.calendar, "subject"
+
+    prediction = state.calendar_clf.predict(resolved.parsed.title)
+    if prediction.source == "rule":
+        return prediction.calendar, "rule"
+    if not writable or cfg.todo.default_calendar in writable:
+        return cfg.todo.default_calendar, "default"
+    return prediction.calendar, prediction.source
+
+
+def _auto(state: Any, resolved: todo.Resolved, cfg: Settings) -> tuple[str, str, list]:
+    """The classifier's answer, for when the picker says `auto`."""
+    if resolved.parsed is None:
+        return cfg.todo.default_calendar, "fallback", []
+    prediction = state.calendar_clf.predict(resolved.parsed.title)
+    return (
+        prediction.calendar,
+        prediction.source,
+        [api.CalendarGuess(calendar=c, score=s) for c, s in prediction.ranked],
     )
+
+
+def _resolve_line(
+    state: Any, cfg: Settings, resolved: todo.Resolved, picked: str | None
+) -> api.ResolvedEvent:
+    """One read line -> what the box draws, and what the write will do."""
+    ranked: list[api.CalendarGuess] = []
+    if picked == MODEL_PICK:
+        calendar, source, ranked = _auto(state, resolved, cfg)
+    else:
+        calendar, source = _target(state, cfg, resolved, picked)
+
+    parsed = resolved.parsed
+    return api.ResolvedEvent(
+        title=parsed.title if parsed else resolved.raw,
+        date=parsed.date if parsed else dt.date.today(),
+        start=parsed.start.strftime("%H:%M") if parsed and parsed.start else None,
+        end=parsed.end.strftime("%H:%M") if parsed and parsed.end else None,
+        calendar=calendar,
+        source=source,
+        ranked=ranked,
+        warning=(parsed.warning if parsed else None) or state.calendar_clf.unavailable,
+        raw=resolved.raw,
+        aliases=[api.AliasHit(key=h.key, name=h.name) for h in resolved.hits],
+        is_todo=calendar in cfg.todo.todo_calendars,
+        recurrence=resolved.recurrence.label() if resolved.recurrence else None,
+        dates=resolved.dates(),
+        error=resolved.error,
+    )
+
+
+def _write_line(
+    cfg: Settings,
+    fetch: Feeds,
+    repo: Repository,
+    resolved: todo.Resolved,
+    line: api.ResolvedEvent,
+) -> int:
+    """Write one line's events, and its rows if it is work. Returns the events.
+
+    A repeating line is N independent events and N independent rows -- see the
+    `todo` table for why -- and they are written in order so that a failure
+    part-way leaves the earlier weeks standing rather than rolling back work
+    Google has already accepted. The row is written *after* its event, so a row
+    existing is the claim that the event does.
+    """
+    parsed = resolved.parsed
+    assert parsed is not None  # callers check `line.error` first
+    series = uuid.uuid4().hex[:12] if resolved.recurrence else None
+    subject = resolved.hits[0].name if resolved.hits else None
+    written = 0
+
+    for date in resolved.dates():
+        when = (
+            date.isoformat()
+            if parsed.start is None
+            else f"{date.isoformat()} {parsed.start.strftime('%H:%M')}"
+        )
+        event = fetch.add_calendar_event(
+            calendar=line.calendar,
+            title=parsed.title,
+            when=when,
+            duration=1 if parsed.all_day else parsed.duration_minutes,
+            all_day=parsed.all_day,
+        )
+        written += 1
+        if line.is_todo:
+            repo.add_todo(
+                raw=resolved.raw,
+                title=parsed.title,
+                subject=subject,
+                calendar=line.calendar,
+                due_date=date,
+                start=parsed.start,
+                end=parsed.end,
+                series=series,
+                event_id=event.event_id,
+                event_url=event.url,
+            )
+    return written
+
+
+def _read_box(
+    state: Any, cfg: Settings, fetch: Feeds, repo: Repository, body: api.TodoWriteRequest
+) -> list[tuple[todo.Resolved, api.ResolvedEvent]]:
+    """The whole box, read. Writes nothing and never raises on bad input.
+
+    A line that cannot be written comes back carrying its own `error` rather
+    than failing the request, because the request is thirty other lines that
+    are fine. The model is fitted here rather than per line -- it is only
+    consulted under `auto`, but the fit is the expensive part and it is shared.
+    """
+    lines = todo.resolve_all(
+        body.text,
+        body.today or dt.date.today(),
+        cfg.todo.subjects,
+        default_weeks=cfg.todo.recur_weeks,
+    )
+    _fit_calendar_model(state, fetch, repo)
+    return [(line, _resolve_line(state, cfg, line, body.calendar)) for line in lines]
 
 
 # --- error handling --------------------------------------------------------
@@ -802,56 +954,131 @@ def _register(app: FastAPI) -> None:
 
     @app.post("/api/calendar/preview")
     def calendar_preview(
-        request: Request, fetch: Fetch, repo: Repo, body: api.CalendarAddRequest
-    ) -> api.ResolvedEvent:
-        """What the line means. Writes nothing, on purpose.
+        request: Request, cfg: Cfg, fetch: Fetch, repo: Repo, body: api.TodoWriteRequest
+    ) -> api.CalendarPreview:
+        """What the box means. Writes nothing, on purpose.
 
         Called on every keystroke (debounced), so it must never be the thing
         that creates an event and must not depend on gcalcli being reachable --
         a failed model leaves the parse, which is the half that matters most.
+
+        It returns a line per line, errors included, because that is what makes
+        a pasted reading list reviewable *before* twelve events exist.
         """
-        return _resolve(request.app.state, fetch, repo, body)[1]
+        read = _read_box(request.app.state, cfg, fetch, repo, body)
+        try:
+            writable = [c.name for c in fetch.calendars() if c.writable]
+        except feeds.FeedError:
+            # The preview is not allowed to fail on the calendar list. Without
+            # it the picker keeps whatever it already had, which is strictly
+            # better than a box that stops previewing because gcalcli blinked.
+            writable = []
+        return api.CalendarPreview(lines=[line for _, line in read], calendars=writable)
 
     @app.post("/api/calendar/add")
     def calendar_add(
-        request: Request, fetch: Fetch, repo: Repo, body: api.CalendarAddRequest
-    ) -> api.ResolvedEvent:
-        parsed, resolved = _resolve(request.app.state, fetch, repo, body)
-        target = resolved.calendar
+        request: Request, cfg: Cfg, fetch: Fetch, repo: Repo, body: api.TodoWriteRequest
+    ) -> api.CalendarWrite:
+        """Write the lines that can be written, and hand back the ones that cannot.
 
-        if body.calendar is not None and body.calendar != resolved.calendar:
+        Partial by design. All-or-nothing on a forty-line paste means one typo
+        costs thirty-nine good lines, and the box keeps what failed with the
+        error attached, so the fix is an edit rather than a retype.
+        """
+        read = _read_box(request.app.state, cfg, fetch, repo, body)
+        if not read:
+            return api.CalendarWrite()
+
+        writable = [c.name for c in fetch.calendars() if c.writable]
+        if body.calendar and body.calendar != MODEL_PICK and body.calendar not in writable:
             # Validated against the account rather than passed through: gcalcli
             # matches `--calendar` as a *regex* against every calendar summary,
             # so an unknown string does not fail cleanly -- it either matches
             # several and is refused, or matches one nobody asked for.
-            writable = [c.name for c in fetch.calendars() if c.writable]
-            if body.calendar not in writable:
-                raise ValueError(f"{body.calendar!r} is not a writable calendar")
-            repo.record_calendar_correction(
-                text=resolved.title,
-                predicted=resolved.calendar,
-                chosen=body.calendar,
-                source=resolved.source,
-            )
-            target = body.calendar
-            # Refit now, not on the next restart: the correction exists so the
-            # same phrasing stops being wrong, and "stops being wrong later"
-            # is not what anyone means by that.
-            _fit_calendar_model(request.app.state, fetch, repo, force=True)
+            raise ValueError(f"{body.calendar!r} is not a writable calendar")
 
-        fetch.add_calendar_event(
-            calendar=target,
-            title=parsed.title,
-            when=parsed.when(),
-            duration=parsed.duration_minutes if not parsed.all_day else 1,
-            all_day=parsed.all_day,
-        )
-        log.info(
-            "calendar add %r -> %s [%s]%s",
-            parsed.title, target, resolved.source,
-            "" if target == resolved.calendar else f" (corrected from {resolved.calendar})",
-        )
-        return resolved.model_copy(update={"calendar": target})
+        written: list[api.ResolvedEvent] = []
+        failed: list[api.ResolvedEvent] = []
+        done: list[tuple[todo.Resolved, api.ResolvedEvent]] = []
+        events = 0
+
+        for resolved, line in read:
+            if line.error is not None or resolved.parsed is None:
+                failed.append(line)
+                continue
+            try:
+                events += _write_line(cfg, fetch, repo, resolved, line)
+            except (feeds.FeedError, ValueError) as e:
+                failed.append(line.model_copy(update={"error": str(e)}))
+                continue
+            written.append(line)
+            done.append((resolved, line))
+
+        # One correction per commit, not per line. Choosing `Tests` for a paste
+        # is one decision about one paste, and recording it forty times would
+        # let a single afternoon's filing outvote three years of history.
+        #
+        # Recorded against what the box *would* have done, which has to be
+        # recomputed: `line.calendar` is already the override, so comparing the
+        # two would be comparing the choice with itself.
+        if body.calendar and body.calendar != MODEL_PICK and done:
+            resolved, line = done[0]
+            predicted, source = _target(request.app.state, cfg, resolved, None)
+            if predicted != body.calendar:
+                repo.record_calendar_correction(
+                    text=line.title,
+                    predicted=predicted,
+                    chosen=body.calendar,
+                    source=_CORRECTION_SOURCE.get(source, "fallback"),
+                )
+                # Refit now, not on the next restart: the correction exists so
+                # the same phrasing stops being wrong, and "stops being wrong
+                # later" is not what anyone means by that.
+                _fit_calendar_model(request.app.state, fetch, repo, force=True)
+
+        log.info("calendar add: %d lines -> %d events, %d refused",
+                 len(written), events, len(failed))
+        return api.CalendarWrite(written=written, failed=failed, events=events)
+
+    # -- the todo list -----------------------------------------------------
+
+    @app.get("/api/todo")
+    def todo_list(cfg: Cfg, repo: Repo, date: Today) -> api.TodoPanel:
+        return state.todo_panel(cfg, repo, date)
+
+    @app.post("/api/todo/done")
+    def todo_done(cfg: Cfg, fetch: Fetch, repo: Repo, body: api.TodoDoneRequest) -> api.TodoPanel:
+        """Tick an item, and take its event off the calendar.
+
+        In that order, and the order is the point. The tick is local and
+        commits first, so it holds whether or not gcalcli answers; the delete
+        is a network call whose failure is recorded against the item rather
+        than raised, because an unreachable Google is not a reason to refuse to
+        mark homework done. An item left with its event standing shows that
+        way in the panel and can be retried.
+        """
+        item = repo.set_todo_done(body.todo_id, body.done)
+        if body.done and not item.event_deleted:
+            try:
+                fetch.delete_calendar_event(
+                    calendar=item.calendar,
+                    title=item.title,
+                    date=item.due_date,
+                    event_id=item.event_id,
+                )
+            except feeds.FeedError as e:
+                # The one case that leaves the flag alone: either gcalcli could
+                # not be reached, or the day held more than one event by that
+                # name and it refused to guess. Both mean something may still
+                # be on the calendar, which is what the panel then says.
+                log.warning("todo %d ticked; its event stayed: %s", item.id, e)
+            else:
+                # Deleted, or found to be already gone. Both are "there is
+                # nothing of this left in Google", which is the question the
+                # flag answers -- distinguishing them would only let the panel
+                # claim an event is standing when it demonstrably is not.
+                repo.mark_todo_event_deleted(item.id)
+        return state.todo_panel(cfg, repo, body.today or dt.date.today())
 
     # -- math --------------------------------------------------------------
 

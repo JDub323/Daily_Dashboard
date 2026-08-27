@@ -936,3 +936,55 @@ class TopicInfo(Base):
     topic: str
     textbook: Link
     theorems: list[Link] = Field(min_length=1, max_length=8)
+
+
+# --- the todo list ---------------------------------------------------------
+
+
+class TodoItem(Base):
+    """One dated piece of work, and the Google event that mirrors it.
+
+    A *row* is an occurrence, not a repetition -- see the `todo` table. The
+    Google event is a mirror rather than the record: it exists so the due date
+    shows up in the week grid and on a phone, while whether the thing is
+    finished is answered here, instantly and without a network call.
+    """
+
+    id: int
+    raw: str
+    """The line as typed, before aliases were expanded."""
+
+    title: str
+    subject: str | None = None
+    calendar: str
+
+    due_date: dt.date
+    start: dt.time | None = None
+    end: dt.time | None = None
+
+    series: str | None = None
+    """Shared by every occurrence of one "every tuesday"."""
+
+    event_id: str | None = None
+    event_url: str | None = None
+
+    done_at: dt.datetime | None = None
+    event_deleted: bool = False
+    """Whether the mirror has been removed from Google.
+
+    Not the same question as `done_at`, and they come apart in exactly one
+    direction: ticking an item is local and instant, deleting its event is a
+    network call that can fail afterwards. An item that is done with its event
+    still standing is a state the panel can show and retry, which is better
+    than a tick that blocks on gcalcli.
+    """
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def done(self) -> bool:
+        return self.done_at is not None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def all_day(self) -> bool:
+        return self.start is None

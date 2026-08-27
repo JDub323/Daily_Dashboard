@@ -1002,22 +1002,73 @@ button.ghost:hover:not(:disabled) { border-color: var(--border); color: var(--ac
    the panel exists to offer, and the preview line under it is the only reason
    pressing Enter is safe. */
 .cal-add { border-top: 1px solid var(--border-soft); padding-top: var(--s3); }
-input.cal-input { font-size: var(--t-body); padding: var(--s2) var(--s3); background: var(--panel); }
-input.cal-input:focus { outline: 1px solid var(--accent-dim); outline-offset: -1px; }
+textarea.cal-input {
+  font: inherit;
+  font-size: var(--t-body);
+  padding: var(--s2) var(--s3);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--fg);
+  resize: none;          /* it grows itself; a drag handle would fight that */
+  overflow-y: auto;
+  line-height: 1.5;
+}
+textarea.cal-input:focus { outline: 1px solid var(--accent-dim); outline-offset: -1px; }
+
+/* Whether an alias fired, on the box itself, as the colour of its edge.
+   Gold because gold means "this is the thing that was supposed to happen"
+   everywhere else here — and the state worth signalling is the *good* one,
+   since the failure mode is a subject you forgot to abbreviate, which looks
+   exactly like ordinary text. `bad` wins: a line that cannot be written at all
+   is a louder fact than a line that expanded nicely. */
+textarea.cal-input.has-alias { border-color: var(--gold-dim); }
+textarea.cal-input.has-alias:focus { outline-color: var(--gold-dim); }
+textarea.cal-input.bad { border-color: var(--bad); }
+textarea.cal-input.bad:focus { outline-color: var(--bad); }
 
 .cal-preview {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--s2);
+  flex-direction: column;   /* one row per typed line */
+  gap: var(--s1);
   min-height: 22px;      /* reserved, so resolving a line does not jump the page */
   margin-top: var(--s2);
   font-size: var(--t-meta);
 }
 .cal-preview:empty { visibility: hidden; }
+.cal-pv {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+/* A refused line is drawn as what you typed plus why, and nothing else —
+   there is no calendar, no date and no title to show, because it has none. */
+.cal-pv.bad .cal-pv-raw { color: var(--dim); text-decoration: line-through; opacity: .7; }
+
+/* The alias indicator. Two states, both always drawn, because the absence is
+   the half worth seeing: a misspelled subject and a forgotten one both look
+   like plain text otherwise. */
+.cal-alias {
+  font-size: var(--t-meta);
+  border-radius: var(--r-pill);
+  padding: 1px var(--s2);
+  min-width: 2.5ch;
+  text-align: center;
+}
+.cal-alias.hit { color: var(--gold-text); border: 1px solid var(--gold-dim); }
+.cal-alias.miss { color: var(--faint); border: 1px solid var(--border-soft); }
+
 .cal-pill {
   border: 1px solid var(--accent-dim);
   color: var(--accent);
+  border-radius: var(--r-pill);
+  padding: 1px var(--s2);
+}
+/* Says this line becomes something you can tick off, not just an event. */
+.cal-kind {
+  color: var(--gold-text);
+  border: 1px solid var(--gold-dim);
   border-radius: var(--r-pill);
   padding: 1px var(--s2);
 }
@@ -1026,12 +1077,42 @@ input.cal-input:focus { outline: 1px solid var(--accent-dim); outline-offset: -1
 .cal-pv-src { color: var(--faint); }
 .cal-pv-warn { color: var(--bad); opacity: .85; }
 
+/* The alias list, behind the `?`. Two columns so the abbreviations line up in
+   a scannable rail — the question is "what did I call that course", and an
+   answer you have to read left to right is a worse answer.
+
+   `cal-aliases`, not `cal-legend`: the week's colour key above already owns
+   that name, and the two are different things sitting in the same panel. */
+.cal-aliases {
+  margin-top: var(--s2);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  background: var(--panel2);
+  font-size: var(--t-meta);
+}
+.cal-aliases-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--s1) var(--s3);
+  margin: 0;
+}
+.cal-aliases-list dt { color: var(--gold-text); }
+.cal-aliases-list dd { color: var(--dim); margin: 0; }
+
+button.cal-help {
+  flex: 0 0 auto;
+  width: 2.2em;
+  border-radius: var(--r-pill);
+  font-size: var(--t-meta);
+}
+
 /* The picker sits on the same row as the box and is sized to its content — the
    input is what you type into, so it keeps the width. `auto` is the first
    option and the default; only writable calendars follow it, because a reader
    calendar cannot be written to and offering one is offering a failure. */
-.cal-add-row { display: flex; gap: var(--s2); align-items: stretch; }
-.cal-add-row > input { flex: 1; min-width: 0; }
+.cal-add-row { display: flex; gap: var(--s2); align-items: flex-start; }
+.cal-add-row > textarea { flex: 1; min-width: 0; }
 
 select.cal-picker {
   background: var(--panel);
@@ -1060,9 +1141,53 @@ select.cal-picker option { background: var(--panel2); color: var(--fg); }
    whole sentence into. It goes underneath and takes the full width instead. */
 @media (max-width: 620px) {
   .cal-add-row { flex-wrap: wrap; }
-  .cal-add-row > input { flex: 1 1 100%; }
+  .cal-add-row > textarea { flex: 1 1 100%; }
   select.cal-picker { flex: 1 1 100%; max-width: none; }
 }
+
+/* ==========================================================================
+   What is due
+   ==========================================================================
+   The week grid's other half. It groups by day rather than by subject because
+   the question this answers at 9am is "what is due today" — the subject is
+   what you typed, the day is what you have to act on. */
+
+.todo-list { display: flex; flex-direction: column; gap: var(--s3); }
+.todo-when {
+  font-size: var(--t-meta);
+  color: var(--faint);
+  text-transform: lowercase;
+  letter-spacing: .04em;
+  margin-bottom: var(--s1);
+}
+/* Overdue is one bucket with one heading, not six headings holding one item
+   each — a backlog of work rather than a backlog of dates. */
+.todo-day.overdue .todo-when { color: var(--bad); }
+
+.todo-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  padding: 2px 0;
+  cursor: pointer;
+  font-size: var(--t-body);
+}
+.todo-row input[type="checkbox"] { accent-color: var(--gold); cursor: pointer; }
+.todo-title { color: var(--fg); }
+.todo-row.done .todo-title { color: var(--faint); text-decoration: line-through; }
+.todo-subject {
+  font-size: var(--t-meta);
+  color: var(--gold-text);
+  border: 1px solid var(--gold-dim);
+  border-radius: var(--r-pill);
+  padding: 0 var(--s2);
+}
+.todo-at { font-size: var(--t-meta); color: var(--dim); font-variant-numeric: tabular-nums; }
+/* Only ever drawn after a delete that failed, so it is allowed to be loud. */
+.todo-stuck { font-size: var(--t-meta); color: var(--bad); opacity: .85; }
+
+.todo-done-box { margin-top: var(--s3); }
+.todo-done-box summary { cursor: pointer; font-size: var(--t-meta); }
 
 /* Sits with the box rather than in the header: it is about the classifier that
    fills in `auto`, which is a property of the add box, not of the week. Quiet

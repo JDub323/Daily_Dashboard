@@ -42,6 +42,7 @@ import session from "./panels/session.js";
 import spelling from "./panels/spelling.js";
 import { activity } from "./panels/stats.js";
 import theorem from "./panels/theorem.js";
+import todo from "./panels/todo.js";
 import tricks from "./panels/tricks.js";
 import word from "./panels/word.js";
 import { initSplash, onSplashDismiss, paintSplash, showSplash } from "./splash.js";
@@ -114,7 +115,10 @@ const PANELS = [
   // The week leads, and is the tab's hero: it is the only panel here that says
   // what is *about* to happen, where everything else counts something that
   // already has.
-  calendar, activity, daylog,
+  // `todo` sits directly under the week because it is the week's other half:
+  // the grid says when things happen, this says what is owed and lets it be
+  // ticked off. Both are filled from the same box.
+  calendar, todo, activity, daylog,
   // math — the problem is the hero; the trick and the deck are the two things
   // that make the next one easier.
   math, tricks, theorem, deck,

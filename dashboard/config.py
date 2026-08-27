@@ -15,6 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 import os
+import re
 import tomllib
 from functools import lru_cache
 from pathlib import Path
@@ -24,6 +25,7 @@ from pydantic import Field, field_validator, model_validator
 
 from .models.common import Base, Rating, Url
 from .models.domain import Link
+from .todo import RESERVED as _RESERVED_ALIASES
 
 DEFAULT_CONFIG_NAME = "config.toml"
 SUNDAY = 6  # datetime.date.weekday(), where Monday is 0
@@ -848,6 +850,69 @@ class CalendarSettings(Base):
         return v
 
 
+class Subject(Base):
+    """One alias, and what it stands for."""
+
+    name: str = Field(min_length=1)
+    calendar: str | None = None
+    """Where this subject's work is filed, overriding everything else.
+
+    Left unset for most subjects: the default target is already Homework, and
+    naming it on every entry would be repeating the default forty times. Set it
+    where a subject genuinely lives somewhere else.
+    """
+
+
+class TodoSettings(Base):
+    default_calendar: str = "Homework"
+    """Where a dated item goes when nothing more specific applies.
+
+    Not `[calendar].default_calendar`, which answers a different question --
+    that one is the classifier's shrug, for lines that are events. This is the
+    prior, and the prior is that a thing with a due date is homework. It is
+    right about nineteen lines in twenty, which is a better basis for a default
+    than a model's fallback.
+    """
+
+    todo_calendars: list[str] = Field(default_factory=lambda: ["Homework", "Tests"])
+    """Which calendars mean "this is work, and it can be finished".
+
+    Writing to one of these creates a tracked item with a state; writing to any
+    other calendar is an ordinary event and creates nothing. Deciding it by the
+    *target* rather than by a mode switch is what lets one box do both -- the
+    picker was already on screen and already says where the thing is going.
+    """
+
+    recur_weeks: int = Field(default=12, ge=1, le=52)
+    """How far an unbounded "every tuesday" runs. A semester is about fifteen."""
+
+    subjects: dict[str, Subject] = Field(default_factory=dict)
+
+    @field_validator("subjects")
+    @classmethod
+    def _keys_are_typeable(cls, v: dict[str, Subject]) -> dict[str, Subject]:
+        """Lower-cased, one word, and never a word the date parser wants.
+
+        The last rule is the one worth having. An alias keyed `sat` or `may`
+        expands inside a line that `calparse` is about to read for a date, and
+        the failure is silent in both directions -- either the subject eats the
+        day or the day eats the subject. Refusing at load is the only point
+        where this is cheap to notice.
+        """
+        out: dict[str, Subject] = {}
+        for key, subject in v.items():
+            folded = key.strip().lower()
+            if not folded or re.search(r"\s", folded):
+                raise ValueError(f"[todo.subjects] key {key!r} must be a single word")
+            if folded in _RESERVED_ALIASES:
+                raise ValueError(
+                    f"[todo.subjects] key {key!r} is a word the date parser reads;"
+                    " pick another abbreviation"
+                )
+            out[folded] = subject
+        return out
+
+
 class Feed(Base):
     cat: str
     url: Url
@@ -905,6 +970,7 @@ class Settings(Base):
     portfolio: PortfolioSettings = Field(default_factory=PortfolioSettings)
     garmin: GarminSettings = Field(default_factory=GarminSettings)
     calendar: CalendarSettings = Field(default_factory=CalendarSettings)
+    todo: TodoSettings = Field(default_factory=TodoSettings)
     news: NewsSettings = Field(default_factory=NewsSettings)
     arxiv: ArxivSettings
     topic_library: dict[str, TopicEntry] = Field(default_factory=dict)

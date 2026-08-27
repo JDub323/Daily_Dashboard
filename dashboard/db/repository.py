@@ -112,6 +112,19 @@ def _json(value: Any) -> str:
     return json.dumps(value, default=str)
 
 
+def _todo(row: sqlite3.Row) -> d.TodoItem:
+    """A `todo` row -> the model. The two clock columns are the only rename.
+
+    They are `start_time`/`end_time` in SQLite because `end` is a keyword there
+    and a quoted column name is a trap laid for whoever writes the next query.
+    """
+    data = dict(row)
+    data["start"] = data.pop("start_time")
+    data["end"] = data.pop("end_time")
+    data.pop("created_at", None)  # written for forensics, not for the panel
+    return d.TodoItem(**data)
+
+
 def _unpack(row: sqlite3.Row, *json_fields: str) -> dict[str, Any]:
     out = dict(row)
     for f in json_fields:
@@ -2467,6 +2480,111 @@ class Repository:
             (limit,),
         ).fetchall()
         return sum(1 for r in rows if r["predicted"] != r["chosen"]), len(rows)
+
+    # --- the todo list ----------------------------------------------------
+
+    def add_todo(
+        self,
+        *,
+        raw: str,
+        title: str,
+        subject: str | None,
+        calendar: str,
+        due_date: dt.date,
+        start: dt.time | None,
+        end: dt.time | None,
+        series: str | None,
+        event_id: str | None,
+        event_url: str | None,
+    ) -> d.TodoItem:
+        """Record one occurrence. Called after its Google event exists.
+
+        After, not before, and not in the same breath: the row is the claim
+        that the event was written, so a failed `gcalcli add` leaves no row and
+        the line goes back in the box with its error. The alternative -- a row
+        marked pending -- means a list that shows work Google has never heard
+        of, which is the failure mode this whole feature exists to avoid.
+        """
+        row = self.conn.execute(
+            "INSERT INTO todo (raw, title, subject, calendar, due_date, start_time,"
+            " end_time, series, event_id, event_url) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+            (
+                raw[:500],
+                title[:300],
+                subject,
+                calendar,
+                due_date.isoformat(),
+                start.strftime("%H:%M") if start else None,
+                end.strftime("%H:%M") if end else None,
+                series,
+                event_id,
+                event_url,
+            ),
+        ).fetchone()
+        self.conn.commit()
+        return _todo(row)
+
+    def todo(self, todo_id: int) -> d.TodoItem:
+        row = self.conn.execute("SELECT * FROM todo WHERE id = ?", (todo_id,)).fetchone()
+        if row is None:
+            raise LookupError(f"no todo {todo_id}")
+        return _todo(row)
+
+    def todos(
+        self, *, through: dt.date | None = None, include_done_since: dt.date | None = None
+    ) -> list[d.TodoItem]:
+        """Everything outstanding, plus recently finished work.
+
+        Two windows rather than one, because they are asked for different
+        reasons. Open items are unbounded backwards -- an overdue reading from
+        three weeks ago is still owed, and hiding it is how it stays owed.
+        Finished ones are bounded, because their only remaining job is to show
+        that the day had something in it.
+        """
+        clauses = ["(done_at IS NULL"]
+        params: list[Any] = []
+        if include_done_since is not None:
+            clauses.append(" OR due_date >= ?")
+            params.append(include_done_since.isoformat())
+        clauses.append(")")
+        where = "".join(clauses)
+        if through is not None:
+            where += " AND due_date <= ?"
+            params.append(through.isoformat())
+        rows = self.conn.execute(
+            f"SELECT * FROM todo WHERE {where} ORDER BY due_date, start_time IS NULL,"
+            " start_time, id",
+            params,
+        ).fetchall()
+        return [_todo(row) for row in rows]
+
+    def set_todo_done(self, todo_id: int, done: bool) -> d.TodoItem:
+        """Tick or un-tick. Touches nothing in Google -- the caller does that.
+
+        Split deliberately: the tick has to land whether or not gcalcli is
+        reachable, and a route that deletes first would make a network failure
+        into a checkbox that does not check.
+        """
+        self.conn.execute(
+            "UPDATE todo SET done_at = "
+            "CASE WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%S', 'now') ELSE NULL END "
+            "WHERE id = ?",
+            (1 if done else 0, todo_id),
+        )
+        self.conn.commit()
+        return self.todo(todo_id)
+
+    def mark_todo_event_deleted(self, todo_id: int) -> d.TodoItem:
+        self.conn.execute(
+            "UPDATE todo SET event_deleted = 1 WHERE id = ?", (todo_id,)
+        )
+        self.conn.commit()
+        return self.todo(todo_id)
+
+    def drop_todo(self, todo_id: int) -> None:
+        self.conn.execute("DELETE FROM todo WHERE id = ?", (todo_id,))
+        self.conn.commit()
 
     def is_empty(self) -> bool:
         return self.conn.execute("SELECT COUNT(*) FROM rating_event").fetchone()[0] == 0

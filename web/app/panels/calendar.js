@@ -20,6 +20,7 @@
 import * as api from "../api.js";
 import { el, mount } from "../dom.js";
 import { feedStamp, refreshAfter } from "../freshness.js";
+import { rerender } from "../panel.js";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
@@ -381,53 +382,162 @@ function legend(calendars, hues) {
 
 // --- the add box -----------------------------------------------------------
 //
-// An input, and a picker for where the event goes. Typing resolves a preview
-// server-side — the same parse and the same classifier the write will use, so
-// the line under the box is what is about to happen rather than a second
-// implementation of it that can drift. Enter commits.
+// One box, and it writes two kinds of thing. Typing resolves a preview
+// server-side — the same parse, the same aliases and the same classifier the
+// write will use, so what is drawn under the box is what is about to happen
+// rather than a second implementation of it that can drift.
 //
-// The picker's default is `auto`, meaning "whatever the classifier decided",
-// and the preview then names the calendar it landed on so `auto` is never a
-// black box. On this account's history `auto` is right about two thirds of the
-// time and has the right answer in its top two about nine tenths of the time,
-// which is exactly why the picker exists beside it rather than instead of it.
+// It is a textarea rather than an input because the case it has to be good at
+// is a semester's reading list arriving in one paste. Every line previews
+// independently, Ctrl+Enter commits the batch, and the lines that could not be
+// written stay behind with their errors while the rest disappear — one typo in
+// forty lines must not cost the other thirty-nine.
+//
+// --- todo or event ---------------------------------------------------------
+//
+// There is no mode switch and no sigil. The target calendar decides: `Homework`
+// and `Tests` mean work, which gets a row in the list below and a checkbox;
+// anything else is an ordinary event. The picker that chooses it was already
+// on screen and already says where the thing is going, so the distinction
+// costs no vocabulary at all.
+//
+// `auto` is the default and is *not* the model — it is subject, then the tests
+// rule, then Homework, because nineteen dated lines in twenty are homework and
+// a two-thirds-accurate guess is a poor way to overrule that. `learned` is the
+// model, one Tab away, for the lines that are not work.
 //
 // Choosing a calendar explicitly is also the training signal: the server
-// records it against what it would have guessed, so the same phrasing stops
-// being wrong.
+// records it against what it would otherwise have picked, so the same phrasing
+// stops being wrong.
 //
 // Only writable calendars are listed. A `reader` calendar — the US holidays
 // feed, a shared course calendar — is drawn in the grid and can never be
 // written to, and offering it would be offering a guaranteed failure.
 
+// The picker's two sentinels. `AUTO` is the deterministic default policy and
+// is what the box sits on; `MODEL` hands the line to the classifier.
 const AUTO = "";
+const MODEL = "model";
 
+// How the calendar was arrived at, in the preview's own words. `default` and
+// `fallback` are deliberately not the same phrase: the first is a confident
+// prior — work is homework — and the second is the model admitting it has
+// nothing, which is worth telling apart when you are deciding whether to Tab.
 const SOURCE_LABEL = {
   rule: "rule",
   model: "learned",
   correction: "corrected",
   fallback: "no guess",
+  subject: "subject",
+  default: "default",
+  chosen: "chosen",
 };
 
+
+/**
+ * The alias list, behind the circled `?`.
+ *
+ * A table rather than a tooltip because the question it answers is "what did I
+ * call that course", which is asked while looking at an *empty* box — and the
+ * answer is something you scan, not a sentence you read.
+ *
+ * Fetched on first open rather than with the week. It is configuration that
+ * changes once a semester, nobody opens it on most days, and the panel it
+ * hangs off already makes two requests on every five-minute refresh.
+ */
+function aliasList() {
+  const box = el("div.cal-aliases", { hidden: true });
+  let loaded = false;
+
+  const load = async () => {
+    try {
+      const { aliases } = await api.get("/api/todo", { date: api.today() });
+      mount(box,
+        aliases.length
+          ? el("dl.cal-aliases-list", null,
+              ...aliases.flatMap((a) => [
+                el("dt", { text: a.key }),
+                el("dd", { text: a.calendar ? `${a.name} → ${a.calendar}` : a.name }),
+              ]),
+            )
+          : el("span.faint", { text: "no aliases configured — see [todo.subjects]" }),
+      );
+      loaded = true;
+    } catch (error) {
+      mount(box, el("span.cal-pv-warn", { text: error.message }));
+    }
+  };
+
+  return {
+    node: box,
+    toggle() {
+      box.hidden = !box.hidden;
+      if (!box.hidden && !loaded) load();
+    },
+  };
+}
+
+/** One previewed line: what it will write, or why it will not. */
+function previewLine(line) {
+  if (line.error) {
+    return el("div.cal-pv.bad", null,
+      el("span.cal-pv-raw", { text: line.raw }),
+      el("span.cal-pv-warn", { text: line.error }),
+    );
+  }
+
+  const date = parseISO(line.date);
+  const day = `${DAY_NAMES[(date.getDay() + 6) % 7]} ${MONTHS[date.getMonth()]} ${date.getDate()}`;
+  const when = line.start ? `${line.start}–${line.end}` : "all day";
+
+  return el("div.cal-pv", null,
+    // Whether an alias fired is drawn first and always, in one of two states.
+    // That is the whole point of it: a subject you forgot to abbreviate and one
+    // you misspelled both look like plain text, and the difference is only
+    // visible if the absence is shown as loudly as the presence.
+    line.aliases.length
+      ? el("span.cal-alias.hit", { text: line.aliases.map((a) => a.key).join(" ") })
+      : el("span.cal-alias.miss", { text: "—", title: "no alias in this line" }),
+    el("span.cal-pill", { text: line.calendar }),
+    el("span.cal-pv-title", { text: line.title }),
+    el("span.cal-pv-when", {
+      text: line.recurrence ? `${day} · ${when} · ${line.recurrence}` : `${day} · ${when}`,
+    }),
+    line.is_todo ? el("span.cal-kind", { text: "todo" }) : null,
+    el("span.cal-pv-src", { text: SOURCE_LABEL[line.source] ?? line.source }),
+    line.warning ? el("span.cal-pv-warn", { text: line.warning }) : null,
+  );
+}
+
 function quickAdd(panel, node) {
-  const input = el("input.cal-input", {
-    placeholder: "add real analysis test wednesday 9:25-10:30",
+  const input = el("textarea.cal-input", {
+    placeholder: "fpm Thornhill Chapter 3 due thursday   ·   one per line, ctrl+enter to add",
     spellcheck: false,
     autocomplete: "off",
+    rows: 1,
   });
   const picker = el("select.cal-picker", {
     title: "which calendar to add to — Tab cycles",
     "aria-label": "target calendar",
   });
+  const help = el("button.ghost.cal-help", {
+    text: "?",
+    title: "what the aliases expand to",
+    "aria-label": "alias list",
+  });
   const preview = el("div.cal-preview");
+  const aliases = aliasList();
 
-  // `auto` refits itself at boot, when a calendar appears or disappears, and
-  // after every correction — but none of those re-read the event history,
-  // which is cached for a day and is most of what it learns from. On a server
-  // left running, this is the only way to say "look at my calendars again".
+  help.addEventListener("click", () => aliases.toggle());
+
+  // The model behind `learned` refits itself at boot, when a calendar appears
+  // or disappears, and after every correction — but none of those re-read the
+  // event history, which is cached for a day and is most of what it learns
+  // from. On a server left running, this is the only way to say "look at my
+  // calendars again".
   const retrain = el("button.ghost.cal-retrain", {
-    text: "retrain auto",
-    title: "re-read the calendars and refit the model that fills in “auto”",
+    text: "retrain",
+    title: "re-read the calendars and refit the model behind “learned”",
     onclick: async () => {
       retrain.disabled = true;
       const said = retrain.textContent;
@@ -452,20 +562,36 @@ function quickAdd(panel, node) {
   });
 
   const wrap = el("div.cal-add", null,
-    el("div.cal-add-row", null, input, picker, retrain),
+    el("div.cal-add-row", null, input, picker, help, retrain),
+    aliases.node,
     preview,
   );
 
-  let resolved = null;
+  let lines = [];
   let writable = [];
   let timer = null;
   let sequence = 0;
 
-  /** The picker is the single source of truth; `auto` defers to the model. */
+  /** The picker is the single source of truth; `auto` defers to the default. */
   const chosen = () => picker.value || null;
 
+  /**
+   * Grow with the content. A one-line box that scrolls hides the paste.
+   *
+   * A zero measurement means there is no layout to measure — the panel is on a
+   * hidden tab, or the title screen is still up — and writing it back would
+   * pin the box shut at `height: 0` for the rest of the session, since nothing
+   * re-measures until the next keystroke. Left alone, it keeps the `rows`
+   * height CSS gave it and fits itself on the first key typed into it.
+   */
+  const fit = () => {
+    input.style.height = "auto";
+    const wanted = input.scrollHeight;
+    if (wanted > 0) input.style.height = `${Math.min(wanted, 260)}px`;
+  };
+
   const setCalendars = (names) => {
-    // The picker now outlives the render, so rebuilding its options on every
+    // The picker outlives the render, so rebuilding its options on every
     // refresh would be replacing a control the user may have open, for no
     // reason. Only a genuine change to the account's calendars redraws it.
     if (names.length === writable.length && names.every((n, i) => n === writable[i])) return;
@@ -473,68 +599,103 @@ function quickAdd(panel, node) {
     mount(picker,
       el("option", { value: AUTO, text: "auto" }),
       ...names.map((name) => el("option", { value: name, text: name })),
+      // Last, so Tab reaches every real calendar before offering the guess.
+      el("option", { value: MODEL, text: "learned" }),
     );
     // Restore the panel's choice, and fall back to auto if that calendar is
     // gone — deleting the calendar you had selected must not leave the box
     // pointed at something that cannot be written to.
-    picker.value = names.includes(panel.target) ? panel.target : AUTO;
+    picker.value = names.includes(panel.target) || panel.target === MODEL ? panel.target : AUTO;
     panel.target = picker.value;
   };
 
   const draw = () => {
-    if (!resolved) return void mount(preview);
-    const override = chosen();
-    const target = override ?? resolved.calendar;
-    const date = parseISO(resolved.date);
-    const day = `${DAY_NAMES[(date.getDay() + 6) % 7]} ${MONTHS[date.getMonth()]} ${date.getDate()}`;
-    mount(preview,
-      el("span.cal-pill", { text: target }),
-      el("span.cal-pv-title", { text: resolved.title }),
-      el("span.cal-pv-when", {
-        text: `${day} · ${resolved.start ? `${resolved.start}–${resolved.end}` : "all day"}`,
-      }),
-      el("span.cal-pv-src", {
-        // Under `auto` this says how the calendar was arrived at. Once you have
-        // picked one it says so, because "learned" beside a calendar you chose
-        // by hand would be claiming credit for your decision.
-        text: override ? "chosen" : SOURCE_LABEL[resolved.source],
-      }),
-      resolved.warning ? el("span.cal-pv-warn", { text: resolved.warning }) : null,
-    );
+    input.classList.toggle("has-alias", lines.some((l) => l.aliases.length));
+    input.classList.toggle("bad", lines.some((l) => l.error));
+    if (!lines.length) return void mount(preview);
+    mount(preview, ...lines.map(previewLine));
   };
-
-  picker.addEventListener("change", () => {
-    panel.target = picker.value;
-    draw();
-  });
 
   const resolve = async () => {
     const text = input.value.trim();
     if (!text) {
-      resolved = null;
+      lines = [];
       draw();
       return;
     }
     const mine = ++sequence;
     try {
-      const got = await api.postRaw("/api/calendar/preview", { text, today: api.today() });
+      const got = await api.postRaw("/api/calendar/preview", {
+        text,
+        today: api.today(),
+        ...(chosen() ? { calendar: chosen() } : {}),
+      });
       // A slower earlier keystroke must not overwrite a newer answer.
       if (mine !== sequence) return;
-      resolved = got;
+      lines = got.lines;
       draw();
     } catch (error) {
       if (mine !== sequence) return;
-      resolved = null;
+      lines = [];
       mount(preview, el("span.cal-pv-warn", { text: error.message }));
     }
   };
 
+  picker.addEventListener("change", () => {
+    panel.target = picker.value;
+    resolve();
+  });
+
   input.addEventListener("input", () => {
+    fit();
     clearTimeout(timer);
     // Long enough that typing a sentence is one round trip rather than thirty,
     // short enough that stopping to look shows an answer immediately.
     timer = setTimeout(resolve, 220);
   });
+
+  const commit = async () => {
+    const text = input.value.trim();
+    if (!text) return;
+    // Enter can arrive before the debounce has fired, so a fast typist must
+    // still write the events a slow one would have written.
+    clearTimeout(timer);
+
+    const target = chosen();
+    input.disabled = true;
+    picker.disabled = true;
+    mount(preview, el("span.faint", { text: "adding…" }));
+    try {
+      const result = await api.postRaw("/api/calendar/add", {
+        text,
+        today: api.today(),
+        // Omitted under `auto`: the server then uses its own policy and
+        // records no correction, which is right — nothing was corrected.
+        ...(target ? { calendar: target } : {}),
+      });
+      // What failed stays in the box, in the words it was typed in, so the fix
+      // is an edit. What was written is gone, because it is on the calendar
+      // now and the grid below is about to show it.
+      input.value = result.failed.map((line) => line.raw).join("\n");
+      lines = result.failed;
+      input.disabled = false;
+      picker.disabled = false;
+      fit();
+      // The picker keeps its selection across an add. Filing three things onto
+      // Tests in a row should not mean choosing it three times.
+      //
+      // This render redraws the grid around the box rather than replacing it,
+      // so the week does not blink out and back while the new events arrive.
+      await panel.render(node);
+      rerender("todo");
+      input.focus();
+      draw();
+    } catch (error) {
+      input.disabled = false;
+      picker.disabled = false;
+      mount(preview, el("span.cal-pv-warn", { text: `failed: ${error.message}` }));
+    }
+  };
 
   input.addEventListener("keydown", async (event) => {
     if (event.key === "Tab" && picker.options.length > 1) {
@@ -542,62 +703,32 @@ function quickAdd(panel, node) {
       // app-level handler as well as the browser's own focus move. It steps the
       // picker rather than keeping a parallel notion of the target, so the
       // keyboard and the mouse cannot disagree — and it wraps through `auto`,
-      // which is how you get back to the guess after overruling it.
+      // which is how you get back to the default after overruling it.
       event.preventDefault();
       event.stopPropagation();
       const n = picker.options.length;
       picker.selectedIndex = (picker.selectedIndex + (event.shiftKey ? -1 : 1) + n) % n;
       panel.target = picker.value;
-      draw();
+      resolve();
       return;
     }
     if (event.key === "Escape") {
       event.stopPropagation();
       input.value = "";
-      resolved = null;
+      lines = [];
       picker.value = AUTO;
+      panel.target = AUTO;
+      fit();
       draw();
       return;
     }
+    // Enter alone is a newline — the box holds a list. Ctrl/Cmd+Enter commits,
+    // and so does a bare Enter while the box still holds a single line, which
+    // is what the muscle memory from the old input expects.
     if (event.key !== "Enter") return;
-
+    if (!event.ctrlKey && !event.metaKey && input.value.includes("\n")) return;
     event.preventDefault();
-    const text = input.value.trim();
-    if (!text) return;
-    // Enter can arrive before the debounce has fired, so a fast typist must
-    // still write the event a slow one would have written.
-    clearTimeout(timer);
-    if (!resolved) await resolve();
-    if (!resolved) return;
-
-    const target = chosen();
-    input.disabled = true;
-    picker.disabled = true;
-    mount(preview, el("span.faint", { text: "adding…" }));
-    try {
-      await api.postRaw("/api/calendar/add", {
-        text,
-        today: api.today(),
-        // Omitted under `auto`: the server then uses its own prediction and
-        // records no correction, which is right — nothing was corrected.
-        ...(target ? { calendar: target } : {}),
-      });
-      input.value = "";
-      resolved = null;
-      input.disabled = false;
-      picker.disabled = false;
-      // The picker keeps its selection across an add. Filing three things onto
-      // Homework in a row should not mean choosing it three times.
-      //
-      // This render redraws the grid around the box rather than replacing it,
-      // so the week does not blink out and back while the new event is fetched.
-      await panel.render(node);
-      input.focus();
-    } catch (error) {
-      input.disabled = false;
-      picker.disabled = false;
-      mount(preview, el("span.cal-pv-warn", { text: `failed: ${error.message}` }));
-    }
+    await commit();
   });
 
   return {

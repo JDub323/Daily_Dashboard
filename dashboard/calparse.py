@@ -47,7 +47,15 @@ MONTHS = {
 # Words that only ever glued the date to the title. Stripped from the edges of
 # what is left over, never from the middle -- "Coffee with Fr. Bill at the Dome"
 # keeps its "at".
-FILLERS = ("on", "at", "from", "this", "the", "for", "of", "starting", "starts")
+#
+# "due" and "by" are here for the same reason. They only ever glued a due date
+# to the thing that is due, and once the date has been lifted out they are
+# trailing noise -- "Thornhill Chapter 3 due thursday" wants to be filed as
+# "Thornhill Chapter 3", not as "Thornhill Chapter 3 due".
+FILLERS = (
+    "on", "at", "from", "this", "the", "for", "of", "starting", "starts",
+    "due", "by",
+)
 
 # A leading verb. "add" is the one the box is documented with; the others cost
 # nothing and are what you type when you are not thinking about it.
@@ -84,6 +92,15 @@ class Parsed(NamedTuple):
     start: dt.time | None
     end: dt.time | None
     warning: str | None = None
+
+    date_explicit: bool = True
+    """Did the line name a day, or is `date` a fallback to today?
+
+    Reported rather than enforced, because this is a fact about the text and
+    what to do about it is a policy. The box refuses lines where this is false
+    -- a due date nobody typed is worse than no item at all -- but that rule
+    lives in `todo.py`, where it can be read next to the message it produces.
+    """
 
     @property
     def all_day(self) -> bool:
@@ -192,11 +209,12 @@ def _extract_times(text: str) -> tuple[str, dt.time | None, dt.time | None, str 
     return text, None, None, None
 
 
-def _extract_date(text: str, today: dt.date) -> tuple[str, dt.date, str | None]:
+def _extract_date(text: str, today: dt.date) -> tuple[str, dt.date, bool]:
+    """The leftover text, the day, and whether the day was actually named."""
     if match := ISO_DATE.search(text):
         y, m, d = (int(g) for g in match.groups())
         if (date := _safe_date(y, m, d)) is not None:
-            return _cut(text, match.span()), date, None
+            return _cut(text, match.span()), date, True
 
     if match := NUM_DATE.search(text):
         m, d, y = match.group(1), match.group(2), match.group(3)
@@ -205,7 +223,7 @@ def _extract_date(text: str, today: dt.date) -> tuple[str, dt.date, str | None]:
             # A bare 8/19 that has already gone is next year's.
             if y is None and date < today:
                 date = _safe_date(year + 1, int(m), int(d)) or date
-            return _cut(text, match.span()), date, None
+            return _cut(text, match.span()), date, True
 
     for pattern, order in ((MONTH_DATE, "md"), (DATE_MONTH, "dm")):
         if match := pattern.search(text):
@@ -215,17 +233,17 @@ def _extract_date(text: str, today: dt.date) -> tuple[str, dt.date, str | None]:
             if (date := _safe_date(today.year, MONTHS[name.lower()], int(day))) is not None:
                 if date < today:
                     date = _safe_date(today.year + 1, MONTHS[name.lower()], int(day)) or date
-                return _cut(text, match.span()), date, None
+                return _cut(text, match.span()), date, True
 
     if match := RELATIVE.search(text):
         word = match.group(1).lower()
         offset = {"today": 0, "tonight": 0, "tomorrow": 1, "tmrw": 1, "overmorrow": 2}[word]
-        return _cut(text, match.span()), today + dt.timedelta(days=offset), None
+        return _cut(text, match.span()), today + dt.timedelta(days=offset), True
 
     if match := IN_N_DAYS.search(text):
         n, unit = int(match.group(1)), match.group(2).lower()
         ahead = dt.timedelta(days=n * (7 if unit == "week" else 1))
-        return _cut(text, match.span()), today + ahead, None
+        return _cut(text, match.span()), today + ahead, True
 
     if match := WEEKDAY_RE.search(text):
         qualifier = (match.group(1) or "").lower()
@@ -236,9 +254,9 @@ def _extract_date(text: str, today: dt.date) -> tuple[str, dt.date, str | None]:
         # though English genuinely does not agree with itself here.
         if qualifier == "next":
             ahead += 7
-        return _cut(text, match.span()), today + dt.timedelta(days=ahead), None
+        return _cut(text, match.span()), today + dt.timedelta(days=ahead), True
 
-    return text, today, "no day found; used today"
+    return text, today, False
 
 
 def _safe_date(year: int, month: int, day: int) -> dt.date | None:
@@ -271,15 +289,22 @@ def parse(text: str, today: dt.date) -> Parsed:
 
     # Date first. "8/19" would otherwise be eaten by the time patterns, and
     # "9:25-10:30" is not a date under any of them.
-    body, date, date_warning = _extract_date(body, today)
+    body, date, explicit = _extract_date(body, today)
     if forced_all_day:
         start, end, time_warning = None, None, None
     else:
         body, start, end, time_warning = _extract_times(body)
 
     title = _clean_title(body)
-    warning = time_warning or date_warning
+    warning = time_warning or (None if explicit else "no day found; used today")
     if not title:
         title = "(untitled)"
         warning = "nothing left for a title"
-    return Parsed(title=title, date=date, start=start, end=end, warning=warning)
+    return Parsed(
+        title=title,
+        date=date,
+        start=start,
+        end=end,
+        warning=warning,
+        date_explicit=explicit,
+    )

@@ -888,7 +888,7 @@ def test_the_daylog_round_trips(client):
     assert client.get("/api/state", params={"date": DATE}).json()["daylog"] == "shipped the rewrite"
 
 
-def _no_gcalcli(monkeypatch, writable=("Special Events", "Tests")):
+def _no_gcalcli(monkeypatch, writable=("Special Events", "Tests", "Homework")):
     """Stub the two gcalcli reads the quick-add path makes, and capture the write."""
     written: dict = {}
 
@@ -901,7 +901,7 @@ def _no_gcalcli(monkeypatch, writable=("Special Events", "Tests")):
 
     def _add(self, **kwargs):
         written.update(kwargs)
-        return "created"
+        return feeds.WrittenEvent(event_id="ev1", url="https://example/e", output="created")
 
     monkeypatch.setattr(feeds.Feeds, "add_calendar_event", _add)
     return written
@@ -916,10 +916,155 @@ def test_calendar_add_takes_no_date(client, monkeypatch):
     """
     _no_gcalcli(monkeypatch)
     body = client.post("/api/calendar/add", json={"text": "lunch friday"}).json()
-    assert body["title"] == "Lunch"
+    assert body["written"][0]["title"] == "Lunch"
     assert (
         client.post("/api/calendar/add", json={"text": "x", "date": DATE}).status_code == 422
     )  # extra="forbid"
+
+
+def test_a_line_with_no_day_in_it_is_refused(client, monkeypatch):
+    """The one rule the todo half adds, and it applies to every line.
+
+    `calparse` still resolves a dateless line onto today -- that is what makes
+    it usable for anything else -- but a due date nobody typed is a claim about
+    when work is owed, and inventing one is worse than refusing the line.
+    Nothing is written, and the text comes back so it can be edited.
+    """
+    written = _no_gcalcli(monkeypatch)
+    body = client.post(
+        "/api/calendar/add", json={"text": "fix my printing setup", "today": DATE}
+    ).json()
+    assert written == {}
+    assert body["written"] == []
+    assert body["failed"][0]["raw"] == "fix my printing setup"
+    assert "needs a day" in body["failed"][0]["error"]
+
+
+def test_the_good_lines_commit_and_the_bad_ones_come_back(client, monkeypatch):
+    """A forty-line paste must not be lost to one typo."""
+    _no_gcalcli(monkeypatch)
+    body = client.post(
+        "/api/calendar/add",
+        json={
+            "text": "fpm Thornhill Chapter 3 due thursday\n"
+                    "someday: fix the printer\n"
+                    "read ch4 friday",
+            "today": DATE,
+        },
+    ).json()
+    assert [line["title"] for line in body["written"]] == [
+        "US Foreign Policy Making Thornhill Chapter 3",
+        "Read ch4",
+    ]
+    assert [line["raw"] for line in body["failed"]] == ["someday: fix the printer"]
+
+
+def test_an_alias_expands_as_a_word_not_as_a_substring(client, monkeypatch):
+    """`os` -> Operating Systems fires in "new os homework", never in "banjos".
+
+    The distinction is the whole of the alias design: a substitution behaves
+    like a variable, so it is safe to give a subject a two-letter name. A
+    substring match would make every such name a hazard in ordinary English.
+    """
+    _no_gcalcli(monkeypatch)
+    lines = client.post(
+        "/api/calendar/preview",
+        json={"text": "new os homework friday\nbuy banjos saturday", "today": DATE},
+    ).json()["lines"]
+    assert lines[0]["title"] == "Operating Systems homework"
+    assert [h["key"] for h in lines[0]["aliases"]] == ["os"]
+    assert lines[1]["title"] == "Buy banjos"
+    assert lines[1]["aliases"] == []
+
+
+def test_a_repeating_line_becomes_one_event_per_week(client, monkeypatch):
+    """No recurrence flag exists in `gcalcli add`, so occurrences are written
+    out -- which is also what makes deleting a single week possible later."""
+    _no_gcalcli(monkeypatch)
+    body = client.post(
+        "/api/calendar/add",
+        json={"text": "os reading every tuesday for 3 weeks", "today": DATE},
+    ).json()
+    assert body["events"] == 3
+    assert body["written"][0]["recurrence"] == "every week × 3"
+    assert len(body["written"][0]["dates"]) == 3
+
+    items = client.get("/api/todo", params={"date": DATE}).json()["items"]
+    assert [i["due_date"] for i in items] == ["2026-07-28", "2026-08-04", "2026-08-11"]
+    # One series, so the panel can group them and a delete can name just one.
+    assert len({i["series"] for i in items}) == 1
+
+
+def test_work_becomes_a_todo_and_an_event_does_not(client, monkeypatch):
+    """The target calendar is the whole todo/event distinction -- no mode, no
+    sigil. `[todo].todo_calendars` names which ones mean "this can be done"."""
+    _no_gcalcli(monkeypatch)
+    client.post("/api/calendar/add", json={"text": "read ch4 friday", "today": DATE})
+    client.post(
+        "/api/calendar/add",
+        json={"text": "brunch sunday", "today": DATE, "calendar": "Special Events"},
+    )
+    items = client.get("/api/todo", params={"date": DATE}).json()["items"]
+    assert [i["title"] for i in items] == ["Read ch4"]
+    assert items[0]["calendar"] == "Homework"  # the default, not the model
+
+
+def test_ticking_an_item_takes_its_event_off_the_calendar(client, monkeypatch):
+    _no_gcalcli(monkeypatch)
+    deleted: dict = {}
+    monkeypatch.setattr(
+        feeds.Feeds,
+        "delete_calendar_event",
+        lambda self, **kw: deleted.update(kw) or True,
+    )
+    client.post("/api/calendar/add", json={"text": "read ch4 friday", "today": DATE})
+    item = client.get("/api/todo", params={"date": DATE}).json()["items"][0]
+
+    body = client.post(
+        "/api/todo/done", json={"todo_id": item["id"], "done": True, "today": DATE}
+    ).json()
+    assert deleted["title"] == "Read ch4"
+    assert deleted["event_id"] == "ev1"
+    assert body["items"][0]["done"] is True
+    assert body["items"][0]["event_deleted"] is True
+
+
+def test_an_event_already_gone_still_counts_as_removed(client, monkeypatch):
+    """Deleted and never-there are the same answer to the flag's question.
+
+    Reporting "on calendar" for an event the search could not find would have
+    the panel insisting something is standing that demonstrably is not — and
+    the retry it invites can never succeed.
+    """
+    _no_gcalcli(monkeypatch)
+    monkeypatch.setattr(feeds.Feeds, "delete_calendar_event", lambda self, **kw: False)
+    client.post("/api/calendar/add", json={"text": "read ch4 friday", "today": DATE})
+    item = client.get("/api/todo", params={"date": DATE}).json()["items"][0]
+
+    body = client.post(
+        "/api/todo/done", json={"todo_id": item["id"], "done": True, "today": DATE}
+    ).json()
+    assert body["items"][0]["event_deleted"] is True
+
+
+def test_a_tick_survives_gcalcli_being_unreachable(client, monkeypatch):
+    """The checkbox is local and the delete is a network call. An unreachable
+    Google is not a reason to refuse to mark homework done."""
+    _no_gcalcli(monkeypatch)
+
+    def _boom(self, **kw):
+        raise feeds.FeedError("gcalcli timed out after 20s")
+
+    monkeypatch.setattr(feeds.Feeds, "delete_calendar_event", _boom)
+    client.post("/api/calendar/add", json={"text": "read ch4 friday", "today": DATE})
+    item = client.get("/api/todo", params={"date": DATE}).json()["items"][0]
+
+    body = client.post(
+        "/api/todo/done", json={"todo_id": item["id"], "done": True, "today": DATE}
+    ).json()
+    assert body["items"][0]["done"] is True
+    # ...and the panel can still see that the event is standing, so it can say so.
+    assert body["items"][0]["event_deleted"] is False
 
 
 def test_calendar_add_names_the_calendar_it_writes_to(client, monkeypatch):
@@ -932,10 +1077,10 @@ def test_calendar_add_names_the_calendar_it_writes_to(client, monkeypatch):
     written = _no_gcalcli(monkeypatch)
     client.post(
         "/api/calendar/add",
-        json={"text": "real analysis test wednesday from 9:25-10:30", "today": DATE},
+        json={"text": "analysis test wednesday from 9:25-10:30", "today": DATE},
     )
-    assert written["calendar"] == "Tests"  # the rule, not the model
-    assert written["title"] == "Real analysis test"
+    assert written["calendar"] == "Tests"  # the rule, ahead of the Homework default
+    assert written["title"] == "Analysis test"
     assert written["when"].endswith("09:25")
     assert written["duration"] == 65
     assert written["all_day"] is False
@@ -944,12 +1089,16 @@ def test_calendar_add_names_the_calendar_it_writes_to(client, monkeypatch):
 def test_calendar_preview_writes_nothing(client, monkeypatch):
     written = _no_gcalcli(monkeypatch)
     body = client.post(
-        "/api/calendar/preview", json={"text": "move to ND 8am-10am wednesday", "today": DATE}
+        "/api/calendar/preview",
+        json={"text": "move to ND 8am-10am wednesday", "today": DATE, "calendar": "model"},
     ).json()
-    assert body["title"] == "Move to ND"
-    assert (body["start"], body["end"]) == ("08:00", "10:00")
-    # Every writable calendar is offered, best first, so Tab can reach all of them.
-    assert {g["calendar"] for g in body["ranked"]} == {"Special Events", "Tests"}
+    line = body["lines"][0]
+    assert line["title"] == "Move to ND"
+    assert (line["start"], line["end"]) == ("08:00", "10:00")
+    # Under `learned` every writable calendar is offered, best first, so Tab
+    # can reach all of them. `auto` — the picker's default — ranks nothing,
+    # because it never asks the model.
+    assert {g["calendar"] for g in line["ranked"]} == {"Special Events", "Tests", "Homework"}
     assert written == {}
 
 
@@ -995,14 +1144,18 @@ def test_a_calendar_created_after_boot_becomes_usable(client, monkeypatch):
     monkeypatch.setattr(feeds.Feeds, "calendar_history", lambda self, today: [])
     written: dict = {}
     monkeypatch.setattr(
-        feeds.Feeds, "add_calendar_event", lambda self, **kw: written.update(kw) or "created"
+        feeds.Feeds,
+        "add_calendar_event",
+        lambda self, **kw: written.update(kw)
+        or feeds.WrittenEvent(event_id="ev1", url=None, output="created"),
     )
 
     offered = lambda: {  # noqa: E731
         g["calendar"]
         for g in client.post(
-            "/api/calendar/preview", json={"text": "read chapter 4", "today": DATE}
-        ).json()["ranked"]
+            "/api/calendar/preview",
+            json={"text": "read chapter 4 friday", "today": DATE, "calendar": "model"},
+        ).json()["lines"][0]["ranked"]
     }
     assert offered() == {"Special Events", "Tests"}
 
@@ -1011,7 +1164,7 @@ def test_a_calendar_created_after_boot_becomes_usable(client, monkeypatch):
     # ...and it can be written to, not merely listed.
     client.post(
         "/api/calendar/add",
-        json={"text": "read chapter 4", "today": DATE, "calendar": "Thesis"},
+        json={"text": "read chapter 4 friday", "today": DATE, "calendar": "Thesis"},
     )
     assert written["calendar"] == "Thesis"
 
@@ -1024,25 +1177,29 @@ def test_a_deleted_calendar_stops_being_offered(client, monkeypatch):
         lambda self: [api.CalendarInfo(name=n, access="owner") for n in live],
     )
     monkeypatch.setattr(feeds.Feeds, "calendar_history", lambda self, today: [])
-    monkeypatch.setattr(feeds.Feeds, "add_calendar_event", lambda self, **kw: "created")
+    monkeypatch.setattr(
+        feeds.Feeds,
+        "add_calendar_event",
+        lambda self, **kw: feeds.WrittenEvent(event_id="ev1", url=None, output="created"),
+    )
 
     resolve = lambda: client.post(  # noqa: E731
-        "/api/calendar/preview", json={"text": "final exam", "today": DATE}
-    ).json()
+        "/api/calendar/preview", json={"text": "final exam friday", "today": DATE}
+    ).json()["lines"][0]
     assert resolve()["calendar"] == "Tests"  # the rule fires
 
     live.remove("Tests")
     body = resolve()
-    # The rule names a calendar that is gone, so it is skipped rather than
-    # producing an add that gcalcli cannot satisfy.
+    # The rule names a calendar that is gone, so it is skipped -- and so is the
+    # configured Homework default, which is not on this account either. Both
+    # would produce an add gcalcli cannot satisfy.
     assert body["calendar"] == "Special Events"
-    assert "Tests" not in [g["calendar"] for g in body["ranked"]]
 
     # And an override to it is refused now, where it would have been accepted.
     assert (
         client.post(
             "/api/calendar/add",
-            json={"text": "final exam", "today": DATE, "calendar": "Tests"},
+            json={"text": "final exam friday", "today": DATE, "calendar": "Tests"},
         ).status_code
         == 409
     )

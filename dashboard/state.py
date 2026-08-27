@@ -849,6 +849,28 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
     )
 
 
+# --- the todo list ---------------------------------------------------------
+
+
+def todo_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.TodoPanel:
+    """Everything outstanding, plus the last fortnight of finished work.
+
+    Open items are unbounded backwards on purpose -- an overdue reading is
+    still owed however long it has been owed, and a list that quietly drops it
+    after a week is a list that helps you forget. Finished ones are windowed,
+    because their only remaining job is to show the week had something in it.
+    """
+    return api.TodoPanel(
+        items=repo.todos(include_done_since=today - dt.timedelta(days=14)),
+        aliases=[
+            api.TodoAlias(key=key, name=s.name, calendar=s.calendar)
+            for key, s in sorted(cfg.todo.subjects.items())
+        ],
+        default_calendar=cfg.todo.default_calendar,
+        todo_calendars=cfg.todo.todo_calendars,
+    )
+
+
 # --- the boot payload ------------------------------------------------------
 
 

@@ -11,6 +11,7 @@ shows up in the panel as an error, which is the only way it ever gets fixed.
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import http.client
 import json
@@ -135,6 +136,21 @@ def http_get(url: str, headers: dict[str, str] | None = None, timeout: int = 15)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **(headers or {})})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read().decode("utf-8", "replace")
+
+
+class WrittenEvent(NamedTuple):
+    """What came back from writing one event.
+
+    `event_id` is the point of it, and it is optional: it is decoded out of a
+    URL gcalcli prints, and a decode that fails must not fail the write. An
+    item holding None here is one whose Google event can never be found again
+    by id -- it stays on the calendar when the item is ticked, and the panel
+    says so rather than deleting by title and hoping.
+    """
+
+    event_id: str | None
+    url: str | None
+    output: str
 
 
 class Cached(NamedTuple, Generic[T]):
@@ -527,7 +543,7 @@ class Feeds:
         when: str,
         duration: int | None = None,
         all_day: bool = False,
-    ) -> str:
+    ) -> WrittenEvent:
         """Write one event, with its target named.
 
         Was `gcalcli quick <text>` -- no `--calendar`, which on an account with
@@ -538,12 +554,20 @@ class Feeds:
         whole string to Google's parser and returns whatever it decided, which
         cannot be shown to anyone before it is already written. Here the date
         and the title have been resolved locally and can be previewed.
+
+        `--details url` is not cosmetic. gcalcli's `add` prints *nothing* by
+        default and returns no identifier -- the one line it will print, and
+        only under this flag, is the event's htmlLink, whose `eid` decodes to
+        the Google event id. That id is the only durable handle on what was
+        just written, and without it a todo can never point at its own event:
+        completing one would have to search Google by title and hope.
         """
         args = [
             "add",
             "--calendar", calendar,
             "--title", title,
             "--when", when,
+            "--details", "url",
             "--noprompt",  # belt and braces: stdin is closed anyway
         ]
         if all_day:
@@ -558,7 +582,55 @@ class Feeds:
         # this drops every `calendar:<date>:<days>` and leaves `calendarlist`
         # -- which adding an event cannot have changed -- alone.
         self.invalidate("calendar")
-        return out.strip()
+        url = _first_url(out)
+        return WrittenEvent(event_id=_event_id_from_url(url), url=url, output=out.strip())
+
+    def delete_calendar_event(
+        self, *, calendar: str, title: str, date: dt.date, event_id: str | None
+    ) -> bool:
+        """Remove one event. Returns False if it was already gone.
+
+        This is the most dangerous call in the file and it is shaped around
+        that. gcalcli has no delete-by-id: `delete` takes a *search string* and
+        removes everything it matches, and `--iamaexpert` -- which is required,
+        since stdin is closed and the confirmation prompt would EOF -- removes
+        them without asking. So the search is run first, by this code, and the
+        delete only happens once the answer is known to be a single event.
+
+        Three narrowings make that answer trustworthy: one calendar, one day,
+        and an exact title match applied here rather than by Google, whose `q`
+        is a full-text search and will happily return "Chapter 3 notes" for
+        "Chapter 3". If the id we recorded at write time is not among the
+        matches the event is already gone, which is a success with nothing to
+        do rather than an error. If anything else about the set is surprising,
+        this refuses and says so -- an ambiguous delete is not worth guessing
+        at, because the thing being guessed at is somebody's calendar.
+        """
+        end = date + dt.timedelta(days=1)
+        tsv = self.gcalcli(
+            "search", title, str(date), str(end),
+            "--tsv", "--details", "id", "--calendar", calendar,
+            timeout=self.settings.calendar.write_timeout_seconds,
+        )
+        rows = _parse_search(tsv)
+        exact = [row for row in rows if row.title == title]
+
+        if event_id is not None and not any(row.id == event_id for row in exact):
+            log.info("calendar delete: %r on %s is already gone", title[:60], date)
+            return False
+        if len(exact) != 1:
+            raise FeedError(
+                f"{len(exact)} events on {calendar} named {title!r} on {date}"
+                " — left alone rather than guessing which to delete"
+            )
+
+        self.gcalcli(
+            "delete", title, str(date), str(end),
+            "--calendar", calendar, "--iamaexpert",
+            timeout=self.settings.calendar.write_timeout_seconds,
+        )
+        self.invalidate("calendar")
+        return True
 
     # -- arXiv --------------------------------------------------------------
 
@@ -674,6 +746,73 @@ def _short_gcalcli_error(message: str) -> str:
     if ":" in last and last.split(":", 1)[0].count(".") >= 2:
         last = last.split(":", 1)[1].strip()
     return last[:200] or "gcalcli failed"
+
+
+_URL = re.compile(r"https?://\S+")
+
+
+def _first_url(text: str) -> str | None:
+    match = _URL.search(text)
+    return match.group(0).rstrip(".,)") if match else None
+
+
+def _event_id_from_url(url: str | None) -> str | None:
+    """`...event?eid=<base64>` -> the Google event id.
+
+    The `eid` is base64url of "<event id> <calendar id>", which is not a
+    documented contract so much as a stable accident -- so every step of the
+    decode is allowed to fail, and failing returns None rather than raising.
+    A todo with no event id is a todo whose completion cannot delete anything
+    and says so, which is a small loss; a failed *add* because a URL was
+    spelled unexpectedly would be a large one.
+    """
+    if not url:
+        return None
+    try:
+        query = urllib.parse.urlparse(url).query
+        eid = urllib.parse.parse_qs(query).get("eid", [None])[0]
+        if not eid:
+            return None
+        # base64url, and Google strips the padding.
+        raw = base64.urlsafe_b64decode(eid + "=" * (-len(eid) % 4))
+        first = raw.decode("utf-8", "replace").split(" ", 1)[0].strip()
+        return first or None
+    except Exception:
+        log.debug("could not decode an event id out of %r", url[:120])
+        return None
+
+
+class SearchRow(NamedTuple):
+    id: str
+    title: str
+
+
+def _parse_search(tsv: str) -> list[SearchRow]:
+    """`search --tsv --details id` -> the rows, addressed by column name.
+
+    Same header-driven approach as `_parse_agenda`, and for the same reason:
+    which column holds what is a function of the `--details` flags.
+    """
+    lines = tsv.strip().splitlines()
+    if not lines:
+        return []
+    header = lines[0].split("\t")
+    if header[0] != "start_date":
+        log.warning("gcalcli search had no header row; first line was %r", lines[0][:120])
+        return []
+    index = {name: i for i, name in enumerate(header)}
+    if "id" not in index or "title" not in index:
+        return []
+
+    rows: list[SearchRow] = []
+    for line in lines[1:]:
+        parts = line.split("\t")
+        if max(index["id"], index["title"]) >= len(parts):
+            continue
+        rows.append(
+            SearchRow(id=parts[index["id"]].strip(), title=parts[index["title"]].strip())
+        )
+    return rows
 
 
 def _parse_agenda(tsv: str) -> list[CalendarEvent]:

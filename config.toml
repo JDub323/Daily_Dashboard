@@ -360,6 +360,28 @@ default_calendar = "Special Events"
 # 0 = Monday. Google's own week view starts on Sunday (6).
 week_starts_on = 0
 
+[todo]
+# The prior for anything with a due date. Not [calendar].default_calendar --
+# that one is the classifier's shrug, this one is "work is homework".
+default_calendar = "Homework"
+# Writing to one of these makes a tracked item that can be finished; writing
+# anywhere else is an ordinary event. This is the whole of the todo/event
+# distinction, and it is the picker that already sits beside the box.
+todo_calendars = ["Homework", "Tests"]
+# How far an unbounded "every tuesday" runs. A semester is about fifteen weeks.
+recur_weeks = 12
+
+# Aliases. Whole-word substitutions, like variables: `os` expands in "new os
+# homework" and not in "buy banjos". Keys must be one word and must not be a
+# word the date parser reads -- `sat`, `may` and friends are refused at load.
+# `calendar` is optional and overrides the default above.
+[todo.subjects]
+fpm = { name = "US Foreign Policy Making" }
+ra = { name = "Real Analysis" }
+os = { name = "Operating Systems" }
+algo = { name = "Algorithms" }
+pt = { name = "Political Theory" }
+
 [news]
 cache_seconds = 900
 proxy_prefix = "https://login.proxy.library.nd.edu/login?url="
