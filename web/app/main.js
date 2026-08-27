@@ -35,6 +35,7 @@ import patterns from "./panels/patterns.js";
 import piano from "./panels/piano.js";
 import portfolio from "./panels/portfolio.js";
 import reading from "./panels/reading.js";
+import plan from "./panels/plan.js";
 import session from "./panels/session.js";
 import spelling from "./panels/spelling.js";
 import { activity } from "./panels/stats.js";
@@ -81,6 +82,7 @@ const WATCHES = {
   health: ["health"],
   checkin: ["health"],
   session: ["health"],
+  plan: ["health"],
 };
 
 /** Store keys whose writes make the cached /api/history fetch stale. */
@@ -114,10 +116,12 @@ const PANELS = [
   // markets — the portfolio is the hero; the movements list is the frame it
   // is read against.
   portfolio, markets, finance,
-  // health — the readout is the hero, and the two things you actually type sit
-  // under it in the order the day asks for them: the check-in in the morning,
-  // the session in the evening.
-  health, checkin, session,
+  // health — the readout is the hero, and the things you type sit under it in
+  // the order the day asks for them: the check-in in the morning, then what the
+  // plan asked for, then the freehand log for anything it did not ask for.
+  // `plan` sits above `session` because on most evenings it is the whole job —
+  // `session` is the escape hatch for a session nobody prescribed.
+  health, checkin, plan, session,
 ];
 
 async function loadConfig() {

@@ -689,6 +689,22 @@ svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(-
 .asks { display: flex; flex-direction: column; gap: var(--s1); }
 .asks > .row { margin: 0; align-items: baseline; }
 
+/* ---- the day's cards ----
+   One card per outing. The border is what makes a practice's two rows read as
+   one thing you did rather than two things you owe — the whole argument for
+   putting them behind a single button. A finished card keeps its box and loses
+   its contents, so the column does not reflow as the evening goes on. */
+.plan-card { border: 1px solid var(--border-soft); border-radius: var(--r-md);
+             padding: var(--s2); margin-bottom: var(--s2);
+             display: flex; flex-direction: column; gap: var(--s1); }
+.plan-card.done { border-style: dashed; color: var(--dim); }
+.plan-card > .row { margin: 0; }
+.plan-row { display: flex; flex-direction: column; gap: 2px; }
+.plan-row .scale { margin: 0; }
+/* The minutes box sits beside a ten-button RPE row, so it must not flex with
+   it — a number box wide enough to hold "45" is wide enough. */
+.plan-row .mins { flex: 0 0 5.5em; }
+
 .verdicts { margin: var(--s3) 0 var(--s2); display: flex; flex-direction: column; gap: var(--s2); }
 .verdict-line { line-height: 1.55; border-left: 2px solid var(--border); padding-left: var(--s3); }
 .verdict-line.bad { border-left-color: var(--bad); }

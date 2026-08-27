@@ -1520,7 +1520,23 @@ def _register(app: FastAPI) -> None:
 
     @app.post("/api/session")
     def session_add(cfg: Cfg, repo: Repo, body: api.SessionRequest) -> api.HealthPanel:
-        repo.add_session(body.date, body.kind, body.rpe, body.minutes, body.note)
+        repo.add_session(
+            body.date, body.kind, body.rpe, body.minutes, body.note, plan_key=body.plan_key
+        )
+        return state.health_panel(cfg, repo, body.date)
+
+    @app.post("/api/session/card")
+    def session_card(cfg: Cfg, repo: Repo, body: api.SessionCardRequest) -> api.HealthPanel:
+        """One prescribed outing, however many rows it splits into.
+
+        The unique index on `plan_key` is what makes a double-submitted card an
+        error rather than a doubled day, and the request's own transaction is
+        what stops a rejected second half leaving the first half logged.
+        """
+        repo.add_sessions(
+            body.date,
+            [(p.kind, p.rpe, p.minutes, p.note, p.plan_key) for p in body.parts],
+        )
         return state.health_panel(cfg, repo, body.date)
 
     @app.post("/api/session/delete")

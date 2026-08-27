@@ -46,7 +46,7 @@ from pathlib import Path
 from pydantic import Field, model_validator
 
 from .models.common import Base, SessionKind
-from .models.domain import PrescribedBlock
+from .models.domain import PlanGroup, PrescribedBlock
 
 SUNDAY = 6
 """`date.weekday()`, where Monday is 0."""
@@ -136,6 +136,64 @@ class Block(Base):
         return list(range(int(first), int(last or first) + 1))
 
 
+class Recurring(Base):
+    """A standing weekly commitment, outside the program's blocks.
+
+    Club practice is the reason this exists, and it belongs in its own layer for
+    a reason that only shows up later: the blocks are a five-week thing that
+    gets replaced, while the club schedule persists across whatever replaces
+    them. Written inside `[[block]]` it would have to be retyped into every
+    future block -- and, worse, it would vanish through the eleven weeks nobody
+    has written yet, which is precisely the stretch where it is the *only*
+    training happening.
+    """
+
+    name: str = Field(min_length=1)
+    """The group. One chip, one card, however many parts."""
+
+    do: str = Field(min_length=1)
+    """The same notation the blocks use, so a practice that is a HIIT workout
+    and technique together is just `HIIT+TECH` -- `+` already means "one outing,
+    two things" and there is no second concept to invent."""
+
+    days: list[str] = Field(default_factory=list)
+    optional_days: list[str] = Field(default_factory=list)
+    """Days it may or may not be running yet. The parts are still offered, so a
+    day you do go is loggable, but they stay out of the points denominator
+    until logged -- a Saturday practice that has not started would otherwise
+    make every Saturday score against three points you could not earn."""
+
+    extras: list[str] = Field(default_factory=list)
+    """Things a session sometimes contains and the plan cannot predict --
+    sparring, neck. Offered as toggles on the card, never prescribed, and never
+    counted against you for being absent."""
+
+    points: int = Field(default=0, ge=0)
+
+    starts: dt.date | None = None
+    ends: dt.date | None = None
+
+    @model_validator(mode="after")
+    def _days_are_days(self) -> Recurring:
+        for day in [*self.days, *self.optional_days]:
+            if day not in DAY_KEYS:
+                raise ValueError(f"{self.name!r}: {day!r} is not one of {list(DAY_KEYS)}")
+        if overlap := set(self.days) & set(self.optional_days):
+            raise ValueError(f"{self.name!r}: {sorted(overlap)} is both required and optional")
+        return self
+
+    def on(self, date: dt.date) -> str | None:
+        """`"required"`, `"optional"` or None -- whether it runs on `date`."""
+        if self.starts and date < self.starts:
+            return None
+        if self.ends and date > self.ends:
+            return None
+        day = DAY_KEYS[date.weekday()]
+        if day in self.days:
+            return "required"
+        return "optional" if day in self.optional_days else None
+
+
 class Program(Base):
     name: str = Field(min_length=1)
     start: dt.date
@@ -144,6 +202,7 @@ class Program(Base):
 
     library: dict[str, Exercise] = Field(default_factory=dict)
     block: list[Block] = Field(default_factory=list)
+    recurring: list[Recurring] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check(self) -> Program:
@@ -181,6 +240,31 @@ class Program(Base):
                 text = getattr(block, key)
                 if text:
                     _parse_day(text, self.library, f"week {block.weeks} {key}")
+
+        for entry in self.recurring:
+            parsed = _parse_day(entry.do, self.library, f"recurring {entry.name!r}")
+            for token in entry.extras:
+                _parse_token(token, self.library, f"recurring {entry.name!r} extras")
+
+            # A recurring entry and a block can both land on the same day, and
+            # the two are merged into one list of keys -- so a token in both
+            # would produce two blocks nothing could tell apart once one was
+            # logged. Caught here against every day either could cover, rather
+            # than at 7am on the one Tuesday they happen to collide.
+            mine = {ask.token for slot in parsed for ask in slot}
+            for block in self.block:
+                for key in DAY_KEYS:
+                    text = getattr(block, key)
+                    if not text or key not in (*entry.days, *entry.optional_days):
+                        continue
+                    theirs = {
+                        ask.token for slot in _parse_day(text, self.library, "") for ask in slot
+                    }
+                    if clash := mine & theirs:
+                        raise ValueError(
+                            f"{entry.name!r} and week {block.weeks} {key} "
+                            f"both prescribe {sorted(clash)}"
+                        )
         return self
 
 
@@ -366,39 +450,110 @@ def plan_ends(program: Program) -> dt.date | None:
     return program.start + dt.timedelta(days=max(weeks) * 7 + 6)
 
 
+def _block(
+    ask: Ask,
+    today: dt.date,
+    slot: int,
+    *,
+    optional: bool = False,
+    group: str | None = None,
+    extra: bool = False,
+    source: str | None = None,
+) -> PrescribedBlock:
+    return PrescribedBlock(
+        key=f"{today.isoformat()}:{ask.token}",
+        token=ask.token,
+        name=ask.display,
+        label=ask.exercise.label,
+        kind=ask.exercise.kind,
+        choose=ask.exercise.choose,
+        asks=ask.asks,
+        detail=ask.exercise.detail,
+        slot=slot,
+        optional=ask.optional or optional,
+        regress_to=ask.regress.display if ask.regress else None,
+        group=group,
+        extra=extra,
+        source=source,
+    )
+
+
 def prescription(program: Program, today: dt.date) -> list[PrescribedBlock]:
-    """What the plan asks for on `today`. Empty on a rest day and on an
-    unwritten week -- the caller tells those apart with `plan_ends`."""
-    week = camp_week(program, today)
-    if week is None:
-        return []
+    """What the plan asks for on `today`, blocks and standing commitments both.
 
-    block = next((b for b in program.block if week in b.week_numbers()), None)
-    if block is None:
-        return []
-    text = getattr(block, DAY_KEYS[today.weekday()])
-    if not text:
-        return []
-
+    The two layers are merged here rather than kept apart, because the panel
+    wants one list of things to fill in and does not care which file section
+    each came from. What it does care about is `group`, which is what turns a
+    practice's several parts into one card with one button.
+    """
     out: list[PrescribedBlock] = []
-    for index, slot in enumerate(_parse_day(text, program.library, f"week {week}")):
-        for ask in slot:
-            out.append(
-                PrescribedBlock(
-                    key=f"{today.isoformat()}:{ask.token}",
-                    token=ask.token,
-                    name=ask.display,
-                    label=ask.exercise.label,
-                    kind=ask.exercise.kind,
-                    choose=ask.exercise.choose,
-                    asks=ask.asks,
-                    detail=ask.exercise.detail,
-                    slot=index,
-                    optional=ask.optional,
-                    regress_to=ask.regress.display if ask.regress else None,
-                    source=block.source,
-                )
+    week = camp_week(program, today)
+
+    block = None
+    if week is not None:
+        block = next((b for b in program.block if week in b.week_numbers()), None)
+    text = getattr(block, DAY_KEYS[today.weekday()]) if block else None
+    if text:
+        for index, slot in enumerate(_parse_day(text, program.library, f"week {week}")):
+            out.extend(_block(ask, today, index, source=block.source) for ask in slot)
+
+    # Standing commitments come after whatever the block asked for, in slots of
+    # their own -- practice is a separate trip out of the house from the lift,
+    # which is exactly what a slot means.
+    for entry in program.recurring:
+        running = entry.on(today)
+        if running is None:
+            continue
+        base = max((b.slot for b in out), default=-1) + 1
+        for index, slot in enumerate(_parse_day(entry.do, program.library, entry.name)):
+            out.extend(
+                # Optional in the *ring* sense: a points-bearing thing is by
+                # definition on the other layer of the day, and there is no
+                # second flag saying so -- the weights are the one definition.
+                # Whether it also counts toward the points on offer is a
+                # different question, and it belongs to the group, not here.
+                _block(ask, today, base + index, optional=entry.points > 0, group=entry.name)
+                for ask in slot
             )
+        # Offered, never owed. An extra already prescribed today is not
+        # repeated -- the card ticks that block off instead of opening a second
+        # form for the same neck workout.
+        prescribed = {b.token for b in out}
+        for token in entry.extras:
+            ask = _parse_token(token, program.library, entry.name)
+            if ask.token not in prescribed:
+                out.append(_block(ask, today, base, optional=True, group=entry.name, extra=True))
+    return out
+
+
+def groups(program: Program, today: dt.date, blocks: list[PrescribedBlock]) -> list[PlanGroup]:
+    """The point-scoring bundles today is offering.
+
+    One per standing commitment that is running, holding the keys that have to
+    be logged before it counts. `extra` blocks are left out of `keys` on
+    purpose: sparring is a thing a practice sometimes contained, and a bundle
+    that only completed on the days you sparred would be unfinishable most of
+    the week.
+    """
+    out: list[PlanGroup] = []
+    for entry in program.recurring:
+        running = entry.on(today)
+        if running is None or not entry.points:
+            continue
+        out.append(
+            PlanGroup(
+                name=entry.name,
+                points=entry.points,
+                # A Saturday practice that has not started yet is offered and
+                # not yet owed. Counting it toward the points *available* would
+                # score every Saturday against three points that cannot be
+                # earned -- the moving-target problem `chips.js` already refuses
+                # to have. So it joins the denominator only on a day it is
+                # actually logged: never a penalty, always a reward.
+                provisional=running == "optional",
+                keys=[b.key for b in blocks if b.group == entry.name and not b.extra],
+            )
+        )
     return out
 
 

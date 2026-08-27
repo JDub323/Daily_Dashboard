@@ -725,13 +725,15 @@ def training_plan(cfg: Settings, today: dt.date) -> api.TrainingPlan | None:
     program = trainplan.program(cfg.path("training"))
     if program is None:
         return None
+    blocks = trainplan.prescription(program, today)
     return api.TrainingPlan(
         name=program.name,
         fight=program.fight,
         days_out=trainplan.days_out(program, today),
         week=trainplan.camp_week(program, today),
         weeks=program.weeks,
-        today=trainplan.prescription(program, today),
+        today=blocks,
+        groups=trainplan.groups(program, today, blocks),
         week_planned=trainplan.week_planned(program, today),
         ends=trainplan.plan_ends(program),
     )

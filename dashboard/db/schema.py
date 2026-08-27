@@ -1199,6 +1199,36 @@ MIGRATIONS: list[tuple[int, str]] = [
             CHECK (bonus >= 0);
         """,
     ),
+    (
+        19,
+        """
+        -- Which prescribed block this session answers, or NULL for one logged
+        -- freehand. `training.toml` says what the day asked for; this is the
+        -- only place the two layers touch.
+        --
+        -- TEXT and not a foreign key, and that is not laziness: the plan lives
+        -- in a file that is hand-edited and regenerated from a spreadsheet, so
+        -- there is no table to point at and no referential integrity to be had.
+        -- What there is instead is a key shaped `<date>:<token>` -- no ordinal,
+        -- no weekday -- so the one edit actually expected (moving the neck
+        -- workout to the other end of the day) leaves rows already written
+        -- pointing at a key that simply no longer appears. That is correct:
+        -- the key is provenance, a record of what the plan said at the time,
+        -- not a live pointer into a file that has since changed.
+        ALTER TABLE training_session ADD COLUMN plan_key TEXT
+            CHECK (plan_key IS NULL OR length(plan_key) BETWEEN 3 AND 64);
+
+        -- One session per prescribed block. Partial, because NULL is the
+        -- ordinary case -- freehand logging stays unrestricted, and two-a-days
+        -- that answer no plan are still two rows.
+        --
+        -- This is the guard that makes the widgets idempotent: a card
+        -- double-submitted, or resubmitted after a rollover, cannot quietly
+        -- log the same practice twice and double its load for the day.
+        CREATE UNIQUE INDEX training_session_plan_key
+            ON training_session (plan_key) WHERE plan_key IS NOT NULL;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

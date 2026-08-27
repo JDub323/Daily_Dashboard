@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from .. import scoring
@@ -2110,24 +2110,52 @@ class Repository:
         minutes: int,
         note: str | None = None,
         garmin_activity_id: int | None = None,
+        plan_key: str | None = None,
     ) -> d.TrainingSession:
         """Append a session. Never an upsert -- two-a-days are the normal case,
         and a second session today is a second row, not a correction of the
         first."""
-        row = self.conn.execute(
-            "INSERT INTO training_session "
-            "(date, kind, rpe, minutes, note, garmin_activity_id) "
-            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
-            (
-                _iso(date),
-                SessionKind(kind).value,
-                rpe,
-                minutes,
-                note or None,
-                garmin_activity_id,
-            ),
-        ).fetchone()
+        try:
+            row = self.conn.execute(
+                "INSERT INTO training_session "
+                "(date, kind, rpe, minutes, note, garmin_activity_id, plan_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *",
+                (
+                    _iso(date),
+                    SessionKind(kind).value,
+                    rpe,
+                    minutes,
+                    note or None,
+                    garmin_activity_id,
+                    plan_key,
+                ),
+            ).fetchone()
+        except sqlite3.IntegrityError as error:
+            # The partial unique index on plan_key. A conflict, not a fault:
+            # a card double-clicked, or a second tab logging the same practice.
+            # Reported the way every other double-submit guard here is, so the
+            # panel gets a sentence and a 409 rather than a traceback and a 500.
+            if plan_key and "plan_key" in str(error):
+                raise ValueError(f"{plan_key} is already logged") from None
+            raise
         return d.TrainingSession(**dict(row))
+
+    def add_sessions(
+        self, date: dt.date, entries: Sequence[tuple[SessionKind, int, int, str | None, str | None]]
+    ) -> list[d.TrainingSession]:
+        """A whole card at once: one practice, however many rows it splits into.
+
+        One call rather than several because a practice is one thing that
+        happened. Logging its conditioning half and then failing on its
+        technique half would leave a day that is half-recorded and a card that
+        cannot be resubmitted -- the unique index on `plan_key` would reject the
+        replay of the half that landed. The connection is already in a
+        transaction per request, so either all of them are there or none are.
+        """
+        return [
+            self.add_session(date, kind, rpe, minutes, note, plan_key=key)
+            for kind, rpe, minutes, note, key in entries
+        ]
 
     def delete_session(self, session_id: int) -> bool:
         cur = self.conn.execute("DELETE FROM training_session WHERE id = ?", (session_id,))

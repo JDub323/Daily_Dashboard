@@ -140,6 +140,75 @@ label = "1x20"
 kind = "strength"
 detail = "Sets of 20 on every basic movement of the body. Low volume, joint support, a deload rather than a session."
 
+# --- the parts of a club practice ---
+#
+# Logged separately rather than as one session, which is not how session-RPE is
+# normally used -- the method takes one rating for a whole mixed session and a
+# 90-minute practice is exactly the unit it was designed for. Split at John's
+# explicit instruction, so that conditioning volume and technique volume stay
+# separable. The cost is real and was accepted: four fields a day instead of
+# two. They sit on one card with one button, which is as far as the friction
+# can be cut without giving the split up.
+
+[library.HIIT]
+name = "conditioning"
+label = "HIIT"
+kind = "conditioning"
+
+[library.TECH]
+name = "technique"
+label = "technique"
+kind = "boxing"
+detail = "Shadowbox 4x2min/30s, full court drills, shadowbox with gloves, heavy bag."
+
+[library.SPAR]
+name = "sparring"
+label = "sparring"
+# Never prescribed and always its own row. `SessionKind.sparring` exists
+# precisely because it is the session that costs the most to recover from at
+# equal RPE, and how much of it a camp contained is a question worth being able
+# to answer afterwards -- which folding it into `boxing` would make impossible.
+kind = "sparring"
+
+
+# --- standing commitments --------------------------------------------------
+#
+# Club practice, and it is deliberately NOT written into the blocks below.
+#
+# The blocks are a five-week programme that gets replaced; the club schedule
+# persists across whatever replaces it. Written into [[block]] it would have to
+# be retyped into every future block, and -- much worse -- it would disappear
+# through weeks 8-18, which is precisely the stretch where it is the only
+# training happening and the only thing the panel would have to say.
+#
+# `optional_days` is the Saturday that starts running at some point but is not
+# yet. Its parts are still offered, so a Saturday you do go is loggable, but
+# they stay out of the points denominator until logged -- otherwise every
+# Saturday between now and then would score against three points that could not
+# be earned.
+#
+# Optional in the ring sense too, at John's instruction: practice never blocks a
+# perfect day. It is priced at 3, level with the debate, because it is the
+# single biggest training input in the week.
+
+[[recurring]]
+name = "practice"
+do = "HIIT+TECH"
+days = ["mon", "tue", "wed", "thu", "fri"]
+optional_days = ["sat"]
+points = 3
+
+# ESTIMATE -- correct this. Derived from "the gym is closed for the next five
+# weeks", said on 2026-08-27. Note it lands within days of VJP finishing on
+# 2026-10-03, so the two barely overlap.
+starts = 2026-10-01
+
+# Offered on the card as toggles, never prescribed: the plan cannot know in
+# advance which practices contained them. An extra that today's blocks already
+# prescribe is ticked off rather than logged again -- which is what stops a neck
+# workout done at practice from being entered twice.
+extras = ["SPAR", "N"]
+
 
 # --- the schedule ----------------------------------------------------------
 #

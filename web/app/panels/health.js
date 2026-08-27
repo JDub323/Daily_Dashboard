@@ -141,27 +141,37 @@ function camp(plan) {
     empty
       ? el("div.faint.gap", { text: empty })
       : el("div.asks", null,
-          ...outings.map((slot) =>
+          ...outings.map((slot) => {
             // One row per outing, because `*` in the plan means a separate trip
             // out of the house and `+` means the same one. Collapsing them
             // would lose the only thing the notation says about your day's
             // shape rather than its contents.
-            el("div.row.spread.gap", null,
+            //
+            // Extras are excluded outright. Sparring and neck are things a
+            // practice sometimes contains, not things today asks for, and
+            // listing them here would have the panel appear to prescribe
+            // sparring five days a week.
+            const parts = asks.filter((b) => b.slot === slot && !b.extra);
+            if (!parts.length) return null;
+
+            // A group is named once. Every block of a points-bearing group
+            // carries `optional` — that is what puts it on the other layer of
+            // the day — but printing it against each part turns one honest fact
+            // into four words of noise that read as "none of this matters".
+            const group = parts.find((b) => b.group)?.group;
+            return el("div.row.spread.gap", null,
               el("span", null,
-                ...asks
-                  .filter((b) => b.slot === slot)
-                  .flatMap((b, i) => [
-                    i ? el("span.faint", { text: " + " }) : null,
-                    el("span.value", { text: b.label }),
-                    b.asks ? el("span.faint", { text: ` ${b.asks}` }) : null,
-                    b.optional ? el("span.faint", { text: " (optional)" }) : null,
-                  ]),
+                el("span.value", { text: group ?? parts.map((b) => b.label).join(" + ") }),
+                ...parts.flatMap((b) => [
+                  b.asks ? el("span.faint", { text: ` ${b.asks}` }) : null,
+                ]),
+                !group && parts.every((b) => b.optional)
+                  ? el("span.faint", { text: " (optional)" })
+                  : null,
               ),
-              el("span.faint", {
-                text: asks.filter((b) => b.slot === slot).map((b) => b.name).join(" + "),
-              }),
-            ),
-          ),
+              el("span.faint", { text: parts.map((b) => b.name).join(" + ") }),
+            );
+          }),
         ),
   );
 }

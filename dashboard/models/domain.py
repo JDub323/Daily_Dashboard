@@ -732,6 +732,15 @@ class TrainingSession(Base):
     """Set only by an import, and UNIQUE, so re-running a sync cannot
     double-count a session that is already in the table."""
 
+    plan_key: str | None = None
+    """Which prescribed block this answers -- `<date>:<token>` -- or None for a
+    session logged freehand, which stays the ordinary case.
+
+    UNIQUE where present, so a widget double-submitted cannot log the same
+    practice twice and double the day's load. Not a foreign key: the plan is a
+    file, and this is a record of what it said at the time rather than a live
+    pointer into a file that can be re-edited underneath it."""
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def load(self) -> int:
@@ -795,7 +804,40 @@ class PrescribedBlock(Base):
     """The easier option, when there is one. Doing it counts as done -- a
     regression you get no credit for is a regression you skip."""
 
+    group: str | None = None
+    """Which standing commitment this is part of, if any. `practice` binds a
+    HIIT block and a technique block into one card with one button -- they are
+    one session that happens to be logged as two rows, and making them two
+    cards would be asking twice for a thing you did once."""
+
+    extra: bool = False
+    """Offered on the card, never prescribed and never owed.
+
+    Sparring and neck are the cases: a practice sometimes contains them and the
+    plan cannot know in advance. They are kept out of the group's completion
+    keys, because a practice bundle that only finished on the days you sparred
+    would be unfinishable four days a week.
+    """
+
     source: str | None = None
+
+
+class PlanGroup(Base):
+    """A point-scoring bundle of prescribed blocks -- one practice, one chip."""
+
+    name: str
+    points: int = Field(ge=0)
+    keys: list[str] = Field(default_factory=list)
+    """The blocks that must all be logged before the points are earned."""
+
+    provisional: bool = False
+    """Offered, but not yet part of the points on offer.
+
+    The Saturday practice that has not started running yet. Counting it toward
+    the denominator would score every Saturday against points that cannot be
+    earned; leaving it out entirely would mean a Saturday you did go was worth
+    nothing. So it joins the total only on a day it is actually logged.
+    """
 
 
 class DayLog(Base):

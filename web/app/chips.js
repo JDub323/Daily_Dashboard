@@ -57,6 +57,62 @@ import { focusPanel, markDone } from "./panel.js";
 import { weightToday } from "./panels/checkin.js";
 import { completionWrite, store } from "./store.js";
 
+/**
+ * What the training plan puts on the day.
+ *
+ * Two kinds of thing, and the split is the plan's own apostrophe:
+ *
+ *   `training`  the blocks the plan asks for outright. Required — it joins the
+ *               ring, and a day the plan prescribes something is a `done/5`.
+ *               Safe to require precisely *because* the plan is what decides:
+ *               a rest day prescribes nothing and the task is simply not
+ *               offered, which is the objection that kept session logging off
+ *               this list until there was a plan to consult.
+ *
+ *   a group     a standing commitment worth points — practice. Optional by
+ *               construction: it has a `points` field, and "required exactly
+ *               when it is worth no points" is still the one definition.
+ *
+ * Done means *every* prescribed block logged, not any. Otherwise a twelve-minute
+ * neck workout would close a Monday that also wanted a lift and half an hour of
+ * cardio.
+ */
+function planTasks(s) {
+  const plan = s.health.plan;
+  if (!plan) return [];
+
+  const logged = new Set(
+    s.health.sessions_today.filter((x) => x.plan_key).map((x) => x.plan_key),
+  );
+  const out = [];
+
+  // Extras are excluded: sparring is a thing a practice sometimes contained,
+  // and a day that could not be finished without it would be unfinishable most
+  // of the week.
+  const owed = plan.today.filter((b) => !b.optional && !b.extra);
+  if (owed.length) {
+    out.push({
+      id: "training",
+      label: owed.length > 1 ? `training (${owed.length})` : "training",
+      done: owed.every((b) => logged.has(b.key)),
+      panel: "plan",
+    });
+  }
+
+  for (const group of plan.groups) {
+    if (!group.keys.length) continue;
+    out.push({
+      id: `plan:${group.name}`,
+      label: group.name,
+      done: group.keys.every((key) => logged.has(key)),
+      panel: "plan",
+      points: group.points,
+      provisional: group.provisional,
+    });
+  }
+  return out;
+}
+
 function tasks() {
   const s = store.state;
   // Filtered at the end: an unconfigured debate has no chip at all, rather
@@ -102,6 +158,11 @@ function tasks() {
       done: weightToday(s) !== null && Boolean(s.health.readiness_today),
       panel: "checkin",
     },
+
+    // The training plan's own tasks. Placed here rather than in the list below
+    // because the required one belongs beside the other required ones — `n`
+    // walks required first, and a lift you owe should come before a Wordle.
+    ...planTasks(s),
 
     // --- optional: points, not obligations ---------------------------------
     {
@@ -207,7 +268,16 @@ export function score(list) {
   const layer = optional(list);
   return {
     earned: layer.reduce((sum, task) => sum + (task.done ? task.points : 0), 0),
-    available: layer.reduce((sum, task) => sum + task.points, 0),
+    // A `provisional` task counts toward the total only on a day it was
+    // actually done. That is the Saturday practice which will start running at
+    // some point and has not yet: leaving it in the denominator would score
+    // every Saturday between now and then against three points that cannot be
+    // earned, and taking it out entirely would make a Saturday you did go worth
+    // nothing. Never a penalty, always a reward.
+    available: layer.reduce(
+      (sum, task) => sum + (task.provisional && !task.done ? 0 : task.points),
+      0,
+    ),
   };
 }
 
@@ -257,6 +327,11 @@ export async function renderChips() {
     const task = list.find((entry) => entry.id === id);
     if (task) markDone(id, task.done);
   }
+
+  // The plan panel holds several tasks, so it goes gold only when the day's
+  // training is finished outright — a card still open is a panel still owed.
+  const training = list.filter((task) => task.panel === "plan");
+  if (training.length) markDone("plan", training.every((task) => task.done));
 
   // The old client fired a save on every page load: it recomputed `pct` as a
   // float and compared it against a stored float, which differed often enough

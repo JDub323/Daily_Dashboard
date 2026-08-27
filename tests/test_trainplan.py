@@ -343,3 +343,204 @@ def test_an_unwritten_week_reaches_the_browser_as_such(client) -> None:
     assert plan["today"] == []
     assert plan["week_planned"] is False
     assert plan["days_out"] == 175
+
+
+# --- standing commitments --------------------------------------------------
+
+PRACTICE = {
+    "recurring": [
+        {
+            "name": "practice",
+            "do": "HIIT+TECH",
+            "days": ["mon"],
+            "optional_days": ["sat"],
+            "extras": ["SPAR", "N"],
+            "points": 3,
+            "starts": "2026-08-10",
+        }
+    ]
+}
+CLUB = {
+    "library": {
+        **LIB["library"],
+        "HIIT": {"name": "conditioning", "label": "HIIT", "kind": "conditioning"},
+        "TECH": {"name": "technique", "label": "technique", "kind": "boxing"},
+        "SPAR": {"name": "sparring", "label": "sparring", "kind": "sparring"},
+    }
+}
+MONDAY = dt.date(2026, 8, 10)
+SATURDAY = dt.date(2026, 8, 15)
+
+
+def club(**over) -> trainplan.Program:
+    return trainplan.Program(name="t", start=SUNDAY, weeks=4, **CLUB, **{**PRACTICE, **over})
+
+
+def test_a_standing_commitment_runs_through_a_week_with_no_block() -> None:
+    """The whole reason `[[recurring]]` is a separate layer.
+
+    Weeks 8-18 of the real camp have no block at all, and practice is the only
+    training in them. Written inside a block it would vanish exactly there.
+    """
+    p = club()
+    assert trainplan.week_planned(p, MONDAY) is False
+    assert [b.token for b in trainplan.prescription(p, MONDAY)] == ["HIIT", "TECH", "SPAR", "N"]
+
+
+def test_a_points_bearing_commitment_never_joins_the_required_layer() -> None:
+    """`required` is still "worth no points", and practice is worth three. So it
+    is offered, nudged and scored, and it cannot break a perfect day."""
+    assert trainplan.required(trainplan.prescription(club(), MONDAY)) == []
+
+
+def test_extras_are_offered_but_kept_out_of_the_completion_keys() -> None:
+    """A practice bundle that only closed on the days you sparred would be
+    unfinishable four days out of five."""
+    p = club()
+    blocks = trainplan.prescription(p, MONDAY)
+    (group,) = trainplan.groups(p, MONDAY, blocks)
+
+    assert [b.token for b in blocks if b.extra] == ["SPAR", "N"]
+    assert group.keys == [f"{MONDAY}:HIIT", f"{MONDAY}:TECH"]
+    assert group.points == 3
+
+
+def test_an_extra_already_prescribed_today_is_not_offered_twice() -> None:
+    """Neck at practice on a day the plan also asks for neck.
+
+    Offering both would mean either logging it twice or leaving the prescribed
+    block permanently unticked, and the first one doubles a day's load.
+    """
+    p = trainplan.Program(
+        name="t", start=SUNDAY, weeks=4, **CLUB, **PRACTICE, block=[{"weeks": "0", "mon": "N"}]
+    )
+    blocks = trainplan.prescription(p, MONDAY)
+    assert [b.token for b in blocks].count("N") == 1
+    # And the one that survives is the prescribed one, which is owed.
+    (neck,) = [b for b in blocks if b.token == "N"]
+    assert neck.extra is False
+    assert neck.optional is False
+
+
+def test_a_provisional_day_is_flagged_rather_than_dropped() -> None:
+    """The Saturday practice that has not started running yet.
+
+    In the denominator it would score every Saturday against three points that
+    cannot be earned; absent entirely, a Saturday you did go would be worth
+    nothing. So it is offered and marked.
+    """
+    p = club()
+    (weekday,) = trainplan.groups(p, MONDAY, trainplan.prescription(p, MONDAY))
+    (saturday,) = trainplan.groups(p, SATURDAY, trainplan.prescription(p, SATURDAY))
+    assert weekday.provisional is False
+    assert saturday.provisional is True
+
+
+def test_a_commitment_does_not_run_before_it_starts() -> None:
+    p = club(recurring=[{**PRACTICE["recurring"][0], "starts": "2026-09-01"}])
+    assert trainplan.prescription(p, MONDAY) == []
+    assert trainplan.groups(p, MONDAY, []) == []
+
+
+def test_a_commitment_and_a_block_cannot_prescribe_the_same_token() -> None:
+    """Both land on the same day and are merged into one list of keys, so a
+    token in both would produce two blocks nothing could tell apart."""
+    with pytest.raises(ValidationError, match="both prescribe"):
+        trainplan.Program(
+            name="t",
+            start=SUNDAY,
+            weeks=4,
+            **CLUB,
+            **PRACTICE,
+            block=[{"weeks": "0", "mon": "HIIT"}],
+        )
+
+
+def test_a_recurring_day_must_be_a_real_day() -> None:
+    with pytest.raises(ValidationError, match="not one of"):
+        club(recurring=[{**PRACTICE["recurring"][0], "days": ["monday"]}])
+
+
+# --- logging a card --------------------------------------------------------
+
+CARD_DATE = "2026-10-05"
+
+
+def card(**over) -> dict:
+    return {
+        "date": CARD_DATE,
+        "parts": [
+            {"kind": "conditioning", "rpe": 8, "minutes": 25, "plan_key": f"{CARD_DATE}:HIIT"},
+            {"kind": "boxing", "rpe": 5, "minutes": 45, "plan_key": f"{CARD_DATE}:TECH"},
+        ],
+        **over,
+    }
+
+
+def test_a_card_logs_every_part_as_its_own_session(client) -> None:
+    """The split John asked for, all the way through: conditioning volume and
+    technique volume stay separable because they are separate rows."""
+    panel = client.post("/api/session/card", json=card()).json()
+    logged = panel["sessions_today"]
+
+    assert [s["kind"] for s in logged] == ["conditioning", "boxing"]
+    assert [s["plan_key"] for s in logged] == [f"{CARD_DATE}:HIIT", f"{CARD_DATE}:TECH"]
+    assert panel["derived"]["week_load"] == 8 * 25 + 5 * 45
+
+
+def test_sparring_logged_from_a_card_keeps_its_own_kind(client) -> None:
+    """`SessionKind.sparring` exists because it is the session that costs the
+    most to recover from at equal RPE. Folded into `boxing` by the card, the
+    question of how much of it a camp contained becomes unanswerable."""
+    body = card()
+    body["parts"].append(
+        {"kind": "sparring", "rpe": 9, "minutes": 12, "plan_key": f"{CARD_DATE}:SPAR"}
+    )
+    panel = client.post("/api/session/card", json=body).json()
+    assert [s["kind"] for s in panel["sessions_today"]][-1] == "sparring"
+
+
+def test_replaying_a_card_is_a_conflict_and_does_not_double_the_day(client) -> None:
+    """A double-click, or a second tab. The partial unique index is the guard;
+    this is the guard being reported as a conflict rather than a 500."""
+    first = client.post("/api/session/card", json=card())
+    assert first.status_code == 200
+    load = first.json()["derived"]["week_load"]
+
+    again = client.post("/api/session/card", json=card())
+    assert again.status_code == 409
+    assert "already logged" in again.json()["error"]
+
+    after = client.get("/api/state", params={"date": CARD_DATE}).json()["health"]
+    assert len(after["sessions_today"]) == 2
+    assert after["derived"]["week_load"] == load
+
+
+def test_a_card_that_partly_collides_logs_nothing(client) -> None:
+    """The reason a card is one request. Landing its first row and rejecting its
+    second would leave a half-recorded practice that cannot be resubmitted --
+    the index would reject the replay of the half that got through."""
+    body = card()
+    body["parts"] = [body["parts"][0]]
+    assert client.post("/api/session/card", json=body).status_code == 200
+
+    assert client.post("/api/session/card", json=card()).status_code == 409
+    after = client.get("/api/state", params={"date": CARD_DATE}).json()["health"]
+    assert [s["plan_key"] for s in after["sessions_today"]] == [f"{CARD_DATE}:HIIT"]
+
+
+def test_a_card_cannot_log_one_block_twice_in_a_single_request(client) -> None:
+    body = card()
+    body["parts"][1]["plan_key"] = f"{CARD_DATE}:HIIT"
+    assert client.post("/api/session/card", json=body).status_code == 422
+
+
+def test_freehand_logging_still_carries_no_plan_key(client) -> None:
+    """The `session` panel is untouched and stays the way in for anything the
+    plan never asked for. A freehand row answers no prescribed block, so it can
+    never close a card."""
+    panel = client.post(
+        "/api/session",
+        json={"date": CARD_DATE, "kind": "roadwork", "rpe": 4, "minutes": 30},
+    ).json()
+    assert panel["sessions_today"][-1]["plan_key"] is None

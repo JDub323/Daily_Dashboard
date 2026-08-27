@@ -44,6 +44,7 @@ from .domain import (
     DebateSession,
     MathProblem,
     Paper,
+    PlanGroup,
     PrescribedBlock,
     RatingEvent,
     Readiness,
@@ -351,11 +352,50 @@ class ReadinessRequest(DateBody):
     motivation: int = Field(ge=1, le=5)
 
 
+PlanKey = Annotated[str | None, Field(default=None, min_length=3, max_length=64)]
+"""`<date>:<token>`, or None for a session logged freehand."""
+
+
 class SessionRequest(DateBody):
     kind: SessionKind
     rpe: int = Field(ge=1, le=10)
     minutes: int = Field(ge=1, le=600)
     note: str | None = Field(default=None, max_length=200)
+
+    plan_key: PlanKey = None
+    """Which prescribed block this answers. Defaulted, so the freehand form --
+    which stays -- posts exactly the body it always did."""
+
+
+class SessionPart(Base):
+    """One row of a card. Same shape as a session minus the date, which the
+    card carries once for all of them."""
+
+    kind: SessionKind
+    rpe: int = Field(ge=1, le=10)
+    minutes: int = Field(ge=1, le=600)
+    note: str | None = Field(default=None, max_length=200)
+    plan_key: PlanKey = None
+
+
+class SessionCardRequest(DateBody):
+    """A whole prescribed outing, logged in one go.
+
+    A practice is one thing that happened and, at John's instruction, several
+    rows -- its conditioning and its technique are logged apart so the two
+    volumes stay separable. That decision costs four fields a day; sending them
+    as one request is what stops it also costing two round trips and a
+    half-written day when the second one fails.
+    """
+
+    parts: list[SessionPart] = Field(min_length=1, max_length=6)
+
+    @model_validator(mode="after")
+    def _keys_are_distinct(self) -> SessionCardRequest:
+        keys = [p.plan_key for p in self.parts if p.plan_key]
+        if len(keys) != len(set(keys)):
+            raise ValueError("a card cannot log the same prescribed block twice")
+        return self
 
 
 class SessionDeleteRequest(DateBody):
@@ -916,7 +956,15 @@ class TrainingPlan(Base):
     week_planned: bool = False
     """Whether any block covers this week at all. False through weeks 0-2 (the
     back-of-napkin block) and 8-18 (undecided until VJP has been run and the
-    mentor consulted), and those weeks must not read as prescribed rest."""
+    mentor consulted), and those weeks must not read as prescribed rest.
+
+    Says nothing about `[[recurring]]`: practice runs through the unwritten
+    weeks and is the whole reason it lives in its own layer. A week can have no
+    block and still ask for something every day."""
+
+    groups: list[PlanGroup] = Field(default_factory=list)
+    """The point-scoring bundles today offers -- one per standing commitment
+    that is running. `chips.js` reads these; the widgets read `today`."""
 
     ends: dt.date | None = None
     """The last date any block covers. The panel says this out loud once it is
