@@ -738,6 +738,66 @@ class TrainingSession(Base):
         return self.rpe * self.minutes
 
 
+class PrescribedBlock(Base):
+    """One thing the plan asks for today -- as opposed to `TrainingSession`,
+    which is one thing that happened.
+
+    Never stored. It is compiled out of `training.toml` on every read, and that
+    is the point: the plan is a file that gets edited, and a prescription
+    persisted beside the session it produced would start lying about what the
+    session was measured against the first time a week was rearranged.
+
+    Flat on purpose. Whatever notation the plan is written in -- the
+    spreadsheet's shorthand today, whatever replaces it after February -- it
+    compiles down to this, and this is the only shape the rest of the app sees.
+    """
+
+    key: str
+    """`<date>:<token>`, and the column a session links back through.
+
+    No ordinal and no weekday in it, which is deliberate: the one edit actually
+    expected here is moving a movement to a different day of the week, and this
+    key survives it. The old day stops offering the key, the new day starts, and
+    sessions already logged keep theirs as provenance rather than as a live
+    pointer into a file that has since changed.
+    """
+
+    token: str
+    """As written in the plan, parameter included -- `A3`, `C2`, `LFC`."""
+
+    name: str
+    """What it actually is: `lower french contrast`."""
+
+    label: str
+    """What the panel says: `strength training`. Plainer than `name` because a
+    nudge has to be readable before coffee; both are shown."""
+
+    kind: SessionKind | None = None
+    choose: list[SessionKind] = Field(default_factory=list)
+    """Exactly one of the two is set. `choose` is the cardio slot, where what
+    you did is a real question -- shadowboxing and roadwork are different
+    training, and the difference is only recoverable if it is recorded at the
+    time."""
+
+    asks: str | None = None
+    """The duration the plan asks for, when it asks for one. Printed, never
+    pre-filled: load is rpe x minutes and both have to be measured."""
+
+    detail: str | None = None
+    slot: int = 0
+    """Which outing. Same slot means the same trip out of the house."""
+
+    optional: bool = False
+    """The plan's apostrophe. It decides whether the day owes you a session,
+    which is what makes requiring the session chip safe at all."""
+
+    regress_to: str | None = None
+    """The easier option, when there is one. Doing it counts as done -- a
+    regression you get no credit for is a regression you skip."""
+
+    source: str | None = None
+
+
 class DayLog(Base):
     date: dt.date
     text: str = Field(max_length=2000)

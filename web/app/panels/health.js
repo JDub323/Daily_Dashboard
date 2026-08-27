@@ -19,6 +19,7 @@
 // nothing to do with training and everything to do with when you happened to
 // fall asleep, and the honest window for this kind of signal is a week.
 
+import * as api from "../api.js";
 import { lineChart } from "../charts.js";
 import { el, mount, svg } from "../dom.js";
 import { store } from "../store.js";
@@ -90,6 +91,81 @@ function verdicts(d) {
   return lines;
 }
 
+/**
+ * What to say on a day the plan asks for nothing — and null when it asks for
+ * something, so the caller can just test it.
+ *
+ * Three different sentences on purpose, and this is the whole reason the
+ * function is exported and tested rather than inlined. A rest day the plan
+ * chose, a week nobody has written yet, and a plan that has run out all arrive
+ * as the same empty list, and they mean completely different things. The one
+ * that would do real damage is the middle reading as the first: eleven
+ * unwritten weeks quietly telling you to rest for three months, in a panel
+ * whose entire job is to notice that kind of thing.
+ */
+export function emptyLine(plan, today) {
+  if (plan.today.length) return null;
+  if (plan.week_planned) return "rest day.";
+  return plan.ends && plan.ends < today
+    ? `the plan runs out on ${plan.ends}. nothing written past it yet.`
+    : "no plan written for this week.";
+}
+
+/**
+ * The camp: how far out the fight is, and what today is asking for.
+ *
+ * Read-only. Filling these in is the session panel's job; this is the panel
+ * that answers "what is the state of my training", the countdown belongs to
+ * that question, and the day's list belongs beside it because the first thing
+ * a plan is for is remembering what you are supposed to be doing.
+ */
+function camp(plan) {
+  if (!plan) return null;
+
+  const asks = plan.today;
+  const outings = [...new Set(asks.map((b) => b.slot))].sort((a, b) => a - b);
+  const empty = emptyLine(plan, api.today());
+
+  return el("div.camp", null,
+    el("div.figure-row", null,
+      plan.days_out != null
+        ? el("span.figure", { text: String(plan.days_out) })
+        : null,
+      plan.days_out != null
+        ? el("span.figure-unit", { text: "days out" })
+        : null,
+      plan.week != null
+        ? el("span.figure-label", { text: `week ${plan.week} of ${plan.weeks}` })
+        : null,
+    ),
+    empty
+      ? el("div.faint.gap", { text: empty })
+      : el("div.asks", null,
+          ...outings.map((slot) =>
+            // One row per outing, because `*` in the plan means a separate trip
+            // out of the house and `+` means the same one. Collapsing them
+            // would lose the only thing the notation says about your day's
+            // shape rather than its contents.
+            el("div.row.spread.gap", null,
+              el("span", null,
+                ...asks
+                  .filter((b) => b.slot === slot)
+                  .flatMap((b, i) => [
+                    i ? el("span.faint", { text: " + " }) : null,
+                    el("span.value", { text: b.label }),
+                    b.asks ? el("span.faint", { text: ` ${b.asks}` }) : null,
+                    b.optional ? el("span.faint", { text: " (optional)" }) : null,
+                  ]),
+              ),
+              el("span.faint", {
+                text: asks.filter((b) => b.slot === slot).map((b) => b.name).join(" + "),
+              }),
+            ),
+          ),
+        ),
+  );
+}
+
 /** Daily load, as bars. The gaps are rest days and are the interesting part. */
 function loadBars(loads, { w = 300, h = 60 } = {}) {
   if (!loads?.length) return null;
@@ -136,7 +212,15 @@ export default {
         : null,
     );
 
+    // The camp leads. Once there is a fight on the calendar, "how long have I
+    // got" is the question every other number on this panel is in service of —
+    // and unlike the rest of them it is true on day one, because a countdown
+    // needs no history to be honest.
+    const strip = camp(panel.plan);
+
     mount(node,
+      strip,
+      strip ? el("div.divider") : null,
       head,
       lines.length
         ? el("div.verdicts", null,

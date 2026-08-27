@@ -677,6 +677,18 @@ svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(-
 /* The verdicts. Body-sized rather than --t-meta on purpose: these are the
    sentences the tab exists to produce, and the charts under them are the
    supporting evidence, not the other way round. */
+/* ---- the camp ----
+   The countdown reuses .figure-row wholesale, so "175 days out" is set in the
+   same type as "1420 load this week" — they are the same kind of fact and the
+   tab would read as two panels stapled together if they were not.
+
+   .asks is one row per outing. The plain label sits left and the real name of
+   the session sits right, dimmed: the left column is what you are being nudged
+   about and the right is what you look up when you have forgotten what upper
+   french contrast involves. */
+.asks { display: flex; flex-direction: column; gap: var(--s1); }
+.asks > .row { margin: 0; align-items: baseline; }
+
 .verdicts { margin: var(--s3) 0 var(--s2); display: flex; flex-direction: column; gap: var(--s2); }
 .verdict-line { line-height: 1.55; border-left: 2px solid var(--border); padding-left: var(--s3); }
 .verdict-line.bad { border-left-color: var(--bad); }

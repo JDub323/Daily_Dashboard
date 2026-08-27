@@ -1,0 +1,202 @@
+# The training plan: what a given day asks of you.
+#
+# Read by the server, never written to -- the same rule as problems.json and
+# spelling.json. What *happened* lives in `training_session`; this file is only
+# ever what was *asked*, and the two are deliberately different tables.
+#
+# --- the two halves of this file -------------------------------------------
+#
+# [library] is the dictionary: what a token means, what it is called on screen,
+# and which SessionKind a log of it lands in. Hand-owned.
+#
+# [[block]] is the schedule, and it is a TRANSCRIPTION of
+# "8_10_26-12_31_26 TOURNAMENT PREP.xlsx", which stays the source of truth.
+# Re-translating that sheet overwrites every [[block]] below. If you hand-edit
+# a block and then ask for a re-translation, say what you changed or it is gone.
+#
+# --- the notation ----------------------------------------------------------
+#
+# Straight from the sheet's own index, because it is a perfectly good little
+# grammar and the point of writing a parser once is that you keep thinking in
+# the notation you already think in:
+#
+#   A+B     one outing, two things            (`+` = add two workouts together)
+#   A * B   two outings, spaced apart         (`*` = two workouts spaced apart)
+#   X'      optional                          (apostrophe makes it optional)
+#   X'Y     do X, or regress to Y if cooked
+#   A3      a parameter -- for `A`, deciminutes, so A3 is 30 minutes
+#
+# `+` binds tighter than `*`. Tokens are matched longest-first against the
+# library, which is what keeps `LFC` from being read as `LC` and `VO2` from
+# being read as `V` carrying a parameter.
+#
+# --- what a parameter is NOT -----------------------------------------------
+#
+# `A3` says "thirty minutes of cardio" and that is where its influence stops:
+# it is printed as part of what the day asks for, and it never pre-fills the
+# minutes box. The plan says what to do; you report what you did. Load is
+# rpe x minutes and both halves have to be measured rather than assumed, or
+# every number downstream in health.py is a plausible fiction.
+
+[program]
+name = "tournament prep"
+
+# Week 0. A Sunday, and checked at startup that it is one -- the sheet's grid
+# runs Sunday to Saturday and an off-by-one here would silently shift the whole
+# camp by a day.
+start = 2026-08-09
+
+# Weeks 0-27 inclusive.
+weeks = 28
+
+# The Wednesday of the week containing 2027-02-17 is 2027-02-17 itself, and it
+# falls in week 27 -- the last week of the program. That the sheet's "weeks
+# 19-27 are in the new year" note lands exactly here is the reason to believe
+# both numbers.
+fight = 2027-02-17
+
+
+# --- the library -----------------------------------------------------------
+#
+# `name` is what the session actually is. `label` is what the panel says, and
+# it is deliberately plainer: "strength training" is a thing you can be nudged
+# about at 7am, "lower french contrast" is a thing you look up. Both are shown
+# -- label as the headline, name underneath -- so the nudge stays readable
+# without the plan becoming vague about what it is asking for.
+#
+# `kind` is the SessionKind a log lands in, and it is the whole reason this
+# file and the session table can be compared at all.
+#
+# Deliberately absent: `minutes` and `rpe`. Neither is guessed here. See the
+# note on parameters above.
+
+[library.LFC]
+name = "lower french contrast"
+label = "strength training"
+kind = "strength"
+detail = "VJP Monday. CNS work, vertical test, then the contrast circuit: band-resisted back squat clusters, drop jump, DB jump w/ pause, band-assisted jump, single-leg toes-up squat, ankle shuffle. 25s between cluster sets and exercises, 2 min between rounds."
+
+[library.UFC]
+name = "upper french contrast"
+label = "strength training"
+kind = "strength"
+detail = "VJP Tuesday. Med ball scoop/slam, iso bench pin press, then band-resisted close-grip bench clusters through the circuit. Optional 10-15 min explosive sport action at the end."
+
+[library.LC]
+name = "lower concentrics"
+label = "strength training"
+kind = "strength"
+detail = "VJP Thursday. Box jump, iso calf raise, vertical test, then trap bar deadlift conc-only-drop, bulgarians, hip thrust, back extension. 30-45s between everything; loads 55-60% of 1RM."
+
+[library.UC]
+name = "upper concentrics"
+label = "strength training"
+kind = "strength"
+detail = "VJP Friday. Med ball slam, rotation pass, pogo hops, then close-grip bench / 1-arm row / push-press / chin-up, all conc-only-drop, finishing on farmers walks."
+
+[library.P]
+name = "potentiation"
+label = "potentiation"
+kind = "strength"
+detail = "VJP's optional Sunday session, moved to Saturday. Explosive, low volume, nothing that needs recovering from."
+
+[library.VO2]
+name = "intervals"
+label = "intervals"
+kind = "conditioning"
+detail = "Weeks 1-2: 15s at 70%, 60s rest, 6 reps; 2 min; repeat. Weeks 3-4: 10s at 75%, 45s rest, 6 reps; 2 min; repeat. Week 5: 5s at 80%, 60s rest, 6 reps."
+
+[library.A]
+name = "cardio, your choice"
+label = "cardio"
+param = "deciminutes"
+# No `kind`: this is the one token where what you did is a real question rather
+# than a formality. Until November the gym is shut and there is no sparring, so
+# the shadowboxing that fills these slots IS the technique work -- and if it all
+# logged as `conditioning`, then in November there would be no way to ask how
+# much technique survived the closure. One tap, and the answer stays available.
+choose = ["roadwork", "boxing", "conditioning"]
+detail = "Shadowboxing, or roadwork with shadowboxing in it. Preference order was technique > running > stairs > elliptical."
+
+[library.N]
+name = "neck"
+label = "neck"
+# `other`, not `strength`. A twelve-minute neck circuit folded into the lifting
+# bucket quietly inflates strength volume, and `kind` exists to answer "how much
+# of X did I actually do".
+kind = "other"
+detail = "5 min cardio, slow neck rolls L/R, optional tspine/scaps/traps. Isometrics: flexion, extension, lateral L/R. Then 5-10 reps from failure on each, plus twists."
+
+[library.C]
+name = "core"
+label = "core"
+kind = "other"
+param = "index"
+detail = "The VJP core circuit, twice through."
+
+[library.R]
+name = "1x20"
+label = "1x20"
+kind = "strength"
+detail = "Sets of 20 on every basic movement of the body. Low volume, joint support, a deload rather than a session."
+
+
+# --- the schedule ----------------------------------------------------------
+#
+# Transcribed from the sheet. Weeks 0-2 are blank there (the back-of-napkin
+# block before the structured one) and so are weeks 8-18, which is not an
+# omission: VJP is five weeks long and runs out on 2026-10-03. What comes after
+# is not decided yet, and a plan that invented something for those weeks would
+# be worse than one that says nothing.
+#
+# Camp weeks 3-7 are VJP weeks 1-5 exactly. The tell is week 7: VJP's week 5 is
+# the one that drops the optional Sunday potentiation, and week 7 is the one row
+# in the sheet with an empty Saturday.
+
+[[block]]
+weeks = "3"
+source = "VJP week 1"
+sun = "R'"
+mon = "LFC+N * A3"
+tue = "UFC+C1'"
+wed = "VO2 * A3+N"
+thu = "LC"
+fri = "UC+C2'1 * A3+N"
+sat = "P'"
+
+# Identical to week 3 but for Monday, where the neck moves off the lift and onto
+# the cardio. That is the sheet's own open question -- "figure out what is
+# better: neck in morning or afternoon as cool down" -- and it is an A/B test
+# that has been unanswerable until now for want of anywhere to read the result.
+[[block]]
+weeks = "4"
+source = "VJP week 2"
+sun = "R'"
+mon = "LFC * A3+N"
+tue = "UFC+C1'"
+wed = "VO2 * A3+N"
+thu = "LC"
+fri = "UC+C2'1 * A3+N"
+sat = "P'"
+
+# Sunday's rest workout stops being optional, and the core progresses.
+[[block]]
+weeks = "5-6"
+source = "VJP weeks 3-4"
+sun = "R"
+mon = "LFC * A3+N"
+tue = "UFC+C2'1"
+wed = "VO2 * A3+N"
+thu = "LC"
+fri = "UC+C2 * A3+N"
+sat = "P'"
+
+[[block]]
+weeks = "7"
+source = "VJP week 5"
+sun = "R'"
+mon = "LFC * A3+N"
+tue = "UFC+C2"
+wed = "VO2 * A3+N"
+thu = "LC"
+fri = "UC+C2 * A3+N"

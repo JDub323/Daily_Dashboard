@@ -16,7 +16,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import NamedTuple
 
-from . import content, debate, health, scoring, spelling, tricks
+from . import content, debate, health, scoring, spelling, trainplan, tricks
 from .config import Settings
 from .db.repository import ARGUMENT_AREA, TRICK_AREA, Repository
 from .models import api
@@ -714,7 +714,30 @@ def health_series(repo: Repository) -> list[api.HealthSeries]:
     ]
 
 
-def health_panel(repo: Repository, today: dt.date) -> api.HealthPanel:
+def training_plan(cfg: Settings, today: dt.date) -> api.TrainingPlan | None:
+    """The camp, as the panel needs it. None when there is no plan file.
+
+    Note what is *not* here: anything comparing the plan to the log. The
+    prescription is what was asked and the sessions are what happened, and
+    keeping the join out of this function is what lets the plan be edited
+    without a month of history quietly changing meaning.
+    """
+    program = trainplan.program(cfg.path("training"))
+    if program is None:
+        return None
+    return api.TrainingPlan(
+        name=program.name,
+        fight=program.fight,
+        days_out=trainplan.days_out(program, today),
+        week=trainplan.camp_week(program, today),
+        weeks=program.weeks,
+        today=trainplan.prescription(program, today),
+        week_planned=trainplan.week_planned(program, today),
+        ends=trainplan.plan_ends(program),
+    )
+
+
+def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthPanel:
     """The health tab, assembled.
 
     The sessions are read whole (see `Repository.sessions`) and windowed here,
@@ -754,6 +777,7 @@ def health_panel(repo: Repository, today: dt.date) -> api.HealthPanel:
             readiness_sd=baseline[1] if baseline else None,
             readiness_dip_days=health.readiness_dip(entries, today),
         ),
+        plan=training_plan(cfg, today),
     )
 
 
@@ -773,7 +797,7 @@ def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.Dash
         games=games_panel(repo, today),
         theorems=theorems_panel(repo, today),
         papers=papers_panel(repo, today),
-        health=health_panel(repo, today),
+        health=health_panel(cfg, repo, today),
         daylog=repo.daylog(today),
         completion=repo.completions(),
         perfect_day_streak=scoring.streak(repo.perfect_days(), today),

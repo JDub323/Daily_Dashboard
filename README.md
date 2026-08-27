@@ -13,6 +13,7 @@ If the page says **"didn't send any data"**, something else already owns the por
 
 - **Config**: `config.toml` — topic rotation, tickers, feeds, port, pricing, tier anchors, per-topic theorem library. No constant lives in source any more; `DASHBOARD_CONFIG` overrides the path.
 - **Topic rotation**: `[math].rotation` is a 25-week cycle weighted by how much of the Putnam each area is — analysis 7 slots, algebra 6, combinatorics 5, number theory 4, geometry 2, probability 1 — with each area split into topics narrow enough to study in a week. It advances **every Sunday**, in the browser's timezone, indexed from `rotation_start` (which must itself be a Sunday, checked at startup). Empty the list to pin a single `topic_of_week` instead. A topic with no `[topic_library]` entry costs one LLM call the first time it comes up, then is cached in `topic_info` forever.
+- **Training plan**: `training.toml` — what a day *asks* of you, as against `training_session`, which is what happened. Two halves: `[library]` says what a token means and which `SessionKind` a log of it lands in, and `[[block]]` is the week grid, transcribed from `8_10_26-12_31_26 TOURNAMENT PREP.xlsx`, which stays the source of truth. **Re-translating that sheet overwrites every `[[block]]`.** The schedule is written in the sheet's own shorthand (`LFC+N * A3` — `+` joins one outing, `*` splits two, `'` marks optional, `X'Y` regresses to Y, `A3` is 30 minutes) because filling in a week should cost one line. Absent is a supported state: no file means no camp, and every panel renders that as silence. Malformed is *not* — it raises, at boot and on re-read, because silence is already this feature's answer to a rest day and a typo must not be indistinguishable from one.
 - **Secrets**: `.env` with `ANTHROPIC_API_KEY=...` (gitignored).
 - **Data**: `dashboard.db` (SQLite, gitignored). `problems.json` is a hand-curated *pool* — the server reads it and never writes to it; drop a problem in and it gets served before any LLM call is paid for.
 - **Calendar**: runs gcalcli directly as an argv list (prefixed with `wsl -e` when the server is on Windows), so gcalcli must be authed in WSL. stdin is closed on every call — gcalcli drops to an interactive menu whenever a subcommand cannot resolve its target calendar, and with stdin inherited that menu *hangs* until the timeout instead of failing. Every write names its `--calendar`, for the same reason.
@@ -28,7 +29,7 @@ If the page says **"didn't send any data"**, something else already owns the por
 PY=~/.local/share/daily-dashboard/venv/bin; $PY/python -m pytest && npm test && $PY/ruff check . && $PY/ruff format --check .
 ```
 
-860 Python tests and 91 JavaScript ones; none touch the network, the API, `dashboard.db`, or `state.json`. The JS runner is node's built-in `node --test`, so there is nothing to `npm install`.
+883 Python tests and 97 JavaScript ones; none touch the network, the API, `dashboard.db`, or `state.json`. The JS runner is node's built-in `node --test`, so there is nothing to `npm install`.
 
 The suite is weighted toward the code that was hardest to check by hand: the elo curve, the hint penalty, the theorem draw, streaks, the LaTeX-in-JSON repair, the cache's exception policy and staleness flag, the day-rollover guards, the double-submit guards, and the `state.json` importer's PROVENANCE/PRESERVE rules.
 
@@ -40,6 +41,7 @@ dashboard/            the server
   logs.py       logging setup
   scoring.py    elo, the theorem draw, streaks — pure, no DB/network/clock
   spelling.py   the bee: the pool, the draw, the marking — pure
+  trainplan.py  training.toml -> what today asks for — pure, no DB/clock
   tricks.py     the trick of the day: the marking, the callback — pure
   llm.py        one streaming Anthropic client + cost accounting
   feeds.py      RSS, Yahoo, arXiv, lichess, gcalcli + the stale-tolerant cache

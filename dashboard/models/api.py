@@ -44,6 +44,7 @@ from .domain import (
     DebateSession,
     MathProblem,
     Paper,
+    PrescribedBlock,
     RatingEvent,
     Readiness,
     SpellingWord,
@@ -888,6 +889,42 @@ class HealthDerived(Base):
     """Consecutive mornings a full SD below baseline. The panel speaks at 3."""
 
 
+class TrainingPlan(Base):
+    """The camp: how far out the fight is, and what today asks for.
+
+    Every field here is allowed to be absent, and absent renders as silence
+    rather than as a placeholder -- the same rule `HealthDerived` follows. There
+    is no plan for eleven of the twenty-eight weeks and that is a real state,
+    not a gap to paper over.
+    """
+
+    name: str
+    fight: dt.date | None = None
+    days_out: int | None = None
+    """None when no fight is set or it has already happened."""
+
+    week: int | None = None
+    """Which week of the camp today is, or None outside it."""
+
+    weeks: int
+
+    today: list[PrescribedBlock] = Field(default_factory=list)
+    """Empty on a rest day *and* on an unwritten week -- `week_planned` is what
+    tells those apart, and the difference matters: one of them is the plan
+    working."""
+
+    week_planned: bool = False
+    """Whether any block covers this week at all. False through weeks 0-2 (the
+    back-of-napkin block) and 8-18 (undecided until VJP has been run and the
+    mentor consulted), and those weeks must not read as prescribed rest."""
+
+    ends: dt.date | None = None
+    """The last date any block covers. The panel says this out loud once it is
+    behind us, because a schedule that has run out and a schedule that says
+    "rest" look identical from the inside, and only one of them means you have
+    a decision to make."""
+
+
 class HealthPanel(Base):
     """The health tab's whole payload.
 
@@ -906,6 +943,10 @@ class HealthPanel(Base):
     bar chart, and the reason it has gaps in it."""
 
     derived: HealthDerived = Field(default_factory=HealthDerived)
+
+    plan: TrainingPlan | None = None
+    """None when there is no `training.toml` at all -- no camp on, and the tab
+    goes back to being the log it was before."""
 
 
 class DashboardState(Base):

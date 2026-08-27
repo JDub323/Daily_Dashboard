@@ -20,6 +20,9 @@ problems = "problems.json"  # hand-curated seed pool, read-only to the server
 metrics = "metrics.jsonl"
 static = "web"        # index.html, style.css, app/*.js, data/, vendor/katex
 spelling = "spelling.json"  # the hand-curated word pool, read-only to the server
+# What the day asks of you. Read-only to the server, hand-edited, and optional
+# -- no file means no camp is on. See dashboard/trainplan.py.
+training = "training.toml"
 # Rendered issue dossiers, one markdown file per issue. Written by the server,
 # never read by it -- the database is the record and these exist to be grepped.
 dossiers = "dossiers"

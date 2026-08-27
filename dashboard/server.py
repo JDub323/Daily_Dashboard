@@ -1502,12 +1502,12 @@ def _register(app: FastAPI) -> None:
     # deliberately never been taught to compute.
 
     @app.post("/api/health")
-    def health_log(repo: Repo, body: api.HealthLogRequest) -> api.HealthPanel:
+    def health_log(cfg: Cfg, repo: Repo, body: api.HealthLogRequest) -> api.HealthPanel:
         repo.log_health(body.metric, body.date, body.value, body.source)
-        return state.health_panel(repo, body.date)
+        return state.health_panel(cfg, repo, body.date)
 
     @app.post("/api/readiness")
-    def readiness(repo: Repo, body: api.ReadinessRequest) -> api.HealthPanel:
+    def readiness(cfg: Cfg, repo: Repo, body: api.ReadinessRequest) -> api.HealthPanel:
         repo.log_readiness(
             body.date,
             body.sleep_quality,
@@ -1516,22 +1516,22 @@ def _register(app: FastAPI) -> None:
             body.stress,
             body.motivation,
         )
-        return state.health_panel(repo, body.date)
+        return state.health_panel(cfg, repo, body.date)
 
     @app.post("/api/session")
-    def session_add(repo: Repo, body: api.SessionRequest) -> api.HealthPanel:
+    def session_add(cfg: Cfg, repo: Repo, body: api.SessionRequest) -> api.HealthPanel:
         repo.add_session(body.date, body.kind, body.rpe, body.minutes, body.note)
-        return state.health_panel(repo, body.date)
+        return state.health_panel(cfg, repo, body.date)
 
     @app.post("/api/session/delete")
-    def session_delete(repo: Repo, body: api.SessionDeleteRequest) -> api.HealthPanel:
+    def session_delete(cfg: Cfg, repo: Repo, body: api.SessionDeleteRequest) -> api.HealthPanel:
         # POST rather than DELETE, and the id in the body rather than the path,
         # because the response needs `date` to rebuild the panel -- and "today"
         # is the browser's to name, never this process's. A DELETE with the id
         # in the path would have had the server reach for its own clock.
         if not repo.delete_session(body.session_id):
             raise LookupError(f"no session {body.session_id}")
-        return state.health_panel(repo, body.date)
+        return state.health_panel(cfg, repo, body.date)
 
     @app.post("/api/daylog")
     def daylog(repo: Repo, body: api.DayLogRequest) -> dict[str, bool]:

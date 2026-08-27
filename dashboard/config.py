@@ -84,6 +84,14 @@ class PathSettings(Base):
     """What you want to read, in your own words. Optional -- absent means the
     arXiv candidate stays in arXiv's own order. See `dashboard/interests.py`."""
 
+    training: str = "training.toml"
+    """The training plan -- what a day asks of you, as opposed to what you did.
+
+    Read-only to the server and hand-edited, like `spelling.json`. Optional: an
+    absent file means no camp is on, and every panel renders that as silence
+    rather than as an error. See `dashboard/trainplan.py`.
+    """
+
     positions: str = "positions.csv"
     """The brokerage positions export. Gitignored, and the one file here whose
     absence is the normal case -- a fresh clone has none and the panel says so.
