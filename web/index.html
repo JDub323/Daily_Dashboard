@@ -9,7 +9,38 @@
 <script defer src="/vendor/katex/katex.min.js"></script>
 <script defer src="/vendor/katex/auto-render.min.js"></script>
 <link rel="stylesheet" href="/style.css">
-</head><body>
+</head><body class="booting">
+
+<!-- The title screen.
+     Markup rather than JS-built, and `body.booting` hides the shell behind it,
+     because a title screen that appears a beat *after* the dashboard has
+     already painted is not a title screen — it is a thing that interrupts you.
+     This way the first frame the browser paints is already the right one.
+     splash.js only fills in the two data lines and owns the way out. -->
+<div id="splash" tabindex="-1" role="dialog" aria-label="sharpness — press enter to begin">
+  <div class="sp-art" aria-hidden="true">
+    <div class="sp-glow"></div>
+    <div class="sp-stars"></div>
+    <div class="sp-stars2"></div>
+    <div class="sp-horizon"></div>
+  </div>
+  <div class="sp-frame">
+    <div></div>
+    <div class="sp-logo">
+      <h1>Sharpness</h1>
+      <div class="sp-rule"></div>
+      <div class="sp-sub" id="sp-sub">FIGHT CAMP</div>
+    </div>
+    <div class="sp-press">PRESS ENTER</div>
+  </div>
+  <div class="sp-bar" aria-hidden="true">
+    <span id="sp-file">FILE 01</span>
+    <span id="sp-fight"></span>
+  </div>
+  <div class="sp-vig" aria-hidden="true"></div>
+  <div class="sp-grain" aria-hidden="true"></div>
+  <div class="sp-scan" aria-hidden="true"></div>
+</div>
 
 <!-- The per-tab backdrop. A sibling of the content rather than a body
      background, because it has to be swappable and fadeable without the

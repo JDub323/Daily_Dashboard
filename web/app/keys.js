@@ -35,6 +35,7 @@ import { chipTasks, openNextUnfinished, required, score } from "./chips.js";
 import { $, el } from "./dom.js";
 import * as nav from "./nav.js";
 import { panelEnter, quickStart } from "./panel.js";
+import { splashOpen } from "./splash.js";
 import { TABS, activateNth, cycle } from "./tabs.js";
 import { openModal, toast } from "./ui.js";
 
@@ -222,6 +223,13 @@ function openHelp() {
 export function initKeys() {
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.metaKey) return;
+
+    // The title screen, ahead of even Alt-hjkl. splash.js already stops these
+    // events in the capture phase, so this is the second lock rather than the
+    // first — but the coupling is worth writing down where the other gates
+    // are, because a binding added below would otherwise look safe and fire
+    // at a dashboard nobody can see.
+    if (splashOpen()) return;
 
     // Alt-hjkl, ahead of every gate. This is the key that has to work when you
     // are somewhere you did not mean to be — three fields deep in a form, or

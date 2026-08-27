@@ -44,6 +44,7 @@ import { activity } from "./panels/stats.js";
 import theorem from "./panels/theorem.js";
 import tricks from "./panels/tricks.js";
 import word from "./panels/word.js";
+import { initSplash, onSplashDismiss, paintSplash, showSplash } from "./splash.js";
 import { dayHasTurned, loadState, store, subscribe } from "./store.js";
 import { initTabs, onTabChange } from "./tabs.js";
 import { initModal, onModalClose, toast } from "./ui.js";
@@ -205,6 +206,10 @@ async function rollOver() {
   rerenderAll();
   await renderChips();
   await loadTopic();
+  // A new day is the one rollover worth announcing. The screen is already up
+  // if this was triggered by waking from sleep, and showSplash is a no-op then.
+  showSplash("day");
+  paintSplash(store.state?.health?.plan ?? {});
 }
 
 /** Start a rollover if the day turned. True if one is now in flight. */
@@ -241,6 +246,16 @@ function watchForNewDay() {
 // --- boot ------------------------------------------------------------------
 
 async function boot() {
+  // First, and before anything can paint: the title screen is the cover for
+  // everything below it. index.html ships with it already up, so this is only
+  // wiring up the way out and the four things that bring it back.
+  initSplash();
+  // Waking and going idle both leave the live panels holding data from
+  // whenever you last looked. The rollover path does its own, heavier refresh.
+  onSplashDismiss((reason) => {
+    if (reason === "wake" || reason === "idle") refreshLive();
+  });
+
   initTabs();
   initModal();
   initNav();
@@ -257,6 +272,12 @@ async function boot() {
   }
 
   await loadState();
+
+  // The save-file line, now that there is a day to report. Everything above
+  // rendered fine without it — the countdown is absent rather than zero until
+  // this point, which is what makes it safe to raise the screen before the
+  // fetch rather than after.
+  paintSplash(store.state?.health?.plan ?? {});
 
   // Before the panels mount, so the first paint of each x-of-the-day cell is
   // already its busy line. Deliberately not awaited: the word is a generation
