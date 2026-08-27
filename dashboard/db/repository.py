@@ -21,6 +21,7 @@ from typing import Any
 from .. import scoring
 from ..models import domain as d
 from ..models.common import (
+    BathroomKind,
     ChessOutcome,
     ChessStatus,
     DebateStatus,
@@ -30,10 +31,14 @@ from ..models.common import (
     HealthMetric,
     MathOutcome,
     MathStatus,
+    MealSize,
     PaperStatus,
     Provenance,
     SessionKind,
+    Stool,
     Track,
+    UrineColor,
+    Volume,
 )
 from .connection import transaction
 
@@ -2180,6 +2185,121 @@ class Repository:
         """
         rows = self.conn.execute("SELECT * FROM training_session ORDER BY date, id").fetchall()
         return [d.TrainingSession(**dict(r)) for r in rows]
+
+    # -- what goes in and what comes out ------------------------------------
+    #
+    # Both logs are append-only and many-per-day, like sessions and unlike
+    # every scalar in `health_entry`. There is no upsert anywhere below: a
+    # second lunch is a second row, and the way to fix a mistyped one is to
+    # delete it, which costs one keystroke on the panel.
+    #
+    # Both are also read *whole* by the panel, for the reason `sessions`
+    # explains at length: `health.py` gates its readings on how much history
+    # it was handed, so handing it a trailing week would make three days of
+    # logging look like a kept log and open every gate at once.
+
+    def add_bathroom(
+        self,
+        date: dt.date,
+        hour: int,
+        kind: BathroomKind,
+        volume: Volume,
+        solidity: Stool | None = None,
+        color: UrineColor | None = None,
+    ) -> d.BathroomLog:
+        """Append one visit.
+
+        The kind/field pairing is not checked here. The table's own CHECK does
+        it, so a row that describes the colour of a stool is impossible for
+        anything that opens this file rather than merely for callers who came
+        through this method.
+        """
+        row = self.conn.execute(
+            "INSERT INTO bathroom_log (date, hour, kind, solidity, color, volume) "
+            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+            (
+                _iso(date),
+                hour,
+                BathroomKind(kind).value,
+                Stool(solidity).value if solidity else None,
+                UrineColor(color).value if color else None,
+                Volume(volume).value,
+            ),
+        ).fetchone()
+        return d.BathroomLog(**dict(row))
+
+    def delete_bathroom(self, entry_id: int) -> bool:
+        cur = self.conn.execute("DELETE FROM bathroom_log WHERE id = ?", (entry_id,))
+        return cur.rowcount > 0
+
+    def bathroom_on(self, date: dt.date) -> list[d.BathroomLog]:
+        """One day, in time order -- which is the order the pattern is in."""
+        rows = self.conn.execute(
+            "SELECT * FROM bathroom_log WHERE date = ? ORDER BY hour, id", (_iso(date),)
+        ).fetchall()
+        return [d.BathroomLog(**dict(r)) for r in rows]
+
+    def bathroom_history(
+        self, days: int = 60, before: dt.date | None = None
+    ) -> list[d.BathroomLog]:
+        """The trailing window, oldest first.
+
+        Windowed where `sessions` is not, and the difference is volume: this
+        table grows at four to eight rows a day rather than one, so a year of
+        it is thousands of rows to answer a question whose longest window is
+        twenty-eight days. `before` is the browser's today; without one the
+        window is open-ended, which is what the tests and the CLI want.
+        """
+        if before is None:
+            rows = self.conn.execute(
+                "SELECT * FROM bathroom_log ORDER BY date DESC, hour DESC LIMIT ?", (days * 12,)
+            ).fetchall()
+            return [d.BathroomLog(**dict(r)) for r in reversed(rows)]
+        start = before - dt.timedelta(days=days - 1)
+        rows = self.conn.execute(
+            "SELECT * FROM bathroom_log WHERE date BETWEEN ? AND ? ORDER BY date, hour, id",
+            (_iso(start), _iso(before)),
+        ).fetchall()
+        return [d.BathroomLog(**dict(r)) for r in rows]
+
+    def add_meal(
+        self,
+        date: dt.date,
+        hour: int,
+        size: MealSize,
+        quality: int,
+        note: str | None = None,
+    ) -> d.MealLog:
+        row = self.conn.execute(
+            "INSERT INTO meal_log (date, hour, size, quality, note) "
+            "VALUES (?, ?, ?, ?, ?) RETURNING *",
+            (_iso(date), hour, MealSize(size).value, quality, note or None),
+        ).fetchone()
+        return d.MealLog(**dict(row))
+
+    def delete_meal(self, entry_id: int) -> bool:
+        cur = self.conn.execute("DELETE FROM meal_log WHERE id = ?", (entry_id,))
+        return cur.rowcount > 0
+
+    def meals_on(self, date: dt.date) -> list[d.MealLog]:
+        rows = self.conn.execute(
+            "SELECT * FROM meal_log WHERE date = ? ORDER BY hour, id", (_iso(date),)
+        ).fetchall()
+        return [d.MealLog(**dict(r)) for r in rows]
+
+    def meal_history(self, days: int = 60, before: dt.date | None = None) -> list[d.MealLog]:
+        """As `bathroom_history`, and windowed for the same reason."""
+        if before is None:
+            rows = self.conn.execute(
+                "SELECT * FROM meal_log ORDER BY date DESC, hour DESC LIMIT ?", (days * 6,)
+            ).fetchall()
+            return [d.MealLog(**dict(r)) for r in reversed(rows)]
+        start = before - dt.timedelta(days=days - 1)
+        rows = self.conn.execute(
+            "SELECT * FROM meal_log WHERE date BETWEEN ? AND ? ORDER BY date, hour, id",
+            (_iso(start), _iso(before)),
+        ).fetchall()
+        return [d.MealLog(**dict(r)) for r in rows]
 
     def daylog(self, date: dt.date) -> str | None:
         row = self.conn.execute("SELECT text FROM daylog WHERE date = ?", (_iso(date),)).fetchone()

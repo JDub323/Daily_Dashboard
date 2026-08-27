@@ -47,6 +47,8 @@ dashboard/            the server
   tricks.py     the trick of the day: the marking, the callback — pure
   llm.py        one streaming Anthropic client + cost accounting
   feeds.py      RSS, Yahoo, arXiv, lichess, gcalcli + the stale-tolerant cache
+  health.py     load, readiness, hydration, intake — pure, no DB/clock
+  garmin.py     the Forerunner sync — optional, best-effort, never blocking
   content.py    prompts; the only module that both calls the LLM and persists
   state.py      rows -> the boot payload (read-only)
   server.py     FastAPI routes and nothing else
@@ -102,15 +104,33 @@ bindings are data in `keys.js`; the cheatsheet is generated from the same list
 that dispatches them.
 
 A panel can also **take the keyboard** while you fill it in (`capture.js`),
-which is how the two health forms are logged without the mouse. On the
-check-in, `Enter` puts the caret in the weight box and `Enter` again commits it
-and starts the questionnaire, where `1`–`5` answers the highlighted row and
-drops to the next one (`j`/`k` to move without answering). On the session log,
-`Enter` starts it, a letter picks the kind (`t` is strength — sparring took
-`s`), a digit picks the RPE (`0` is 10) and lands the caret in the minutes box,
-`Enter` goes to the note and `Enter` there logs it. While a capture is up the
-digits belong to the panel; `Esc` — or any key the panel does not use — gives
-them back to the tabs.
+which is how the health forms are logged without the mouse. On the check-in,
+`Enter` puts the caret in the weight box, `Enter` commits it and moves to hours
+slept, and `Enter` there starts the questionnaire, where `1`–`5` answers the
+highlighted row and drops to the next one (`j`/`k` to move without answering).
+On the session log, `Enter` starts it, a letter picks the kind (`t` is strength
+— sparring took `s`), a digit picks the RPE (`0` is 10) and lands the caret in
+the minutes box, `Enter` goes to the note and `Enter` there logs it. While a
+capture is up the digits belong to the panel; `Esc` — or any key the panel does
+not use — gives them back to the tabs.
+
+Two logs are quicker still, because they are answered four to eight times a day
+and a log that costs fifteen seconds is a log kept for nine days. **`m` logs a
+meal and `b` logs a bathroom visit, from any tab** — one press switches
+section, lands on the panel and starts its ladder, and every question after
+that is one key:
+
+```
+m l 4          a large, fairly unprocessed meal, now
+b s 2 m        a soft stool, medium, now
+b u 4 l        dark urine, large volume, now
+m - - m 3      the lunch you forgot to log, an hour and a bit ago
+```
+
+Each entry carries the hour it happened, rounded down, starting at now; `-` and
+`+` walk it. Both panels are built from a list of steps in `quicklog.js` — the
+bathroom one branches on its first answer (a stool is asked for solidity, urine
+for colour) and nothing else about them differs.
 
 ## Key mechanics
 
@@ -126,6 +146,9 @@ them back to the tabs.
 - **Feeds** (markets/calendar/news/paper) are cached server-side and serve stale data when the *source* is unreachable. A bug in our own parsing propagates instead — a stale panel and a broken parser used to look identical. The fallback now *says so*: every feed response carries `fetched_at`, `ttl_seconds` and `stale`, so the panel prints `as of 09:14` and turns it red when the source stopped answering. A stale panel and a live one used to look identical too.
 - **Live panels** (markets/calendar/news) re-render themselves, scheduling the next fetch from the server's own `cache_seconds` — so the interval lives in `config.toml` alone, and a panel mounted late in a TTL window refreshes sooner rather than a full window later. Polling stops while the tab is hidden and resumes on the way back.
 - **The day has two layers.** *Required* is the math tab minus the deck — the problem, the trick, the theorem recall — plus the morning check-in. Those four are the ring, `perfect ✦`, and the only thing the streak is counted off; a floor you can hold every day is worth more than a ceiling you reach twice a month. Everything else — chess, the word, the bee, the ballot or the issue reading, the argument pattern, the paper, Wordle, Pokedoku, the day log — is *optional* and worth **points** instead, 1–3 each by minutes-and-attention. The statusline reads `4/4 perfect ✦ · +6 of 14 pts`, and the total is stored in `day_completion.bonus` rather than recomputed, because a month from now the weights may have changed and what a given day earned would be unrecoverable. `n` still walks the required four first and only then starts offering points.
+- **The health tab answers three questions and then shuts up**: am I recovering, am I training hard enough, which way is my weight going. Load is session-RPE (`rpe × minutes`) rather than anything heart-rate derived, because wrist HR under wraps and a glove is the least trustworthy number the watch produces. Every derived figure returns `None` until it has the history to mean something, and `None` renders as *nothing* — not a dash, not a zero, not "collecting data" — so a quiet tab in week one is the correct tab. The in-and-out logs follow the same rule one step further: each of them first asks whether the log was being *kept*, because a day with no stool row means you forgot, and a panel that cannot tell that from constipation is a panel that warns you about your Sundays.
+- **Food is buckets, and says so.** A meal is `small`/`medium`/`large` plus how processed it was, 1–5. Self-reported calorie counts are out by about a quarter in the direction that flatters you; three buckets is the same guess with its error bars showing. `health.MEAL_KCAL` is the one place they become numbers again, and the estimate is only ever printed *as a clause on the measured weight trend* — when the two disagree by more than a pound a week the panel says the estimate is wrong, because the scale is a measurement and this is arithmetic over three words.
+- **The Garmin sync is optional, best-effort, and never blocking.** `pip install -e '.[garmin]'`, then `$PY -m dashboard.garmin login` once to mint a token store (that command is the only thing here that ever sees the password; the server logs in from tokens). After that, opening the dashboard kicks a background sync of sleep, HRV, resting HR, Body Battery, calories out and hydration — there is no 3am job, because the machine is asleep at 3am. **A hand entry is never overwritten by a sync**, enforced in the `WHERE` of one `UPSERT` in `Repository.log_health`, and that single rule is what makes correcting a bad reading worth doing at all. Activities are deliberately *not* imported: load is `rpe × minutes` and an RPE nobody answered is half a number. Every failure — missing library, stale token, an endpoint that changed shape overnight — degrades to a metric arriving absent, so the hero prints when the last sync worked and what went wrong if it did not.
 - **The day rolls over on its own.** The tab is one you leave open, so a 60s check plus `visibilitychange` reloads everything when the browser's local date moves on. The completion write is addressed to the day its counts were read off, never to the clock — otherwise a tab open past midnight posted yesterday's finished count against today, and `done = total` is what makes a perfect day.
 - **No `innerHTML`.** Every panel builds real nodes through `dom.js`, so text is a text node and escaping is structural rather than a hand-rolled `esc()` each render has to remember to call.
 - **Offline-clean.** The page makes no request to anything but `127.0.0.1`.

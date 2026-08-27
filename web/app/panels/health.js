@@ -22,13 +22,36 @@
 import * as api from "../api.js";
 import { lineChart } from "../charts.js";
 import { el, mount, svg } from "../dom.js";
-import { store } from "../store.js";
+import { put, store } from "../store.js";
+import { toast } from "../ui.js";
 
 const BAND = { low: 0.8, high: 1.5 };
 const MONOTONY_FLAG = 2.0;
 const DIP_DAYS = 3;
+/** Runs, not readings, for the two overnight scalars — same argument as the
+ *  readiness dip, and the same number. */
+const HRV_DIP_DAYS = 3;
+const RHR_SPIKE_DAYS = 3;
+const DARK_DAYS = 3;
+/** Under this, as a weekly mean, is worth one line. Seven rather than eight:
+ *  eight would have the panel say this most weeks, and a warning that is
+ *  always on is a warning you stop reading. */
+const SLEEP_FLOOR = 7.0;
+const LIQUID_DAYS = 3;
+const NO_STOOL_DAYS = 3;
+/** Below this the week's food was mostly processed. Deliberately under the
+ *  midpoint: 3 is a normal week with some convenience food in it, and a panel
+ *  that complains about a normal week is one you stop reading. */
+const QUALITY_FLAG = 2.5;
+/** How far the meal estimate may disagree with the scale before the panel
+ *  stops quoting it. A pound a week is roughly 500 kcal a day, which is one
+ *  medium meal's worth of bucketing error — inside that the estimate is doing
+ *  its job, outside it the buckets are wrong and saying so is the useful
+ *  sentence. */
+const BALANCE_DISAGREEMENT = 1.0;
 
 const one = (n) => n.toFixed(1);
+const whole = (n) => Math.round(n).toLocaleString();
 
 /**
  * The verdicts, in the order the questions matter.
@@ -77,6 +100,77 @@ function verdicts(d) {
     ]);
   }
 
+  // -- the overnight pair, once the watch has a fortnight of its own to
+  //    compare against. Said in one sentence when both fire, because they are
+  //    one signal: HRV down and resting heart rate up on the same mornings is
+  //    the textbook shape of accumulated fatigue, and two separate lines
+  //    reporting it would read as two problems.
+  const hrvDown = d.hrv_dip_days >= HRV_DIP_DAYS && d.hrv_baseline != null;
+  const rhrUp = d.rhr_spike_days >= RHR_SPIKE_DAYS && d.rhr_baseline != null;
+  if (hrvDown && rhrUp) {
+    lines.push([
+      "bad",
+      `hrv has been under your own baseline and resting heart rate over it for `
+      + `${Math.min(d.hrv_dip_days, d.rhr_spike_days)} mornings `
+      + `(${one(d.hrv_last)} against ${one(d.hrv_baseline)} ms, `
+      + `${Math.round(d.rhr_last)} against ${Math.round(d.rhr_baseline)} bpm). `
+      + `both moving the wrong way at once is fatigue rather than a bad night.`,
+    ]);
+  } else if (hrvDown) {
+    lines.push([
+      "dim",
+      `hrv has sat below your own baseline ${d.hrv_dip_days} mornings running `
+      + `(${one(d.hrv_last)} against ${one(d.hrv_baseline)} ms).`,
+    ]);
+  } else if (rhrUp) {
+    lines.push([
+      "dim",
+      `resting heart rate has been above your own baseline ${d.rhr_spike_days} mornings `
+      + `(${Math.round(d.rhr_last)} against ${Math.round(d.rhr_baseline)} bpm).`,
+    ]);
+  }
+
+  // -- sleep, as a week rather than as last night. One bad night is a bad
+  //    night; seven six-hour nights during a hard block is the cheapest thing
+  //    on this whole panel to fix, and the only one that fixes several of the
+  //    others at the same time.
+  if (d.sleep_week != null && d.sleep_week < SLEEP_FLOOR) {
+    lines.push([
+      "dim",
+      `you have averaged ${one(d.sleep_week)} hours a night this week.`,
+    ]);
+  }
+
+  // -- hydration. Speaks only on a run, and only off days with enough
+  //    readings to have thrown the first one away — see health.day_darkness.
+  if (d.dark_urine_days >= DARK_DAYS) {
+    const water = d.hydration_ml != null
+      ? ` the watch has you at about ${whole(d.hydration_ml)} ml a day.`
+      : "";
+    lines.push([
+      "bad",
+      `urine has read dark ${d.dark_urine_days} days running, first of the morning `
+      + `excluded.${water} that is the reading that matters while you are cutting: `
+      + `it comes off the scale as progress and out of your legs as work.`,
+    ]);
+  }
+
+  // -- the gut. One line at most, and the liquid case wins when both hold,
+  //    since it is the one that says something about this week's food.
+  if (d.liquid_days != null && d.liquid_days >= LIQUID_DAYS) {
+    lines.push([
+      "dim",
+      `${d.liquid_days} of the last seven days had a liquid stool on them. `
+      + `over a hard block that is usually the food or the stress rather than a bug.`,
+    ]);
+  } else if (d.days_since_stool != null && d.days_since_stool >= NO_STOOL_DAYS) {
+    lines.push([
+      "dim",
+      `nothing logged in that column for ${d.days_since_stool} days, in a week you were `
+      + `otherwise keeping the log.`,
+    ]);
+  }
+
   // -- weight. Stated flatly whenever there is a trend, since it is the one
   //    number with a deadline attached to it.
   if (d.weight_ema != null && d.weight_per_week != null) {
@@ -85,10 +179,45 @@ function verdicts(d) {
       Math.abs(rate) < 0.15
         ? "holding steady"
         : `${rate < 0 ? "down" : "up"} ${Math.abs(rate).toFixed(1)} lb a week`;
-    lines.push(["plain", `weight ${one(d.weight_ema)} lb trend, ${direction}.`]);
+    lines.push(["plain", `weight ${one(d.weight_ema)} lb trend, ${direction}.` + balance(d)]);
+  }
+
+  // -- what the week's food was made of. Under the flag only, and last,
+  //    because it is the slowest-moving thing on the panel.
+  if (d.diet_quality != null && d.diet_quality < QUALITY_FLAG) {
+    lines.push([
+      "dim",
+      `the week's meals averaged ${one(d.diet_quality)} out of 5 for how whole the food was.`,
+    ]);
   }
 
   return lines;
+}
+
+/**
+ * The energy balance, as a clause on the end of the weight sentence.
+ *
+ * Never its own line, and that is the whole editorial judgement here. The
+ * balance is an estimate built on three buckets and the weight trend is a
+ * measurement; giving them equal billing would invite you to believe the
+ * arithmetic over the scale, which is exactly backwards.
+ *
+ * So it is attached to the measurement, and when the two disagree by more than
+ * `BALANCE_DISAGREEMENT` the clause stops quoting a number and says the
+ * estimate is off instead. That is not a hedge — it is the actionable version.
+ * A meal log that predicts a pound down a week while the scale holds flat has
+ * `MEAL_KCAL` wrong, or has meals missing from it, and both of those are fixed
+ * by changing what you write down rather than what you eat.
+ */
+function balance(d) {
+  if (d.balance == null || d.balance_lb_per_week == null) return "";
+  if (Math.abs(d.balance_lb_per_week - d.weight_per_week) > BALANCE_DISAGREEMENT) {
+    return " the meal log predicts a different rate than that, so it is missing meals"
+      + " or the size buckets are wrong for you.";
+  }
+  const side = d.balance < 0 ? "under" : "over";
+  return ` the food log agrees: about ${whole(Math.abs(d.balance))} kcal a day ${side}`
+    + ` what the watch says you burned.`;
 }
 
 /**
@@ -176,6 +305,101 @@ function camp(plan) {
   );
 }
 
+/**
+ * Last night, as the watch measured it.
+ *
+ * A strip of numbers rather than sentences, and that is a different kind of
+ * thing from everything above it on purpose: the verdicts are the panel
+ * telling you something, and this is the panel showing you what it has. These
+ * five are worth having on screen because they are *cheap* — nobody typed
+ * them, they cost a glance, and Body Battery in particular is a number the
+ * watch is better at than any model this app could build.
+ *
+ * What they are not is a readiness score. There is no sum here, no percentage,
+ * and no traffic light. The judgement stays in the verdicts, where it has a
+ * baseline and a run length behind it; a composite of five numbers that all
+ * move for reasons unrelated to training is exactly the kind of figure you
+ * would learn to check every morning and act on every week.
+ *
+ * Absent readings render as nothing, so a night on the charger shows a shorter
+ * strip rather than a row of dashes. All five absent renders no strip at all.
+ */
+function overnight(d) {
+  const cells = [
+    d.sleep_last != null
+      ? [
+          `${one(d.sleep_last)}h`,
+          d.in_bed_last != null ? `asleep of ${one(d.in_bed_last)} in bed` : "asleep",
+        ]
+      : null,
+    d.sleep_score_last != null ? [String(Math.round(d.sleep_score_last)), "sleep score"] : null,
+    d.hrv_last != null ? [`${Math.round(d.hrv_last)}`, "hrv, ms"] : null,
+    d.rhr_last != null ? [`${Math.round(d.rhr_last)}`, "resting bpm"] : null,
+    d.body_battery_last != null ? [String(Math.round(d.body_battery_last)), "body battery"] : null,
+  ].filter(Boolean);
+
+  if (!cells.length) return null;
+  return el("div.scalars", null,
+    ...cells.map(([value, label]) =>
+      el("div.scalar", null,
+        el("span.scalar-value", { text: value }),
+        el("span.scalar-label", { text: label }),
+      ),
+    ),
+  );
+}
+
+/**
+ * One line about the watch, and a button when there is something to press.
+ *
+ * This exists because of how this integration fails. `python-garminconnect` is
+ * unofficial and Garmin has broken its predecessor once already; when it goes,
+ * every reading above degrades to *silence*, which is indistinguishable from a
+ * quiet week. So the panel says out loud when the numbers last arrived, and
+ * nothing else on the tab has to carry that worry.
+ *
+ * Silent when the sync was never turned on — an unconfigured feature is not a
+ * problem to report, and the tab was a hand-kept log before the watch and
+ * still is one underneath it.
+ */
+function watch(panel) {
+  const g = panel.garmin;
+  if (!g.configured) return null;
+
+  const when = g.last_sync
+    ? new Date(g.last_sync).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : null;
+  const line = !g.installed
+    ? "garminconnect is not installed in this venv — pip install '.[garmin]'"
+    : g.last_ok
+      ? when
+        ? `watch synced ${when}${g.wrote ? ` · ${g.wrote} new` : ""}`
+        : "watch not synced yet this session"
+      : `watch sync failed: ${g.last_error}`;
+
+  return el("div.row.spread.gap", null,
+    el(`span.${g.last_ok ? "faint" : "err"}.small`, { text: line }),
+    el("button.tiny", {
+      text: "sync",
+      // Runs on the request rather than behind it, so pressing it and seeing
+      // nothing change is not a state this button can be in.
+      onclick: async (e) => {
+        const button = e.currentTarget;
+        button.disabled = true;
+        button.textContent = "syncing…";
+        try {
+          put("health", await api.post("/api/garmin/sync", {}));
+        } catch (error) {
+          toast(error.message, "error");
+        } finally {
+          button.disabled = false;
+          button.textContent = "sync";
+        }
+      },
+    }),
+  );
+}
+
 /** Daily load, as bars. The gaps are rest days and are the interesting part. */
 function loadBars(loads, { w = 300, h = 60 } = {}) {
   if (!loads?.length) return null;
@@ -228,10 +452,17 @@ export default {
     // needs no history to be honest.
     const strip = camp(panel.plan);
 
+    // Last night, and who measured it. Above the verdicts because it is the
+    // half of this panel that is true every morning — the sentences below need
+    // a fortnight of history before they will say anything at all.
+    const night = overnight(d);
+
     mount(node,
       strip,
       strip ? el("div.divider") : null,
       head,
+      night,
+      watch(panel),
       lines.length
         ? el("div.verdicts", null,
             ...lines.map(([tone, text]) =>
@@ -256,7 +487,10 @@ export default {
           el("div.chart-title", null,
             el("span", { text: "weight" }),
             el("span.value", {
-              text: weight.length ? `${weight[weight.length - 1][1]} lb` : "—",
+              // Rounded for the same reason the series below it is: a reading
+              // that arrives with float noise on it renders as
+              // `172.97172499218095 lb` across the top of the chart.
+              text: weight.length ? `${one(weight[weight.length - 1][1])} lb` : "—",
             }),
           ),
           // Rounded before it is drawn, not for the line's sake but for the

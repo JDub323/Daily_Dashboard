@@ -754,6 +754,43 @@ class PortfolioSettings(Base):
     that an IP address cannot be an rp_id at all."""
 
 
+class GarminSettings(Base):
+    """The Forerunner sync. Off until the watch is on the wrist.
+
+    Everything here is a switch rather than a credential: `GARMIN_EMAIL` and
+    `GARMIN_PASSWORD` live in `.env`, which is not in the repository, and the
+    password is read exactly once by `dashboard.garmin login` to mint the token
+    store. Nothing in `config.toml` should ever need to be redacted.
+    """
+
+    enabled: bool = False
+    """Turn on once `dashboard.garmin login` has written a token store. Off by
+    default so a fresh clone -- or the tests -- never reach for the network."""
+
+    auto: bool = True
+    """Sync in the background when the dashboard is opened.
+
+    This is the whole answer to "I don't want to record any of those": there is
+    no scheduled job because the machine is asleep at 4am, and the first boot
+    of the morning is a trigger that is actually there when you need it.
+    """
+
+    days: int = Field(default=3, ge=1, le=28)
+    """How far back each run re-pulls. Garmin revises last night's sleep for
+    hours after you get up, so a one-day window would freeze the first draft.
+    Re-pulling costs nothing -- the write is an upsert that declines to touch
+    a hand correction."""
+
+    min_interval_minutes: int = Field(default=60, ge=1)
+    """Floor between automatic runs. Opening the dashboard six times before
+    lunch should not be six trips to Garmin for numbers that change once a
+    night."""
+
+    token_dir: str = "~/.garminconnect"
+    """Where the OAuth tokens the login command writes are kept. Outside the
+    repository on purpose."""
+
+
 class CalendarSettings(Base):
     command: list[str] = Field(default_factory=lambda: ["gcalcli", "--nocolor"])
     cache_seconds: int = Field(default=300, ge=0)
@@ -866,6 +903,7 @@ class Settings(Base):
     theorems: TheoremSettings = Field(default_factory=TheoremSettings)
     markets: MarketSettings = Field(default_factory=MarketSettings)
     portfolio: PortfolioSettings = Field(default_factory=PortfolioSettings)
+    garmin: GarminSettings = Field(default_factory=GarminSettings)
     calendar: CalendarSettings = Field(default_factory=CalendarSettings)
     news: NewsSettings = Field(default_factory=NewsSettings)
     arxiv: ArxivSettings

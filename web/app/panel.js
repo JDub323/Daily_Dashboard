@@ -188,6 +188,25 @@ export function panelEnter() {
   return false;
 }
 
+/**
+ * Show a panel *and* start it: the one-keystroke path to a log entry.
+ *
+ * `focusPanel` then `onEnter`, in that order and never the reverse — switching
+ * section ends any capture that was running (see `capture.js`), so a ladder
+ * begun before the move would be torn down by the move itself.
+ *
+ * This is what makes `b` and `m` work from the markets tab. Everything else in
+ * the app reaches a panel and then asks you to press Enter; the two quick logs
+ * cannot afford the second keystroke, because their whole claim is that an
+ * entry costs about as much as not bothering.
+ */
+export function quickStart(id) {
+  const def = registry.get(id);
+  if (!def?.card) return false;
+  focusPanel(id);
+  return Boolean(def.onEnter?.());
+}
+
 export function markDone(id, done) {
   const def = registry.get(id);
   if (!def?.card) return;

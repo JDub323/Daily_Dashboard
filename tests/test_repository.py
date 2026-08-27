@@ -8,6 +8,7 @@ done in the browser, and two tabs could both read the same rating.
 from __future__ import annotations
 
 import datetime as dt
+import sqlite3
 
 import pytest
 
@@ -674,3 +675,103 @@ def test_recent_words_ignores_the_future(repo):
     _word(repo, -1, "tomorrow")
     _word(repo, 1, "yesterday")
     assert repo.recent_words(TODAY, 365) == ["yesterday"]
+
+
+# --- the two quick logs ----------------------------------------------------
+#
+# Append-only, many a day, and each kind carrying exactly its own field. That
+# last one is a table CHECK rather than a validator on the model, and these
+# tests go through `sqlite3` rather than through the repository for the two
+# that prove it: the guarantee being claimed is about the *file*, not about
+# callers who came through the front door.
+
+
+def test_a_visit_is_appended_never_upserted(repo):
+    """Four in an hour is a Tuesday. A PRIMARY KEY on (date, hour) would have
+    the afternoon quietly replace the morning."""
+    first = repo.add_bathroom(TODAY, 8, "urine", "medium", color="light")
+    second = repo.add_bathroom(TODAY, 8, "urine", "small", color="yellow")
+    assert first.id != second.id
+    assert len(repo.bathroom_on(TODAY)) == 2
+
+
+def test_a_visit_carries_only_its_own_kinds_field(repo):
+    stool = repo.add_bathroom(TODAY, 9, "stool", "large", solidity="soft")
+    assert stool.solidity == "soft"
+    assert stool.color is None
+
+    urine = repo.add_bathroom(TODAY, 10, "urine", "small", color="darker")
+    assert urine.color == "darker"
+    assert urine.solidity is None
+
+
+def test_the_file_itself_refuses_a_stool_with_a_colour(db):
+    """The invariant is on the table, so it holds for anything that opens this
+    database -- including a hand at a `sqlite3` prompt six months from now."""
+    with pytest.raises(sqlite3.IntegrityError):
+        db.conn.execute(
+            "INSERT INTO bathroom_log (date, hour, kind, solidity, color, volume) "
+            "VALUES ('2026-07-26', 9, 'stool', 'soft', 'darker', 'medium')"
+        )
+
+
+def test_the_file_itself_refuses_a_kind_with_neither_field(db):
+    with pytest.raises(sqlite3.IntegrityError):
+        db.conn.execute(
+            "INSERT INTO bathroom_log (date, hour, kind, volume) "
+            "VALUES ('2026-07-26', 9, 'urine', 'medium')"
+        )
+
+
+def test_an_hour_outside_the_day_is_refused(db):
+    with pytest.raises(sqlite3.IntegrityError):
+        db.conn.execute(
+            "INSERT INTO bathroom_log (date, hour, kind, color, volume) "
+            "VALUES ('2026-07-26', 24, 'urine', 'light', 'medium')"
+        )
+
+
+def test_visits_come_back_in_time_order(repo):
+    repo.add_bathroom(TODAY, 19, "urine", "medium", color="yellow")
+    repo.add_bathroom(TODAY, 7, "urine", "large", color="darker")
+    repo.add_bathroom(TODAY, 13, "stool", "medium", solidity="solid")
+    assert [e.hour for e in repo.bathroom_on(TODAY)] == [7, 13, 19]
+
+
+def test_a_visit_prints_its_hour_in_24h(repo):
+    entry = repo.add_bathroom(TODAY, 7, "urine", "small", color="clear")
+    assert entry.at == "07:00"
+
+
+def test_the_bathroom_window_is_clipped_to_the_browsers_today(repo):
+    """Windowed where `sessions` is not, and the window ends at the browser's
+    date rather than at whatever is newest in the table -- a row written past
+    midnight by a tab that had not rolled over must not stretch it."""
+    for offset in (0, 3, 40):
+        repo.add_bathroom(TODAY - dt.timedelta(days=offset), 8, "urine", "small", color="light")
+    got = repo.bathroom_history(28, before=TODAY)
+    assert [e.date for e in got] == [TODAY - dt.timedelta(days=3), TODAY]
+
+
+def test_a_meal_is_appended_and_deleted_by_id(repo):
+    lunch = repo.add_meal(TODAY, 12, "large", 4)
+    repo.add_meal(TODAY, 19, "medium", 2, note="takeaway")
+    assert len(repo.meals_on(TODAY)) == 2
+
+    assert repo.delete_meal(lunch.id) is True
+    assert repo.delete_meal(lunch.id) is False
+    assert [m.hour for m in repo.meals_on(TODAY)] == [19]
+
+
+def test_a_meal_quality_outside_one_to_five_is_refused(db):
+    with pytest.raises(sqlite3.IntegrityError):
+        db.conn.execute(
+            "INSERT INTO meal_log (date, hour, size, quality) "
+            "VALUES ('2026-07-26', 12, 'large', 6)"
+        )
+
+
+def test_deleting_a_visit_reports_whether_there_was_one(repo):
+    entry = repo.add_bathroom(TODAY, 8, "stool", "medium", solidity="liquid")
+    assert repo.delete_bathroom(entry.id) is True
+    assert repo.delete_bathroom(entry.id) is False

@@ -47,6 +47,7 @@ from . import (
     content,
     debate,
     feeds,
+    garmin,
     interests,
     logs,
     portfolio,
@@ -382,6 +383,15 @@ def _register_errors(app: FastAPI) -> None:
         log.info("%s: unusable ballot: %s", request.url.path, exc)
         return JSONResponse({"error": str(exc)}, status_code=400)
 
+    @app.exception_handler(garmin.GarminError)
+    def _garmin(request: Request, exc: garmin.GarminError) -> JSONResponse:
+        # 502 and no traceback. Every case is the far end -- an expired token
+        # store, a login Garmin declined, an endpoint that changed shape
+        # overnight -- and the message already names the command that fixes the
+        # one of them that is fixable from here.
+        log.warning("%s: garmin unavailable: %s", request.url.path, exc)
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
     @app.exception_handler(webauthn.WebAuthnError)
     def _webauthn(request: Request, exc: webauthn.WebAuthnError) -> JSONResponse:
         # 400 and no traceback. Every case here is either an expired challenge
@@ -446,7 +456,9 @@ def _register(app: FastAPI) -> None:
         return api.ConfigResponse(topic=cfg.math.topic_for(date), tickers=cfg.markets.tickers)
 
     @app.get("/api/state")
-    def dashboard_state(cfg: Cfg, repo: Repo, date: Today) -> api.DashboardState:
+    def dashboard_state(
+        request: Request, cfg: Cfg, repo: Repo, date: Today
+    ) -> api.DashboardState:
         # A GET with a side effect, deliberately. Closing out yesterday's
         # unmarked problem needs to know what "yesterday" is, and [Invariant 1]
         # says only the browser knows that -- so the reconciliation happens on
@@ -455,6 +467,21 @@ def _register(app: FastAPI) -> None:
         # day, and doing it here means the rating in the payload already
         # accounts for it rather than being a figure the next reload contradicts.
         _seed_patterns(cfg, repo, date)
+        # The watch, pulled in behind this response rather than inside it.
+        #
+        # This is the whole of the "it syncs itself" promise, and it lives here
+        # for the same reason the reconciliation above does: the sync needs to
+        # know what day it is and [Invariant 1] says only the browser does.
+        # There is no scheduled job because the machine this runs on is asleep
+        # at 4am; the first boot of the morning is the trigger that is actually
+        # present when the numbers are wanted.
+        #
+        # Off the request path deliberately. Garmin is a stranger on the
+        # internet, and a boot payload that waited for one would make the whole
+        # dashboard as slow as the slowest thing it talks to. The numbers land
+        # a few seconds later and are on screen at the next redraw -- which,
+        # for a set of readings that change once a night, is soon enough.
+        garmin.sync_in_background(cfg, request.app.state.db, date)
         lapses = repo.reconcile_math_lapses(date)
         lapses += repo.reconcile_debate_lapses(date, cfg.debate.grace_days)
         for event in lapses:
@@ -1547,6 +1574,59 @@ def _register(app: FastAPI) -> None:
         # in the path would have had the server reach for its own clock.
         if not repo.delete_session(body.session_id):
             raise LookupError(f"no session {body.session_id}")
+        return state.health_panel(cfg, repo, body.date)
+
+    @app.post("/api/bathroom")
+    def bathroom_add(cfg: Cfg, repo: Repo, body: api.BathroomRequest) -> api.HealthPanel:
+        """One visit. The kind/field pairing is already validated by the
+        request model, so anything arriving here is a row the table will take.
+        """
+        repo.add_bathroom(
+            body.date,
+            body.hour,
+            body.kind,
+            body.volume,
+            solidity=body.solidity,
+            color=body.color,
+        )
+        return state.health_panel(cfg, repo, body.date)
+
+    @app.post("/api/bathroom/delete")
+    def bathroom_delete(cfg: Cfg, repo: Repo, body: api.LogDeleteRequest) -> api.HealthPanel:
+        if not repo.delete_bathroom(body.entry_id):
+            raise LookupError(f"no bathroom entry {body.entry_id}")
+        return state.health_panel(cfg, repo, body.date)
+
+    @app.post("/api/meal")
+    def meal_add(cfg: Cfg, repo: Repo, body: api.MealRequest) -> api.HealthPanel:
+        repo.add_meal(body.date, body.hour, body.size, body.quality, body.note)
+        return state.health_panel(cfg, repo, body.date)
+
+    @app.post("/api/meal/delete")
+    def meal_delete(cfg: Cfg, repo: Repo, body: api.LogDeleteRequest) -> api.HealthPanel:
+        if not repo.delete_meal(body.entry_id):
+            raise LookupError(f"no meal {body.entry_id}")
+        return state.health_panel(cfg, repo, body.date)
+
+    @app.post("/api/garmin/sync")
+    def garmin_sync(cfg: Cfg, repo: Repo, body: api.GarminSyncRequest) -> api.HealthPanel:
+        """A sync you asked for, run **on the request** rather than behind it.
+
+        The opposite of the automatic one, on purpose. The automatic sync is
+        allowed to be invisible because nobody is waiting for it; a sync you
+        pressed a button for has somebody watching, and handing them a panel
+        that has not changed yet -- with the numbers landing a few seconds
+        later in a payload they have to reload to see -- is the button
+        appearing not to work.
+
+        Failure is a sentence, not a traceback: `GarminError` already carries
+        one, and the error handler renders it into the panel.
+        """
+        if not cfg.garmin.enabled:
+            raise ValueError("the garmin sync is off -- set [garmin].enabled in config.toml")
+        wrote = garmin.sync(cfg, repo, body.date, body.days)
+        garmin.record_manual(wrote)
+        log.info("garmin sync (manual) wrote %d row(s) through %s", wrote, body.date)
         return state.health_panel(cfg, repo, body.date)
 
     @app.post("/api/daylog")

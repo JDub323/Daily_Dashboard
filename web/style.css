@@ -705,6 +705,22 @@ svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(-
    it — a number box wide enough to hold "45" is wide enough. */
 .plan-row .mins { flex: 0 0 5.5em; }
 
+/* ---- last night, as the watch measured it ----
+   A strip of small figures, not a row of .figure — these are readings the
+   panel is showing you, and the hero's one big number is the thing it is
+   telling you. Setting them at hero size would have five cheap numbers shout
+   louder than the sentence underneath, which is the failure mode this whole
+   tab was rewritten to avoid.
+
+   auto-fit rather than a fixed count because the strip is as long as the
+   readings that exist: a night the watch spent on the charger renders two
+   cells, not five with dashes in them. */
+.scalars { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+           gap: var(--s2) var(--s3); margin: var(--s3) 0 var(--s2); }
+.scalar { display: flex; flex-direction: column; gap: 1px; }
+.scalar-value { font-size: var(--t-lede); font-variant-numeric: tabular-nums; }
+.scalar-label { font-size: var(--t-meta); color: var(--faint); letter-spacing: .04em; }
+
 .verdicts { margin: var(--s3) 0 var(--s2); display: flex; flex-direction: column; gap: var(--s2); }
 .verdict-line { line-height: 1.55; border-left: 2px solid var(--border); padding-left: var(--s3); }
 .verdict-line.bad { border-left-color: var(--bad); }

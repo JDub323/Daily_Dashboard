@@ -1229,6 +1229,91 @@ MIGRATIONS: list[tuple[int, str]] = [
             ON training_session (plan_key) WHERE plan_key IS NOT NULL;
         """,
     ),
+    (
+        20,
+        """
+        -- What goes in and what comes out, plus the two scalars the watch can
+        -- fill in that the old CHECK had no room for.
+        --
+        -- `metric` is part of the table definition, so widening it is a rebuild
+        -- -- the same dance migrations 2, 6, 9, 10, 12 and 17 did. Every row
+        -- carries across verbatim, `source` included, so a hand correction made
+        -- before today still outranks tonight's sync afterwards.
+        CREATE TABLE health_entry_v3 (
+            metric  TEXT NOT NULL CHECK (metric IN (
+                        'weight', 'sleep_hours', 'time_in_bed',
+                        'sleep_score', 'hrv', 'resting_hr', 'body_battery',
+                        'calories_out', 'hydration_ml')),
+            date    TEXT NOT NULL
+                         CHECK (date IS strftime('%Y-%m-%d', date)),
+            value   REAL NOT NULL CHECK (value > 0),
+            source  TEXT NOT NULL DEFAULT 'manual'
+                         CHECK (source IN ('manual', 'garmin')),
+            PRIMARY KEY (metric, date)
+        ) STRICT;
+
+        INSERT INTO health_entry_v3 (metric, date, value, source)
+            SELECT metric, date, value, source FROM health_entry;
+
+        DROP TABLE health_entry;
+        ALTER TABLE health_entry_v3 RENAME TO health_entry;
+
+        -- One row per visit. Many per day by definition, and not a scalar:
+        -- the whole signal is in the *pattern* across a day, so an average
+        -- would throw away the only thing worth reading.
+        --
+        -- `hour` and not a timestamp. Rounded to the hour is what can be
+        -- answered truthfully from memory thirty seconds later, and a minute
+        -- field would invite a precision the log does not have -- as well as
+        -- another keystroke, which is the budget this whole feature is built
+        -- against. It is the browser's hour, never this process's, for the
+        -- same reason `date` is: [Invariant 1].
+        --
+        -- One table for both kinds rather than two, because every read here
+        -- is "what happened today" in time order and two tables would have
+        -- every one of them be a UNION. The CHECK at the bottom is what keeps
+        -- that from being sloppy: each kind carries exactly its own field and
+        -- exactly one of them is ever non-NULL, so there is no row that can
+        -- describe the colour of a stool or the solidity of a urination.
+        CREATE TABLE bathroom_log (
+            id        INTEGER PRIMARY KEY,
+            date      TEXT NOT NULL
+                           CHECK (date IS strftime('%Y-%m-%d', date)),
+            hour      INTEGER NOT NULL CHECK (hour BETWEEN 0 AND 23),
+            kind      TEXT NOT NULL CHECK (kind IN ('stool', 'urine')),
+            solidity  TEXT CHECK (solidity IS NULL
+                                  OR solidity IN ('liquid', 'soft', 'solid')),
+            color     TEXT CHECK (color IS NULL
+                                  OR color IN ('clear', 'light', 'yellow', 'darker')),
+            volume    TEXT NOT NULL CHECK (volume IN ('small', 'medium', 'large')),
+            CHECK (
+                (kind = 'stool' AND solidity IS NOT NULL AND color IS NULL)
+             OR (kind = 'urine' AND color IS NOT NULL AND solidity IS NULL)
+            )
+        ) STRICT;
+
+        CREATE INDEX bathroom_log_date ON bathroom_log (date);
+
+        -- Meals. Same shape and the same reasoning: many a day, an hour rather
+        -- than a timestamp, no upsert -- a second lunch is a second row.
+        --
+        -- `quality` is how *processed* it was, 1 = a burger, 5 = chicken and
+        -- rice and something green. Not calories (that is `size`), not
+        -- macros, not a diet score. One axis, because it is answered from a
+        -- kitchen with one hand.
+        CREATE TABLE meal_log (
+            id       INTEGER PRIMARY KEY,
+            date     TEXT NOT NULL
+                          CHECK (date IS strftime('%Y-%m-%d', date)),
+            hour     INTEGER NOT NULL CHECK (hour BETWEEN 0 AND 23),
+            size     TEXT NOT NULL CHECK (size IN ('small', 'medium', 'large')),
+            quality  INTEGER NOT NULL CHECK (quality BETWEEN 1 AND 5),
+            note     TEXT CHECK (note IS NULL OR length(note) BETWEEN 1 AND 200)
+        ) STRICT;
+
+        CREATE INDEX meal_log_date ON meal_log (date);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

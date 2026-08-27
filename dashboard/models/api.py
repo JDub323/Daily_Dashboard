@@ -25,24 +25,31 @@ from pydantic import Field, computed_field, model_validator
 
 from .common import (
     Base,
+    BathroomKind,
     ChessOutcome,
     EntrySource,
     FactStance,
     HealthMetric,
     MathOutcome,
+    MealSize,
     Rating,
     Score,
     SessionKind,
+    Stool,
+    UrineColor,
     Url,
+    Volume,
 )
 from .domain import (
     MAX_SENTENCES,
     SENTENCES,
+    BathroomLog,
     DayCompletion,
     DebateFact,
     DebateReading,
     DebateSession,
     MathProblem,
+    MealLog,
     Paper,
     PlanGroup,
     PrescribedBlock,
@@ -365,6 +372,65 @@ class SessionRequest(DateBody):
     plan_key: PlanKey = None
     """Which prescribed block this answers. Defaulted, so the freehand form --
     which stays -- posts exactly the body it always did."""
+
+
+class BathroomRequest(DateBody):
+    """One visit. `hour` is the browser's, rounded down -- [Invariant 1]
+    applies to the clock exactly as it applies to the calendar."""
+
+    hour: int = Field(ge=0, le=23)
+    kind: BathroomKind
+    volume: Volume
+    solidity: Stool | None = None
+    color: UrineColor | None = None
+
+    @model_validator(mode="after")
+    def _one_field_per_kind(self) -> BathroomRequest:
+        """Stool carries a solidity, urine carries a colour, neither carries
+        both.
+
+        The table enforces this too, and this is not redundant with it: a body
+        that fails here is a 422 naming the field, while the same body reaching
+        SQLite is an IntegrityError and a 500 with a CHECK constraint in it.
+        Same rule, stated twice, because the two statements have different
+        audiences.
+        """
+        wanted = "solidity" if self.kind is BathroomKind.stool else "color"
+        unwanted = "color" if self.kind is BathroomKind.stool else "solidity"
+        if getattr(self, wanted) is None:
+            raise ValueError(f"a {self.kind.value} needs a {wanted}")
+        if getattr(self, unwanted) is not None:
+            raise ValueError(f"a {self.kind.value} has no {unwanted}")
+        return self
+
+
+class MealRequest(DateBody):
+    hour: int = Field(ge=0, le=23)
+    size: MealSize
+    quality: int = Field(ge=1, le=5)
+    """1 = as processed as it gets, 5 = whole ingredients."""
+
+    note: str | None = Field(default=None, max_length=200)
+
+
+class LogDeleteRequest(DateBody):
+    """Undo, for either log. POST rather than DELETE and the id in the body
+    rather than the path, for the reason `/api/session/delete` gives: the
+    response is the rebuilt panel, and rebuilding it needs a date only the
+    browser can supply."""
+
+    entry_id: int
+
+
+class GarminSyncRequest(DateBody):
+    """A sync the user asked for, as against the one that runs itself.
+
+    `days` is how far back to re-pull. Defaulted to a few, because the watch
+    revises last night's sleep for a while after you get up, and a window that
+    only ever covered today would freeze the first draft of it.
+    """
+
+    days: int = Field(default=3, ge=1, le=28)
 
 
 class SessionPart(Base):
@@ -928,6 +994,95 @@ class HealthDerived(Base):
     readiness_dip_days: int = 0
     """Consecutive mornings a full SD below baseline. The panel speaks at 3."""
 
+    # -- overnight, once the watch is filling these in ----------------------
+
+    sleep_week: float | None = None
+    """Mean hours asleep over the last seven nights, from however many of them
+    have a reading."""
+
+    sleep_last: float | None = None
+    in_bed_last: float | None = None
+    """Last night. The pair rather than either alone: nine in bed and six
+    asleep is a different problem from six of each, and only the gap says
+    which one you have."""
+
+    sleep_score_last: float | None = None
+
+    hrv_last: float | None = None
+    hrv_baseline: float | None = None
+    hrv_dip_days: int = 0
+    """Consecutive nights a full SD below your own trailing month. Not a
+    number against a population range -- HRV's absolute scale is genetic, and
+    a fortnight of your own is worth more than any published band."""
+
+    rhr_last: float | None = None
+    rhr_baseline: float | None = None
+    rhr_spike_days: int = 0
+    """The same, upward. A resting heart rate sitting above its own baseline
+    for days is the classic non-functional-overreaching tell."""
+
+    body_battery_last: float | None = None
+
+    # -- in and out ---------------------------------------------------------
+
+    dark_urine_days: int = 0
+    """Consecutive days whose urine read dark, first void of each day thrown
+    away. The panel speaks at 3."""
+
+    hydration_ml: float | None = None
+    """Mean ml a day tapped into the watch this week. Undercounts by whatever
+    was forgotten, which is why it is printed beside the colour rather than
+    instead of it."""
+
+    liquid_days: int | None = None
+    days_since_stool: int | None = None
+    """Both None -- not zero -- when the log was too sparse to ask. Zero here
+    means "none this week" and "went today", and those are answers."""
+
+    intake_est: float | None = None
+    """Mean estimated kcal in a day this week. An estimate over three buckets;
+    `health.MEAL_KCAL` is the assumption and is meant to be argued with."""
+
+    expenditure: float | None = None
+    """Mean kcal out a day this week, as the watch measured it."""
+
+    balance: float | None = None
+    """`intake_est - expenditure`, and only when both exist."""
+
+    balance_lb_per_week: float | None = None
+    """What that balance predicts the scale will do. Printed *next to*
+    `weight_per_week`, which is what the scale actually did -- the pair is the
+    point, because when they disagree it is the estimate that is wrong."""
+
+    diet_quality: float | None = None
+    """Mean 1-5 over the week's meals: how whole the food was."""
+
+
+class GarminStatus(Base):
+    """Whether the watch is talking to us, said plainly.
+
+    Every field here exists because this integration is built on an unofficial
+    client against an API that has already broken it once -- `garth` was killed
+    by Garmin's March 2026 auth change. So the panel never claims the numbers
+    are current; it says when they last arrived, and what went wrong if they
+    did not. A sync that has been quietly failing for a week is the failure
+    mode worth designing against, since every reading it feeds degrades to
+    silence rather than to an error.
+    """
+
+    installed: bool = False
+    """`garminconnect` importable in this venv."""
+
+    configured: bool = False
+    """Enabled in config *and* an email in the environment."""
+
+    last_sync: dt.datetime | None = None
+    last_ok: bool = True
+    last_error: str | None = None
+    wrote: int = 0
+    """Rows written by the last run. Zero after a successful run is ordinary:
+    the window has usually already been pulled."""
+
 
 class TrainingPlan(Base):
     """The camp: how far out the fight is, and what today asks for.
@@ -985,6 +1140,28 @@ class HealthPanel(Base):
     series: list[HealthSeries] = Field(default_factory=list)
     readiness_today: Readiness | None = None
     sessions_today: list[TrainingSession] = Field(default_factory=list)
+
+    bathroom_today: list[BathroomLog] = Field(default_factory=list)
+    meals_today: list[MealLog] = Field(default_factory=list)
+    """Today only. The windows behind the derived block are read server-side
+    and stay there -- these two tables produce four to eight rows a day, and
+    a month of them crossing the wire on every boot to redraw one list would
+    be the largest thing in the payload by some margin."""
+
+    garmin: GarminStatus = Field(default_factory=GarminStatus)
+
+    synced_today: list[HealthMetric] = Field(default_factory=list)
+    """Which of today's scalars the watch wrote, rather than a hand.
+
+    A separate list instead of a third element on every `HealthSeries` point,
+    because only one day's provenance is ever needed on screen and widening the
+    point tuple would touch both charts to answer a question they do not ask.
+
+    What it buys is one sentence on the morning panel: a box the watch has
+    already filled is a box you can skip, and a box you typed is one you are
+    responsible for. `Repository.log_health` guarantees the second outranks the
+    first for good, so the distinction stays true rather than being this
+    morning's accident."""
 
     loads: list[tuple[dt.date, float]] = Field(default_factory=list)
     """Daily load over the last four weeks, rest days included as zero -- the

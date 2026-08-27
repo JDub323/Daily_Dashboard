@@ -13,6 +13,7 @@ from pydantic import Field, computed_field
 
 from .common import (
     Base,
+    BathroomKind,
     ChessStatus,
     DebateSide,
     DebateStatus,
@@ -21,13 +22,17 @@ from .common import (
     FactStance,
     HealthMetric,
     MathStatus,
+    MealSize,
     PaperStatus,
     Provenance,
     Rating,
     Score,
     SessionKind,
+    Stool,
     Track,
+    UrineColor,
     Url,
+    Volume,
 )
 
 # --- ratings ---------------------------------------------------------------
@@ -745,6 +750,57 @@ class TrainingSession(Base):
     @property
     def load(self) -> int:
         return self.rpe * self.minutes
+
+
+class BathroomLog(Base):
+    """One visit. Stool or urine, and each carries exactly its own field.
+
+    The invariant -- `solidity` iff stool, `color` iff urine -- is a CHECK on
+    the table rather than a validator here, so it holds for anything that ever
+    writes to the file, this process included on a day someone is poking at it
+    with `sqlite3`.
+
+    `hour` is the browser's, rounded down, and there is no minute. See the
+    migration for why: a field you cannot answer honestly is a field that gets
+    answered anyway.
+    """
+
+    id: int
+    date: dt.date
+    hour: int = Field(ge=0, le=23)
+    kind: BathroomKind
+    solidity: Stool | None = None
+    color: UrineColor | None = None
+    volume: Volume
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def at(self) -> str:
+        """`14:00` -- what the panel prints, formatted once, here."""
+        return f"{self.hour:02d}:00"
+
+
+class MealLog(Base):
+    """One meal: when, how big, and how processed.
+
+    `size` is a bucket rather than a calorie count on purpose -- see
+    `MealSize`. `quality` runs 1 = the most processed thing you could have
+    eaten to 5 = whole ingredients you cooked, and it is the axis that pairs
+    with the weight trend: a camp lost on food is usually lost on quality
+    weeks before it shows up as a number.
+    """
+
+    id: int
+    date: dt.date
+    hour: int = Field(ge=0, le=23)
+    size: MealSize
+    quality: int = Field(ge=1, le=5)
+    note: str | None = Field(default=None, max_length=200)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def at(self) -> str:
+        return f"{self.hour:02d}:00"
 
 
 class PrescribedBlock(Base):

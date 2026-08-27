@@ -27,6 +27,7 @@ from __future__ import annotations
 import datetime as dt
 import statistics
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 from .models import domain as d
 
@@ -253,3 +254,304 @@ def readiness_dip(entries: Sequence[d.Readiness], today: dt.date) -> int:
         if score is None or score >= floor:
             return run
         run += 1
+
+
+# --- what goes in and what comes out ---------------------------------------
+#
+# Same rule as everything above: none of these say anything until the log
+# behind them is dense enough to mean something. That matters more here than
+# it does for load, because these are the metrics where *not logging* looks
+# exactly like the thing being measured. A day with no stool row is a day you
+# did not go or a day you forgot, and only one of those is worth a sentence.
+# So every function in this section first asks whether the log was being kept
+# at all, and returns None when it was not.
+
+KCAL_PER_LB = 3500.0
+"""The old rule of thumb. Wrong in the third decimal place and fine here --
+it is converting a bucketed guess into a rate, not doing physiology."""
+
+MEAL_KCAL = {"small": 400.0, "medium": 750.0, "large": 1200.0}
+"""What the three sizes are worth, and **these are meant to be argued with.**
+
+They are the one place the meal log stops being a record and starts being an
+estimate, so they are named, in one place, rather than smuggled into a
+calculation. Calibrated for a fighter in camp who logs snacks as small meals:
+three mediums plus two smalls is about 3050, which is roughly a training day.
+
+If the balance below persistently disagrees with the scale, these are what is
+wrong -- not the scale. `weight_per_week` is a measurement; this is arithmetic
+over three words."""
+
+MIN_MEALS_FOR_DAY = 2
+"""A day with one meal on it is a day you stopped logging after breakfast."""
+
+MIN_DAYS_FOR_INTAKE = 5
+"""Out of seven. Two missed days is a week you can still average; four is a
+week you cannot."""
+
+URINE_DARKNESS = {"clear": 1.0, "light": 2.0, "yellow": 3.0, "darker": 4.0}
+
+DARK_URINE_MEAN = 3.5
+"""Between `yellow` and `darker`, so a day only counts as dark when most of it
+was actually dark rather than one reading pulling an average up."""
+
+MIN_VOIDS_FOR_DAY = 2
+"""After the first has been thrown away -- so three logged urinations. Fewer
+than that is not a day with a hydration reading on it."""
+
+DARK_RUN_DAYS = 3
+"""One dark day is a Tuesday. Three in a row, while you are cutting weight, is
+the thing that quietly costs you a sparring session."""
+
+MIN_LOGGED_DAYS = 5
+"""Out of the last seven, for the gut read. This is the "were you even
+logging" gate -- see the section note."""
+
+LIQUID_DAYS_FLAG = 3
+LONG_GAP_DAYS = 3
+"""Days without a stool row before the panel will mention it -- and only when
+`MIN_LOGGED_DAYS` says the log was being kept through the gap."""
+
+
+def _by_day(logs: Sequence[Any], today: dt.date, days: int) -> dict[dt.date, list[Any]]:
+    """Group into the `days` days ending today, empty days included.
+
+    The empty days are load-bearing for the same reason `daily_load`'s zeros
+    are: a run is broken by a day with nothing in it, and a dict that simply
+    omitted those days would splice two separate runs into one long one.
+    """
+    start = today - dt.timedelta(days=days - 1)
+    out: dict[dt.date, list[Any]] = {
+        start + dt.timedelta(days=offset): [] for offset in range(days)
+    }
+    for entry in logs:
+        if start <= entry.date <= today:
+            out[entry.date].append(entry)
+    return out
+
+
+# -- hydration ---------------------------------------------------------------
+
+
+def day_darkness(logs: Sequence[d.BathroomLog]) -> float | None:
+    """Mean urine darkness for one day, **first void discarded**.
+
+    Overnight urine is concentrated in everybody -- it is the product of eight
+    hours without a drink, not of a hydration problem -- so the morning
+    reading is dark on a perfectly hydrated day, and including it would have
+    this panel warn about dehydration every morning of the camp. Discarding it
+    costs a reading and buys the rest of them their meaning.
+
+    None when what is left is under `MIN_VOIDS_FOR_DAY`: two readings with the
+    darkest of them removed is not a day's worth of evidence.
+    """
+    voids = sorted(
+        (entry for entry in logs if entry.kind == "urine" and entry.color is not None),
+        key=lambda entry: entry.hour,
+    )
+    rest = voids[1:]
+    if len(rest) < MIN_VOIDS_FOR_DAY:
+        return None
+    return statistics.fmean(URINE_DARKNESS[str(entry.color)] for entry in rest)
+
+
+def dark_urine_run(logs: Sequence[d.BathroomLog], today: dt.date) -> int:
+    """Consecutive days ending today that read dark. 0, or a run.
+
+    A day with no reading breaks the run rather than carrying it across
+    itself -- the same rule `readiness_dip` follows, and for the same reason:
+    the alternative is a warning that grows while nobody is measuring.
+    """
+    by_day = _by_day(logs, today, CHRONIC_DAYS)
+    run = 0
+    while run < CHRONIC_DAYS:
+        mean = day_darkness(by_day.get(today - dt.timedelta(days=run), []))
+        if mean is None or mean < DARK_URINE_MEAN:
+            return run
+        run += 1
+    return run
+
+
+def hydration_mean(points: Sequence[tuple[dt.date, float]], today: dt.date) -> float | None:
+    """Mean ml a day logged on the watch over the last week.
+
+    Absent days are *skipped*, not zeroed. The hydration glyph is tapped by
+    hand, so a day it was not tapped is a day with no reading, and averaging a
+    zero into it would report thirst that was really forgetfulness.
+    """
+    start = today - dt.timedelta(days=ACUTE_DAYS - 1)
+    values = [value for date, value in points if start <= date <= today]
+    return statistics.fmean(values) if len(values) >= 3 else None
+
+
+# -- the gut -----------------------------------------------------------------
+
+
+def logged_days(logs: Sequence[d.BathroomLog], today: dt.date, days: int = ACUTE_DAYS) -> int:
+    """How many of the last `days` days have any bathroom row at all.
+
+    The gate everything below is built on. Each of those readings is a
+    statement about an absence -- no stool for three days, no dark readings --
+    and an absence only means something if you were writing things down.
+    """
+    return sum(1 for entries in _by_day(logs, today, days).values() if entries)
+
+
+def liquid_days(logs: Sequence[d.BathroomLog], today: dt.date) -> int | None:
+    """Days in the last week with a liquid stool on them, or None if the log
+    was too sparse to ask."""
+    if logged_days(logs, today) < MIN_LOGGED_DAYS:
+        return None
+    return sum(
+        1
+        for entries in _by_day(logs, today, ACUTE_DAYS).values()
+        if any(entry.solidity == "liquid" for entry in entries)
+    )
+
+
+def days_since_stool(logs: Sequence[d.BathroomLog], today: dt.date) -> int | None:
+    """Days since the last stool row, or None when nobody was logging.
+
+    0 means today. The None is not a technicality: three days of silence in a
+    log you stopped keeping on Friday says nothing at all, and saying it
+    anyway is how a panel earns the habit of being ignored.
+    """
+    if logged_days(logs, today) < MIN_LOGGED_DAYS:
+        return None
+    for offset in range(CHRONIC_DAYS):
+        date = today - dt.timedelta(days=offset)
+        if any(entry.date == date and entry.kind == "stool" for entry in logs):
+            return offset
+    return None
+
+
+# -- food --------------------------------------------------------------------
+
+
+def meal_kcal(size: str) -> float:
+    return MEAL_KCAL[str(size)]
+
+
+def daily_intake(
+    meals: Sequence[d.MealLog], today: dt.date, days: int = ACUTE_DAYS
+) -> dict[dt.date, float]:
+    """Estimated kcal per day, over the days that were actually logged.
+
+    Days with fewer than `MIN_MEALS_FOR_DAY` rows are **left out entirely**
+    rather than counted low. That is the opposite of what `daily_load` does
+    with rest days, and the difference is real: a day with no session on it is
+    a day you did not train, and a day with no food on it is a day you did not
+    write down what you ate.
+    """
+    return {
+        date: sum(meal_kcal(entry.size) for entry in entries)
+        for date, entries in _by_day(meals, today, days).items()
+        if len(entries) >= MIN_MEALS_FOR_DAY
+    }
+
+
+def intake_mean(meals: Sequence[d.MealLog], today: dt.date) -> float | None:
+    """Mean estimated intake a day this week, or None under
+    `MIN_DAYS_FOR_INTAKE` logged days."""
+    days = daily_intake(meals, today)
+    if len(days) < MIN_DAYS_FOR_INTAKE:
+        return None
+    return statistics.fmean(days.values())
+
+
+def diet_quality(meals: Sequence[d.MealLog], today: dt.date) -> float | None:
+    """Mean `quality` over the week's meals -- how whole the food was.
+
+    Over *meals*, not over days, because that is the thing you can act on: two
+    good dinners do not undo five days of bad lunches, and a mean of daily
+    means would let them.
+    """
+    start = today - dt.timedelta(days=ACUTE_DAYS - 1)
+    scores = [entry.quality for entry in meals if start <= entry.date <= today]
+    return statistics.fmean(scores) if len(scores) >= ACUTE_DAYS else None
+
+
+def expenditure_mean(points: Sequence[tuple[dt.date, float]], today: dt.date) -> float | None:
+    """Mean kcal out a day this week, as the watch measured it."""
+    start = today - dt.timedelta(days=ACUTE_DAYS - 1)
+    values = [value for date, value in points if start <= date <= today]
+    return statistics.fmean(values) if len(values) >= MIN_DAYS_FOR_INTAKE else None
+
+
+def implied_lb_per_week(balance: float) -> float:
+    """A daily surplus or deficit, expressed as the weight it predicts.
+
+    This is the only reason the balance is worth computing. On its own it is a
+    number in a unit you have no feel for; next to `weight_per_week` -- which
+    is *measured* -- it becomes a check on itself, and when the two disagree
+    the scale is right and `MEAL_KCAL` is wrong.
+    """
+    return balance * 7 / KCAL_PER_LB
+
+
+# -- overnight scalars -------------------------------------------------------
+#
+# HRV, resting HR and sleep, once the watch is filling them in. Deliberately
+# the same shape as readiness: a personal baseline, a run the wrong side of
+# it, and silence under a fortnight of history. The published normal ranges
+# for all three are wide enough to contain both your best week and your worst,
+# so the only comparison that carries information is against yourself.
+
+
+def scalar_mean(
+    points: Sequence[tuple[dt.date, float]],
+    today: dt.date,
+    days: int = ACUTE_DAYS,
+    minimum: int = 3,
+) -> float | None:
+    start = today - dt.timedelta(days=days - 1)
+    values = [value for date, value in points if start <= date <= today]
+    return statistics.fmean(values) if len(values) >= minimum else None
+
+
+def scalar_baseline(
+    points: Sequence[tuple[dt.date, float]], today: dt.date
+) -> tuple[float, float] | None:
+    """`(mean, sd)` over the trailing 30 days, or None under
+    `MIN_ENTRIES_FOR_BASELINE` readings.
+
+    Zero spread returns None as well: a series that has not moved has no scale
+    in which to measure a departure from it.
+    """
+    start = today - dt.timedelta(days=BASELINE_DAYS - 1)
+    values = [value for date, value in points if start <= date <= today]
+    if len(values) < MIN_ENTRIES_FOR_BASELINE:
+        return None
+    spread = statistics.pstdev(values)
+    if spread == 0:
+        return None
+    return statistics.fmean(values), spread
+
+
+def scalar_run(
+    points: Sequence[tuple[dt.date, float]],
+    today: dt.date,
+    *,
+    above: bool,
+    sds: float = DIP_SDS,
+) -> int:
+    """Consecutive days ending today spent `sds` standard deviations the wrong
+    side of baseline -- `above` for resting heart rate, below it for HRV.
+
+    A missing day breaks the run. Every gate in this module ends up saying the
+    same thing: a measurement nobody took is not evidence of anything.
+    """
+    baseline = scalar_baseline(points, today)
+    if baseline is None:
+        return 0
+    mean, spread = baseline
+    limit = mean + sds * spread if above else mean - sds * spread
+
+    by_date = dict(points)
+    run = 0
+    while run < BASELINE_DAYS:
+        value = by_date.get(today - dt.timedelta(days=run))
+        if value is None or (value <= limit if above else value >= limit):
+            return run
+        run += 1
+    return run

@@ -310,6 +310,36 @@ unlock_seconds = 300
 # under a real hostname.
 # rp_id = "dashboard.example"
 
+[garmin]
+# The Forerunner 165 sync. Off until the watch is on the wrist and the token
+# store exists -- flip this to true after running, from the repo root:
+#
+#     wsl -e bash -lc "cd '<repo>' && . ./venv.sh && \$PY -m dashboard.garmin login"
+#
+# That command is the only thing that ever sees the password. It reads
+# GARMIN_EMAIL and GARMIN_PASSWORD from .env, prompts for the MFA code, and
+# writes OAuth tokens to token_dir; the server logs in from those and never
+# holds a credential. Once the tokens exist the password can come back out of
+# .env if you would rather it did not sit there.
+enabled = false
+
+# Sync in the background whenever the dashboard is opened. There is no 3am
+# task for this and deliberately so: the machine is asleep at 3am, and the
+# first boot of the morning is a trigger that is actually present.
+auto = true
+
+# How far back each run re-pulls. Garmin keeps revising a night's sleep score
+# for hours after you get up, so a one-day window would freeze the first draft
+# of every night. Re-pulling is free -- the write is an upsert that refuses to
+# overwrite anything you corrected by hand.
+days = 3
+
+# Floor between automatic runs. These numbers change once a night; opening the
+# dashboard six times before lunch should not be six trips to Garmin.
+min_interval_minutes = 60
+
+token_dir = "~/.garminconnect"
+
 [calendar]
 # argv, not a shell string -- see feeds.gcalcli. `wsl -e` is prepended
 # automatically when the server runs on Windows.

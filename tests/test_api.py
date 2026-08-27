@@ -1372,3 +1372,142 @@ def test_retrain_reports_why_when_it_cannot_fit(client, monkeypatch):
     assert body["fitted"] is False
     assert body["samples"] == 0
     assert "not enough" in body["unavailable"]
+
+
+# --- the two quick logs ----------------------------------------------------
+
+
+def test_a_visit_comes_back_in_the_rebuilt_panel(client):
+    panel = client.post(
+        "/api/bathroom",
+        json={"date": DATE, "hour": 8, "kind": "stool", "solidity": "soft", "volume": "medium"},
+    ).json()
+    assert [(e["at"], e["solidity"]) for e in panel["bathroom_today"]] == [("08:00", "soft")]
+
+
+def test_a_stool_without_a_solidity_is_a_422_naming_the_field(client):
+    """Refused at the model rather than at the table.
+
+    Both refuse it, and the difference is the audience: this way the browser
+    gets a sentence with a field name in it, where an IntegrityError reaching
+    SQLite would be a 500 with a CHECK constraint in it.
+    """
+    response = client.post(
+        "/api/bathroom",
+        json={"date": DATE, "hour": 8, "kind": "stool", "volume": "medium"},
+    )
+    assert response.status_code == 422
+    assert "solidity" in response.text
+
+
+def test_a_urination_with_a_solidity_is_refused_too(client):
+    response = client.post(
+        "/api/bathroom",
+        json={
+            "date": DATE,
+            "hour": 8,
+            "kind": "urine",
+            "color": "light",
+            "solidity": "soft",
+            "volume": "small",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_an_hour_outside_the_day_is_a_422(client):
+    response = client.post(
+        "/api/bathroom",
+        json={"date": DATE, "hour": 24, "kind": "urine", "color": "light", "volume": "small"},
+    )
+    assert response.status_code == 422
+
+
+def test_deleting_a_visit_removes_it(client):
+    panel = client.post(
+        "/api/bathroom",
+        json={"date": DATE, "hour": 8, "kind": "urine", "color": "clear", "volume": "large"},
+    ).json()
+    entry_id = panel["bathroom_today"][0]["id"]
+    after = client.post(
+        "/api/bathroom/delete", json={"date": DATE, "entry_id": entry_id}
+    ).json()
+    assert after["bathroom_today"] == []
+
+
+def test_deleting_a_visit_that_is_gone_is_a_404(client):
+    assert (
+        client.post("/api/bathroom/delete", json={"date": DATE, "entry_id": 999}).status_code
+        == 404
+    )
+
+
+def test_meals_stack_up_through_the_day(client):
+    client.post("/api/meal", json={"date": DATE, "hour": 8, "size": "small", "quality": 5})
+    panel = client.post(
+        "/api/meal", json={"date": DATE, "hour": 13, "size": "large", "quality": 2}
+    ).json()
+    assert [(m["at"], m["size"]) for m in panel["meals_today"]] == [
+        ("08:00", "small"),
+        ("13:00", "large"),
+    ]
+
+
+def test_a_meal_quality_outside_the_scale_is_a_422(client):
+    response = client.post(
+        "/api/meal", json={"date": DATE, "hour": 12, "size": "large", "quality": 9}
+    )
+    assert response.status_code == 422
+
+
+def test_the_quick_logs_are_quiet_until_they_have_history(client):
+    """One meal and one visit say nothing at all.
+
+    The rule the whole health tab runs on, and the one most at risk here: a day
+    with two rows in it will happily produce an average, and the average would
+    be wrong in the direction that reads as a problem.
+    """
+    client.post("/api/meal", json={"date": DATE, "hour": 12, "size": "large", "quality": 1})
+    panel = client.post(
+        "/api/bathroom",
+        json={"date": DATE, "hour": 8, "kind": "urine", "color": "darker", "volume": "small"},
+    ).json()
+    derived = panel["derived"]
+    assert derived["intake_est"] is None
+    assert derived["diet_quality"] is None
+    assert derived["liquid_days"] is None
+    assert derived["days_since_stool"] is None
+    assert derived["dark_urine_days"] == 0
+
+
+def test_sleep_hours_are_typed_like_any_other_scalar(client):
+    """The check-in's second box. It posts to `/api/health` rather than to an
+    endpoint of its own, because hours slept is a daily scalar exactly like
+    weight -- and once the watch is syncing, the same row arrives without
+    anybody typing anything."""
+    panel = client.post(
+        "/api/health", json={"date": DATE, "metric": "sleep_hours", "value": 7.5}
+    ).json()
+    series = {s["metric"]: s["points"] for s in panel["series"]}
+    assert series["sleep_hours"] == [[DATE, 7.5]]
+    assert panel["synced_today"] == []
+
+
+def test_a_typed_reading_is_not_reported_as_synced(client, repo):
+    """`synced_today` is provenance, not presence. A number you typed must
+    never come back labelled as the watch's, or the morning panel would tell
+    you to stop filling in a box nothing is filling in for you."""
+    from dashboard.models.common import EntrySource
+
+    repo.log_health(HealthMetric.hrv, TODAY, 61.0, EntrySource.garmin)
+    repo.log_health(HealthMetric.weight, TODAY, 171.0, EntrySource.manual)
+    panel = client.get("/api/state", params={"date": DATE}).json()["health"]
+    assert panel["synced_today"] == ["hrv"]
+
+
+def test_the_sync_endpoint_says_so_when_the_feature_is_off(client):
+    """409 with a sentence rather than a silent no-op: the button is only ever
+    pressed by somebody who expected numbers."""
+    response = client.post("/api/garmin/sync", json={"date": DATE})
+    assert response.status_code == 409
+    assert "config.toml" in response.json()["error"]

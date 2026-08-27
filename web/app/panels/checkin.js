@@ -28,11 +28,17 @@
 //
 // --- the ladder -------------------------------------------------------------
 //
-// Enter puts the caret in the weight box; Enter again commits it and hands the
-// keyboard to the questionnaire, where 1–5 answers the highlighted row and
-// drops to the next one. Five keystrokes, no reaching for the mouse, no tabbing
-// past twenty-five buttons. `capture.js` explains why the digits can mean this
-// here without ceasing to be the tab switches everywhere else.
+// Enter puts the caret in the weight box; Enter commits it and moves to the
+// hours; Enter there hands the keyboard to the questionnaire, where 1–5
+// answers the highlighted row and drops to the next one. Seven keystrokes for
+// the whole morning, no reaching for the mouse, no tabbing past twenty-five
+// buttons. `capture.js` explains why the digits can mean this here without
+// ceasing to be the tab switches everywhere else.
+//
+// Once the Garmin sync is running the hours box arrives already filled in and
+// Enter walks straight past it, so the morning is back to six keystrokes and
+// one of the two measurements takes none of them. Typing over a synced value
+// is allowed and permanent — see `Repository.log_health`.
 
 import * as api from "../api.js";
 import { beginCapture, captureLabel, endCapture } from "../capture.js";
@@ -68,13 +74,28 @@ export const toStored = (key, shown) => (INVERTED.has(key) ? 6 - shown : shown);
 /** What a stored value means on screen. Its own inverse — 6-(6-n) is n. */
 export const toShown = (key, stored) => (INVERTED.has(key) ? 6 - stored : stored);
 
-/** Today's weight, or null. The series is oldest-first, so the last point is
- *  today's only if its date says so. */
-export function weightToday(state) {
-  const series = state.health.series.find((s) => s.metric === "weight");
+/** Today's reading for one metric, or null. The series is oldest-first, so
+ *  the last point is today's only if its date says so — which is the whole
+ *  check: "the most recent weight" and "this morning's weight" are the same
+ *  number on most days and very different ones on the day you skipped. */
+export function metricToday(state, metric) {
+  const series = state.health.series.find((s) => s.metric === metric);
   const last = series?.points?.[series.points.length - 1];
   return last && last[0] === state.date ? last[1] : null;
 }
+
+export const weightToday = (state) => metricToday(state, "weight");
+
+/**
+ * Whether today's reading for a metric came from the watch rather than a hand.
+ *
+ * The distinction is worth showing on exactly one box. A synced number is one
+ * you can leave alone; a typed one is one you are responsible for, and once
+ * the Forerunner is on the wrist the ordinary morning has the hours already
+ * filled in. Typing over it wins permanently — `Repository.log_health` will
+ * not let a later sync take the correction back.
+ */
+export const syncedToday = (state, metric) => state.health.synced_today.includes(metric);
 
 // --- state that outlives a render -------------------------------------------
 //
@@ -93,6 +114,8 @@ let draft = {};
 let draftDate = null;
 /** This render's weight box, for the Enter that starts the whole sequence. */
 let weightBox = null;
+/** …and the hours box, which sits between it and the questions. */
+let sleepBox = null;
 
 const OWNER = "checkin";
 
@@ -159,6 +182,13 @@ export default {
       weightBox.select();
       return true;
     }
+    // Then the hours, and only if they are still missing — which, once the
+    // watch is syncing, is a morning it spent on the charger.
+    if (metricToday(store.state, "sleep_hours") === null && sleepBox) {
+      sleepBox.focus();
+      sleepBox.select();
+      return true;
+    }
     startLadder();
     return true;
   },
@@ -183,13 +213,48 @@ export default {
         if (e.key !== "Enter") return;
         e.preventDefault();
         // Blur first: that is what fires `change`, so the weight is committed
-        // by the same keystroke that starts the questions rather than a moment
-        // later when focus happens to leave the box.
+        // by the same keystroke that moves on rather than a moment later when
+        // focus happens to leave the box.
+        e.target.blur();
+        sleep.focus();
+        sleep.select();
+      },
+    });
+    weightBox = weight;
+
+    // Hours slept, beside the weight and before the questions, because it is
+    // the same kind of thing: a measurement of the night rather than an
+    // opinion about it. `sleep_quality` further down asks how it *felt*, and
+    // the two are genuinely different — six good hours and six bad ones are
+    // the same number and a different morning, which is the entire reason both
+    // are asked.
+    //
+    // Once the watch is syncing this box is already full when you get here,
+    // and Enter walks straight past it. Typing over a synced value wins for
+    // good: the write goes in as `manual`, and no later sync may touch a
+    // manual row.
+    const synced = syncedToday(store.state, "sleep_hours");
+    const sleep = el("input", {
+      type: "number",
+      step: "0.1",
+      min: "0",
+      max: "24",
+      inputmode: "decimal",
+      placeholder: "hours slept",
+      value: metricToday(store.state, "sleep_hours") ?? "",
+      onchange: async (e) => {
+        const value = Number.parseFloat(e.target.value);
+        if (Number.isNaN(value) || value <= 0 || value > 24) return;
+        put("health", await api.post("/api/health", { metric: "sleep_hours", value }));
+      },
+      onkeydown: (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
         e.target.blur();
         startLadder();
       },
     });
-    weightBox = weight;
+    sleepBox = sleep;
 
     const rows = ITEMS.map(([key, name, low, high], index) => {
       const buttons = el("div.scale", null,
@@ -265,6 +330,10 @@ export default {
 
     mount(node,
       el("div.row", null, weight, el("span.faint", { text: "lb" })),
+      el("div.row", null,
+        sleep,
+        el("span.faint", { text: synced ? "h · from the watch" : "h" }),
+      ),
       el("div.divider"),
       ...rows,
       el("div.row", null,

@@ -21,12 +21,20 @@
 // browser is bound to Alt-hjkl, so the cost is a menu shortcut nobody presses.
 //
 // Shift is not in that list either, because Shift-Tab is a binding.
+//
+// `b` and `m` are the two bindings here that do not merely move the focus
+// ring: they switch section, land on a logging panel and start its ladder, all
+// on one press. That is a deliberate exception to how everything else in this
+// table behaves, and it is bought by the same argument the panels themselves
+// are built on — a meal log that costs a tab switch, four arrow keys and an
+// Enter is a meal log kept for nine days. The rest of the day's work is
+// something you sit down to; these two are answered on the way past.
 
 import { capturing, endCapture, takeKey } from "./capture.js";
 import { chipTasks, openNextUnfinished, required, score } from "./chips.js";
 import { $, el } from "./dom.js";
 import * as nav from "./nav.js";
-import { panelEnter } from "./panel.js";
+import { panelEnter, quickStart } from "./panel.js";
 import { TABS, activateNth, cycle } from "./tabs.js";
 import { openModal, toast } from "./ui.js";
 
@@ -142,6 +150,18 @@ const BINDINGS = [
     run: () => {
       if (!openNextUnfinished()) toast("everything is done — nice day ✦", "info");
     },
+  },
+  {
+    keys: ["m"],
+    hint: "log a meal from wherever you are — size, then how processed",
+    match: (e) => e.key === "m",
+    run: () => quickStart("meals"),
+  },
+  {
+    keys: ["b"],
+    hint: "log a bathroom visit — stool or urine, then two answers",
+    match: (e) => e.key === "b",
+    run: () => quickStart("bathroom"),
   },
   {
     keys: ["?"],

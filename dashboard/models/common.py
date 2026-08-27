@@ -238,6 +238,18 @@ class HealthMetric(StrEnum):
     body_battery = "body_battery"
     """At wake. Watched, not acted on -- the formula behind it is Garmin's."""
 
+    calories_out = "calories_out"
+    """Everything burned in the day, BMR included -- Garmin's
+    `totalKilocalories`. Half of the energy balance; the other half is the
+    meal log, and neither is worth much without the other."""
+
+    hydration_ml = "hydration_ml"
+    """What the watch's hydration glyph was tapped for, in ml. Logged by hand
+    on the wrist, so it undercounts by however much you forgot -- which is why
+    it is read *beside* urine colour rather than instead of it. A zero day is
+    never written: absent means "not logged", and that is different from
+    "drank nothing"."""
+
 
 class EntrySource(StrEnum):
     """Who wrote a health row.
@@ -263,6 +275,74 @@ class SessionKind(StrEnum):
     strength = "strength"
     conditioning = "conditioning"
     other = "other"
+
+
+# --- what goes in and what comes out ---------------------------------------
+#
+# Every scale below is short on purpose, and shorter than the published one it
+# is named after. Bristol has seven types and the medical charts run urine
+# through eight shades; both are instruments for someone describing a symptom
+# once, in a clinic, with the chart in front of them. This is a thing answered
+# four to eight times a day for six months from memory, and the seven-point
+# version of it would be answered as "4 or 5, call it 4" -- which is a number
+# with a false precision on it rather than a finer measurement.
+#
+# Three and four values are what can be answered honestly in one keystroke,
+# and one keystroke is the entire design constraint.
+
+
+class BathroomKind(StrEnum):
+    stool = "stool"
+    urine = "urine"
+
+
+class Stool(StrEnum):
+    """Bristol, collapsed to the three answers worth telling apart.
+
+    They map onto the chart as 6-7 / 4-5 / 1-3, and the reason to keep them is
+    that each is a different message: `liquid` for several days is a gut that
+    is not absorbing what you are eating, `solid` here means formed rather
+    than the hard pellets Bristol's type 1 describes.
+    """
+
+    liquid = "liquid"
+    soft = "soft"
+    solid = "solid"
+
+
+class UrineColor(StrEnum):
+    """The hydration chart, four shades deep.
+
+    `darker` is the only one that carries a warning, and it only carries it in
+    a run -- see `health.dark_urine_run`, which throws away the first void of
+    the day before it counts anything, because overnight urine is concentrated
+    in everybody and always reads dark.
+    """
+
+    clear = "clear"
+    light = "light"
+    yellow = "yellow"
+    darker = "darker"
+
+
+class Volume(StrEnum):
+    small = "small"
+    medium = "medium"
+    large = "large"
+
+
+class MealSize(StrEnum):
+    """Roughly calories, and deliberately not calories.
+
+    A number would be a guess wearing a lab coat; three buckets is the same
+    guess with its error bars showing. `health.MEAL_KCAL` turns them back into
+    numbers for the energy balance, in one place, where the assumption is
+    written down and can be argued with.
+    """
+
+    small = "small"
+    medium = "medium"
+    large = "large"
 
 
 class Game(StrEnum):

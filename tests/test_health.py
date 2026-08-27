@@ -256,3 +256,214 @@ def test_a_skipped_morning_breaks_the_run_rather_than_extending_it():
 
 def test_no_baseline_means_no_dip():
     assert health.readiness_dip([readiness(0, 1)], TODAY) == 0
+
+
+# --- what goes in and what comes out ---------------------------------------
+#
+# Every test in this section is really the same test asked six ways: *does the
+# reading refuse to speak when the log was not being kept?* That is the whole
+# risk in this half of the module. Load has the property that an unlogged
+# session is simply a lighter week, which is wrong but not alarming; here an
+# unlogged day looks exactly like constipation, dehydration or a fast, and a
+# panel that cannot tell those apart is one that warns you about your Sundays
+# until you stop reading it.
+
+
+def visit(
+    days_ago: int,
+    hour: int,
+    kind: str = "urine",
+    color: str | None = "yellow",
+    solidity: str | None = None,
+    volume: str = "medium",
+) -> d.BathroomLog:
+    return d.BathroomLog(
+        id=days_ago * 100 + hour,
+        date=TODAY - dt.timedelta(days=days_ago),
+        hour=hour,
+        kind=kind,
+        color=color if kind == "urine" else None,
+        solidity=solidity if kind == "stool" else None,
+        volume=volume,
+    )
+
+
+def day_of_urine(days_ago: int, *colors: str) -> list[d.BathroomLog]:
+    """One day's voids, in order, starting at 07:00."""
+    return [
+        visit(days_ago, 7 + n, color=color) for n, color in enumerate(colors)
+    ]
+
+
+def meal(days_ago: int, hour: int = 12, size: str = "medium", quality: int = 3) -> d.MealLog:
+    return d.MealLog(
+        id=days_ago * 100 + hour,
+        date=TODAY - dt.timedelta(days=days_ago),
+        hour=hour,
+        size=size,
+        quality=quality,
+    )
+
+
+def days_of_meals(days: int, per_day: int = 3, size: str = "medium", quality: int = 3):
+    return [
+        meal(n, 8 + 4 * i, size, quality) for n in range(days) for i in range(per_day)
+    ]
+
+
+# -- hydration ---------------------------------------------------------------
+
+
+def test_the_first_void_of_the_day_is_thrown_away():
+    """Overnight urine is concentrated in everybody.
+
+    The load-bearing test of this section: without the discard, a dark 07:00
+    reading followed by two pale ones averages to a warning, and the panel
+    would flag dehydration on a well-hydrated morning every day of the camp.
+    """
+    day = day_of_urine(0, "darker", "clear", "light")
+    assert health.day_darkness(day) == 1.5
+
+
+def test_a_day_with_too_few_voids_has_no_reading():
+    assert health.day_darkness(day_of_urine(0, "darker", "darker")) is None
+    assert health.day_darkness(day_of_urine(0, "darker", "darker", "darker")) == 4.0
+
+
+def test_dark_urine_needs_a_run():
+    logs = [v for n in range(2) for v in day_of_urine(n, "darker", "darker", "darker")]
+    assert health.dark_urine_run(logs, TODAY) == 2
+
+
+def test_a_pale_day_breaks_the_run():
+    logs = [
+        *day_of_urine(0, "darker", "darker", "darker"),
+        *day_of_urine(1, "clear", "clear", "clear"),
+        *day_of_urine(2, "darker", "darker", "darker"),
+    ]
+    assert health.dark_urine_run(logs, TODAY) == 1
+
+
+def test_an_unlogged_day_breaks_the_run_rather_than_extending_it():
+    """A gap is not evidence. Same rule as `readiness_dip`, and the reason is
+    the same: a warning that grows while nobody is measuring is worse than no
+    warning."""
+    logs = [
+        *day_of_urine(0, "darker", "darker", "darker"),
+        # nothing on day 1
+        *day_of_urine(2, "darker", "darker", "darker"),
+    ]
+    assert health.dark_urine_run(logs, TODAY) == 1
+
+
+def test_hydration_mean_skips_absent_days_rather_than_zeroing_them():
+    points = [(TODAY - dt.timedelta(days=n), 2000.0) for n in (0, 2, 4)]
+    assert health.hydration_mean(points, TODAY) == 2000.0
+
+
+def test_hydration_mean_is_silent_under_three_readings():
+    points = [(TODAY, 2000.0), (TODAY - dt.timedelta(days=1), 1800.0)]
+    assert health.hydration_mean(points, TODAY) is None
+
+
+# -- the gut -----------------------------------------------------------------
+
+
+def test_the_gut_readings_are_none_when_the_log_was_not_being_kept():
+    logs = [visit(0, 8), visit(1, 8)]  # two days out of seven
+    assert health.liquid_days(logs, TODAY) is None
+    assert health.days_since_stool(logs, TODAY) is None
+
+
+def test_liquid_days_counts_days_not_entries():
+    logs = [visit(n, 8) for n in range(7)]
+    logs += [
+        visit(0, 9, kind="stool", solidity="liquid"),
+        visit(0, 11, kind="stool", solidity="liquid"),
+        visit(3, 9, kind="stool", solidity="liquid"),
+    ]
+    assert health.liquid_days(logs, TODAY) == 2
+
+
+def test_days_since_stool_counts_from_today():
+    logs = [visit(n, 8) for n in range(7)]
+    logs.append(visit(2, 9, kind="stool", solidity="solid"))
+    assert health.days_since_stool(logs, TODAY) == 2
+
+    logs.append(visit(0, 9, kind="stool", solidity="solid"))
+    assert health.days_since_stool(logs, TODAY) == 0
+
+
+# -- food --------------------------------------------------------------------
+
+
+def test_a_day_with_one_meal_is_not_a_logged_day():
+    """The opposite convention from `daily_load`'s rest days, on purpose: a day
+    with no session is a day you did not train, and a day with no food on it is
+    a day you did not write down what you ate."""
+    # Six full days behind us, and one lonely breakfast today.
+    meals = [meal(0), *(m for m in days_of_meals(7) if m.date != TODAY)]
+    intake = health.daily_intake(meals, TODAY)
+    assert TODAY not in intake
+    assert len(intake) == 6
+
+
+def test_intake_is_the_buckets_added_up():
+    meals = days_of_meals(7, per_day=3, size="medium")
+    assert health.intake_mean(meals, TODAY) == pytest.approx(3 * health.MEAL_KCAL["medium"])
+
+
+def test_intake_is_silent_under_five_logged_days():
+    assert health.intake_mean(days_of_meals(4), TODAY) is None
+    assert health.intake_mean(days_of_meals(5), TODAY) is not None
+
+
+def test_diet_quality_is_a_mean_over_meals_not_over_days():
+    """Two good dinners do not undo five days of bad lunches."""
+    meals = [
+        *days_of_meals(5, per_day=2, quality=1),
+        *days_of_meals(2, per_day=1, quality=5),
+    ]
+    # 10 meals at 1 and 2 at 5, not a mean of daily means.
+    assert health.diet_quality(meals, TODAY) == pytest.approx(20 / 12)
+
+
+def test_implied_rate_is_the_balance_as_pounds():
+    assert health.implied_lb_per_week(-500.0) == pytest.approx(-1.0)
+
+
+# -- overnight scalars -------------------------------------------------------
+
+
+def scalars(values: list[float]) -> list[tuple[dt.date, float]]:
+    """Oldest-first, one a day, ending today."""
+    return [
+        (TODAY - dt.timedelta(days=len(values) - 1 - n), v) for n, v in enumerate(values)
+    ]
+
+
+def test_a_scalar_baseline_needs_a_fortnight():
+    assert health.scalar_baseline(scalars([50.0] * 13), TODAY) is None
+    # …and a flat series has no spread to measure a departure in.
+    assert health.scalar_baseline(scalars([50.0] * 20), TODAY) is None
+
+
+def test_hrv_dip_is_a_run_below_your_own_baseline():
+    values = [50.0, 55.0, 45.0, 52.0, 48.0] * 4  # twenty days of ordinary noise
+    values[-2:] = [20.0, 20.0]
+    assert health.scalar_run(scalars(values), TODAY, above=False) == 2
+
+
+def test_resting_hr_runs_the_other_way():
+    values = [48.0, 52.0, 46.0, 50.0, 49.0] * 4
+    values[-3:] = [70.0, 70.0, 70.0]
+    assert health.scalar_run(scalars(values), TODAY, above=True) == 3
+    # The same series read as a dip is not a run at all.
+    assert health.scalar_run(scalars(values), TODAY, above=False) == 0
+
+
+def test_a_missing_morning_breaks_a_scalar_run():
+    values = [48.0, 52.0, 46.0, 50.0, 49.0] * 4
+    values[-3:] = [70.0, 70.0, 70.0]
+    points = [p for p in scalars(values) if p[0] != TODAY - dt.timedelta(days=1)]
+    assert health.scalar_run(points, TODAY, above=True) == 1

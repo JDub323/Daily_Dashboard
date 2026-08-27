@@ -18,6 +18,7 @@ import { invalidateHistory } from "./modals/daylogs.js";
 import { invalidateTrickArchive } from "./modals/tricks.js";
 import { initNav, resetToTab } from "./nav.js";
 import { mountAll, refreshLive, register, rerender, rerenderAll, resetCollapse } from "./panel.js";
+import bathroom from "./panels/bathroom.js";
 import calendar from "./panels/calendar.js";
 import checkin from "./panels/checkin.js";
 import chess from "./panels/chess.js";
@@ -28,6 +29,7 @@ import deck from "./panels/deck.js";
 import games from "./panels/games.js";
 import health from "./panels/health.js";
 import markets from "./panels/markets.js";
+import meals from "./panels/meals.js";
 import math from "./panels/math.js";
 import metrics from "./panels/metrics.js";
 import { finance, politics } from "./panels/news.js";
@@ -83,6 +85,13 @@ const WATCHES = {
   checkin: ["health"],
   session: ["health"],
   plan: ["health"],
+  // The two quick logs read the same slice and write to it four to eight times
+  // a day. They watch it rather than redrawing themselves after their own POST
+  // for the same reason as the three above — and because the hero's hydration
+  // and energy-balance lines are computed off exactly these rows, so a meal
+  // logged here has to move a sentence up there in the same breath.
+  bathroom: ["health"],
+  meals: ["health"],
 };
 
 /** Store keys whose writes make the cached /api/history fetch stale. */
@@ -121,7 +130,14 @@ const PANELS = [
   // plan asked for, then the freehand log for anything it did not ask for.
   // `plan` sits above `session` because on most evenings it is the whole job —
   // `session` is the escape hatch for a session nobody prescribed.
-  health, checkin, plan, session,
+  //
+  // The two quick logs come last, and being last is not being least: they are
+  // the two panels you will almost never be *looking* at when you use them.
+  // `b` and `m` reach them from any tab in one keystroke, so their position in
+  // the column is only about reading the day back afterwards — for which the
+  // bottom of the page, under the training you are actually here for, is
+  // exactly right.
+  health, checkin, plan, session, meals, bathroom,
 ];
 
 async function loadConfig() {

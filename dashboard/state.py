@@ -16,12 +16,12 @@ from __future__ import annotations
 import datetime as dt
 from typing import NamedTuple
 
-from . import content, debate, health, scoring, spelling, trainplan, tricks
+from . import content, debate, garmin, health, scoring, spelling, trainplan, tricks
 from .config import Settings
 from .db.repository import ARGUMENT_AREA, TRICK_AREA, Repository
 from .models import api
 from .models import domain as d
-from .models.common import Deck, Game, HealthMetric, MathOutcome, Track
+from .models.common import Deck, EntrySource, Game, HealthMetric, MathOutcome, Track
 
 HISTORY_LIMIT = 40
 """Rating events sent to the elo charts. The chart plots the last 40 anyway;
@@ -762,10 +762,47 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
     trend = health.weight_trend([(e.date, e.value) for e in weight])
     baseline = health.readiness_baseline(entries, today)
 
+    # The scalars the watch fills in. Read as `(date, value)` pairs because
+    # that is what every function in `health.py` takes -- the same shape the
+    # weight trend has always been handed, so the overnight numbers get the
+    # baseline machinery for free rather than growing their own.
+    def points(metric: HealthMetric) -> list[tuple[dt.date, float]]:
+        return [(e.date, e.value) for e in repo.health_series(metric, HEALTH_LIMIT)]
+
+    sleep, in_bed = points(HealthMetric.sleep_hours), points(HealthMetric.time_in_bed)
+    sleep_score = points(HealthMetric.sleep_score)
+    hrv, rhr = points(HealthMetric.hrv), points(HealthMetric.resting_hr)
+    battery = points(HealthMetric.body_battery)
+    calories, water = points(HealthMetric.calories_out), points(HealthMetric.hydration_ml)
+
+    def latest(series: list[tuple[dt.date, float]]) -> float | None:
+        """Today's reading, and only today's.
+
+        Not "the last one on file", which is the version that reads three-day-
+        old sleep as last night's every time the watch spends a night on the
+        charger. An absent reading has to be absent, or the strip becomes a
+        thing you have to check the date of.
+        """
+        return next((value for date, value in reversed(series) if date == today), None)
+
+    hrv_base = health.scalar_baseline(hrv, today)
+    rhr_base = health.scalar_baseline(rhr, today)
+
+    # Both logs windowed rather than read whole -- four to eight rows a day
+    # against the sessions table's one, and nothing here looks past a month.
+    visits = repo.bathroom_history(health.CHRONIC_DAYS, before=today)
+    meals = repo.meal_history(health.CHRONIC_DAYS, before=today)
+
+    intake = health.intake_mean(meals, today)
+    spend = health.expenditure_mean(calories, today)
+    balance = intake - spend if intake is not None and spend is not None else None
+
     return api.HealthPanel(
         series=health_series(repo),
         readiness_today=repo.readiness(today),
         sessions_today=repo.sessions_on(today),
+        bathroom_today=repo.bathroom_on(today),
+        meals_today=repo.meals_on(today),
         loads=sorted(loads.items()),
         derived=api.HealthDerived(
             acwr=health.acwr(sessions, today),
@@ -778,8 +815,37 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
             readiness_baseline=baseline[0] if baseline else None,
             readiness_sd=baseline[1] if baseline else None,
             readiness_dip_days=health.readiness_dip(entries, today),
+            sleep_week=health.scalar_mean(sleep, today),
+            sleep_last=latest(sleep),
+            in_bed_last=latest(in_bed),
+            sleep_score_last=latest(sleep_score),
+            hrv_last=latest(hrv),
+            hrv_baseline=hrv_base[0] if hrv_base else None,
+            hrv_dip_days=health.scalar_run(hrv, today, above=False),
+            rhr_last=latest(rhr),
+            rhr_baseline=rhr_base[0] if rhr_base else None,
+            rhr_spike_days=health.scalar_run(rhr, today, above=True),
+            body_battery_last=latest(battery),
+            dark_urine_days=health.dark_urine_run(visits, today),
+            hydration_ml=health.hydration_mean(water, today),
+            liquid_days=health.liquid_days(visits, today),
+            days_since_stool=health.days_since_stool(visits, today),
+            intake_est=intake,
+            expenditure=spend,
+            balance=balance,
+            balance_lb_per_week=(
+                health.implied_lb_per_week(balance) if balance is not None else None
+            ),
+            diet_quality=health.diet_quality(meals, today),
         ),
         plan=training_plan(cfg, today),
+        garmin=garmin.status(cfg),
+        synced_today=[
+            metric
+            for metric in HealthMetric
+            if (entry := repo.health_entry(metric, today)) is not None
+            and entry.source is EntrySource.garmin
+        ],
     )
 
 
