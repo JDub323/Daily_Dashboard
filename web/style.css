@@ -1257,20 +1257,12 @@ body::after {
   .figure { filter: drop-shadow(0 1px 0 rgba(0,0,0,.6)); }
 }
 
-/* ---- the chrome ----
-   One shared veil, three bands. `position` is already set on all three, so
-   these only need the layer. */
-#tabbar, #statusline, #modal-head { position: relative; }
-#tabbar::after, #statusline::after, #modal-head::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
-  background:
-    repeating-linear-gradient(180deg, rgba(0,0,0,.20) 0 1px, transparent 1px 3px),
-    var(--grain);
-  background-size: auto, 160px 160px;
-  opacity: .5;
-}
-/* The band's own contents have to sit above its veil. */
-#tabbar > *, #statusline > *, #modal-head > * { position: relative; z-index: 1; }
+/* The per-band veil that used to live here is gone. `--grain` is mid-grey
+   noise — that is what makes it read as film grain at .05 over black — and at
+   the .5 it was running at, it stopped being texture and became a grey wash
+   that left the tab bar lighter than the page it sits on. The CRT layer at the
+   foot of this file does the whole page at an alpha that survives being read
+   through. */
 
 /* A hairline of cyan under the tab bar, which is the title screen's horizon
    line doing the same job one storey down: it separates the fixed furniture
@@ -1286,3 +1278,316 @@ body::after {
    — so a change here is felt everywhere for the cost of one rule. */
 .panel h2 { text-transform: uppercase; letter-spacing: .16em; }
 .panel.hero h2 { text-transform: none; letter-spacing: .3px; }
+
+/* ==========================================================================
+   The cartridge, inside the panels
+   ==========================================================================
+   The first theme pass did the frame and left the furniture alone, which meant
+   the app had a title screen bolted onto a dashboard rather than being one
+   thing. This is the rest of it, and it works almost entirely through the
+   shared vocabulary: .panel, h2, .figure, .row, .divider, .value, .tag,
+   button, input. About fifteen selectors reach every panel in the app, so the
+   whole redesign is here rather than spread across twenty-four panel modules.
+
+   The organising idea is that a panel is a *plate* — a machined thing bolted
+   to the page — where before it was a card. Plates have square corners, a lit
+   top edge, and brackets at the diagonal. Cards have soft radii and a border. */
+
+@font-face {
+  font-family: "Orbitron";
+  src: url("/vendor/orbitron/orbitron-latin.woff2") format("woff2");
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* Display only — never body copy. Orbitron is a geometric face with wide
+     counters and no lowercase character to speak of; it is superb for a number
+     you read at a glance and punishing for a paragraph. Cascadia keeps
+     everything you actually read. */
+  --font-display: "Orbitron", "Cascadia Code", Consolas, monospace;
+
+  /* The CRT veil, as two dials rather than a magic number in one rule. The
+     scanline is the one that costs legibility: .34 is what the title screen
+     uses and it is far too strong to read a feed through, .13 is where the
+     bars are still visibly there and 14px monospace still resolves. */
+  --crt-scan: .13;
+  --crt-grain: .035;
+
+  /* The corner bracket's arm. */
+  --bracket: 11px;
+}
+
+/* ---- the CRT ----
+   One layer over the entire app, the modal included, because a CRT that stops
+   at the edge of a dialog is a texture rather than a screen. Fixed, inert, and
+   below the title screen so the boot sequence keeps its own stronger veil.
+
+   On <html> rather than a new element: it has no other pseudo-elements, it is
+   the one box guaranteed to be the size of the viewport, and it saves a div
+   whose only job is to be painted over. */
+html::after, html::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 90;
+}
+html::after {
+  background: repeating-linear-gradient(
+    180deg, rgba(0,0,0,var(--crt-scan)) 0 1px, transparent 1px 3px);
+}
+html::before {
+  inset: -50%;
+  background-image: var(--grain);
+  opacity: var(--crt-grain);
+  /* Overlay rather than plain alpha: grain that is composited straight on top
+     lightens black, which is how the tab bar went grey. Overlay modulates what
+     is already there and leaves the black alone. */
+  mix-blend-mode: overlay;
+  animation: spGrain 700ms steps(4) infinite;
+}
+@media (prefers-reduced-motion: reduce) { html::before { animation: none !important; } }
+
+/* ---- the plate ---- */
+.panel {
+  border-radius: 0;
+  border-color: rgba(92,207,230,.14);
+  /* The lit top edge. This one line is most of the difference between "card"
+     and "machined plate": a surface reads as raised when its top catches light,
+     which on a dark ground is the only cue available. */
+  background:
+    linear-gradient(180deg, rgba(223,230,242,.045), transparent 38%),
+    var(--panel);
+  box-shadow: inset 0 1px 0 rgba(223,230,242,.10);
+}
+.panel.hero {
+  background:
+    linear-gradient(180deg, rgba(223,230,242,.055), transparent 34%),
+    var(--panel2);
+}
+
+/* Corner brackets, at the diagonal rather than all four: four brackets is a
+   box, two is a mark. Colour follows the panel's state, so a finished card's
+   brackets go gold with its border and the focused one's go cyan. */
+.panel::before, .panel::after {
+  content: ""; position: absolute; width: var(--bracket); height: var(--bracket);
+  pointer-events: none; border: 0 solid var(--bracket-color, rgba(92,207,230,.34));
+}
+.panel::before { top: -1px; left: -1px; border-top-width: 2px; border-left-width: 2px; }
+.panel::after { bottom: -1px; right: -1px; border-bottom-width: 2px; border-right-width: 2px; }
+.panel.hero { --bracket-color: var(--gold-dim); }
+.panel.done-gold { --bracket-color: var(--gold); }
+.panel.nav-panel { --bracket-color: var(--accent); }
+
+/* ---- headings ----
+   A panel heading is a machine label now: display face, uppercase, wide
+   tracking, and a rule that fades out to the right rather than running the
+   full width. The fade is what stops six stacked panels reading as a form. */
+.panel h2 {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: 10px; letter-spacing: .22em; text-transform: uppercase;
+  color: var(--faint);
+  border-bottom: 0; padding-bottom: var(--s2);
+  background: linear-gradient(90deg, var(--border) 0 38%, transparent) bottom / 100% 1px no-repeat;
+}
+.panel.hero h2 {
+  font-size: var(--t-lede); letter-spacing: .14em; color: var(--fg);
+  text-transform: uppercase;
+}
+
+/* ---- figures ----
+   Orbitron's digits are the reason it is here. They are wide, flat-sided and
+   evenly weighted, which is exactly what a number you read at a glance from
+   across a desk wants — and nothing like Cascadia's, which are designed to sit
+   in a line of code. */
+.figure { font-family: var(--font-display); font-weight: 900; letter-spacing: .01em; }
+.figure-unit { font-family: var(--font-display); font-weight: 500; letter-spacing: .08em;
+               text-transform: uppercase; font-size: var(--t-body); }
+.figure-label { font-family: var(--font-display); letter-spacing: .16em; text-transform: uppercase;
+                font-size: 10px; }
+.value { font-family: var(--font-display); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ---- controls ----
+   Buttons become key-caps: square, bevelled with a lit top edge and a dark
+   base, and labelled in the display face. The old ones were a 1px outline and
+   a word, which on a dashboard whose panels are also 1px outlines meant the
+   thing you press looked exactly like the thing you read. */
+button {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+  border-radius: 0; padding: var(--s2) var(--s3);
+  border-color: rgba(92,207,230,.28);
+  background: linear-gradient(180deg, rgba(223,230,242,.07), rgba(0,0,0,.18));
+  box-shadow: inset 0 1px 0 rgba(223,230,242,.12), 0 1px 0 rgba(0,0,0,.5);
+  transition: border-color .12s, color .12s, background .12s, box-shadow .12s;
+}
+button:hover:not(:disabled) {
+  border-color: var(--accent); color: var(--accent);
+  background: linear-gradient(180deg, rgba(92,207,230,.16), rgba(92,207,230,.04));
+  box-shadow: inset 0 1px 0 rgba(223,230,242,.18), 0 0 12px rgba(92,207,230,.18);
+}
+button:active:not(:disabled) {
+  /* Pressed: the lit edge moves to the bottom and the cap sinks a pixel. */
+  box-shadow: inset 0 -1px 0 rgba(223,230,242,.14), inset 0 2px 6px rgba(0,0,0,.55);
+  transform: translateY(1px);
+}
+button.primary {
+  border-color: var(--accent); color: var(--accent);
+  background: linear-gradient(180deg, rgba(92,207,230,.20), rgba(92,207,230,.05));
+}
+button.tiny { letter-spacing: .1em; padding: 1px var(--s2); box-shadow: none; background: none; }
+button.ghost { background: none; box-shadow: none; }
+
+/* Fields are the inverse of a key-cap: sunk, not raised. Same logic, opposite
+   sign, which is what makes a form legible before you have read a word of it. */
+input, textarea {
+  border-radius: 0; border-color: rgba(92,207,230,.20);
+  background: #070910;
+  box-shadow: inset 0 2px 5px rgba(0,0,0,.55);
+}
+input:focus, textarea:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: inset 0 2px 5px rgba(0,0,0,.55), 0 0 0 1px rgba(92,207,230,.35), 0 0 14px rgba(92,207,230,.14);
+}
+
+/* ---- small parts ---- */
+/* A tag is a stamped chip: square, tracked, in the display face. */
+.tag {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: 9px; letter-spacing: .14em; text-transform: uppercase;
+  border-radius: 0; border-color: rgba(92,207,230,.24); padding: 1px var(--s2);
+  background: rgba(92,207,230,.06);
+}
+/* A ticked rule rather than a hairline — the same mark the title screen's
+   scale uses, at panel scale. */
+.divider {
+  border-top: 0;
+  background: repeating-linear-gradient(90deg, var(--border) 0 3px, transparent 3px 7px)
+              top / 100% 1px no-repeat;
+}
+/* Labels in the display face wherever they are labels and not sentences. */
+.figure-row + .small, .small.label, .st-seg { letter-spacing: .1em; }
+
+/* ---- the tab bar ----
+   Segments in a bar, not links in a row. The active one is lit from within and
+   carries a gold underline; the rest are unlit metal. */
+#tabbar { background: linear-gradient(180deg, #0d1017 0%, #080a10 100%); }
+.tab {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+  border-radius: 0; padding: var(--s2) var(--s3);
+  border-color: transparent;
+}
+.tab:hover { color: var(--fg); background: rgba(223,230,242,.04); }
+.tab.active {
+  color: var(--gold-text); border-color: rgba(232,180,88,.30);
+  background: linear-gradient(180deg, rgba(232,180,88,.14), rgba(232,180,88,.02));
+  box-shadow: inset 0 -2px 0 var(--gold), inset 0 1px 0 rgba(255,255,255,.10);
+}
+
+/* ---- the statusline ----
+   The one band that was already the right idea and the wrong typeface. */
+#statusline {
+  font-family: var(--font-display); font-weight: 500;
+  font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+  background: linear-gradient(180deg, #12161f, #0b0e15);
+}
+
+/* ---- the top bar ---- */
+#topbar h1 { font-family: var(--font-display); font-weight: 900; }
+#topbar .sub {
+  font-family: var(--font-display); font-weight: 500;
+  font-size: 9px; letter-spacing: .18em; text-transform: uppercase;
+}
+
+/* The title screen's wordmark moves to the display face with everything else —
+   it is the same mark as the one in the top bar, and two faces for one word is
+   the kind of thing you notice without being able to say why. */
+#splash h1 { font-family: var(--font-display); font-weight: 900; letter-spacing: .08em; }
+.sp-sub, .sp-bar, .sp-press { font-family: var(--font-display); font-weight: 500; }
+
+/* ---- the week grid ----
+   The one panel that had a whole visual language of its own, and the one you
+   see first. It stays legible in exactly the way it was — the hue still says
+   which calendar an event came from, and the legend still decodes it — but the
+   events become plates like everything else: square, dark, lit down one edge.
+
+   Dropping the fill's saturation from 32% to about 14% is what does most of
+   the work. The old blocks were coloured *areas*, which on a dark grid read as
+   a stained-glass window; now the colour is in the edge and the time, and the
+   block itself is the same near-black as the rest of the app. */
+.cal-event, .cal-chip {
+  border-radius: 0;
+  border-left-color: hsl(var(--hue) 70% 60%);
+  background: linear-gradient(180deg,
+    hsl(var(--hue) 22% 17%), hsl(var(--hue) 20% 13%));
+  box-shadow: inset 0 1px 0 hsl(var(--hue) 30% 26%);
+}
+.cal-event:hover { background: linear-gradient(180deg, hsl(var(--hue) 30% 23%), hsl(var(--hue) 26% 18%)); }
+.cal-event-time { font-family: var(--font-display); font-weight: 700; font-size: 9px;
+                  letter-spacing: .08em; color: hsl(var(--hue) 60% 74%); }
+
+/* The rules go cyan and quiet — the same grid the title screen's horizon is
+   drawn in, one storey down and lying flat. */
+.cal-col { border-left-color: rgba(92,207,230,.09);
+           background-image: repeating-linear-gradient(
+             to bottom, rgba(92,207,230,.10) 0 1px, transparent 1px var(--cal-hour, 54px)); }
+.cal-corner, .cal-allday-gutter, .cal-ruler, .cal-day-head, .cal-allday {
+  border-color: rgba(92,207,230,.16);
+}
+.cal-col.is-today { background-color: rgba(92,207,230,.05); }
+
+/* Column heads as instrument labels. */
+.cal-dow { font-family: var(--font-display); font-weight: 700; font-size: 9px; letter-spacing: .2em; }
+.cal-dom { font-family: var(--font-display); font-weight: 700; }
+.cal-hour { font-family: var(--font-display); font-size: 9px; letter-spacing: .08em; }
+.cal-span { font-family: var(--font-display); font-weight: 700; letter-spacing: .12em;
+            text-transform: uppercase; font-size: var(--t-body); }
+.cal-key i { border-radius: 0; }
+
+/* The now-line gets the glow it always wanted: it is the only mark on this
+   grid that means "right now", and a 1px cyan rule was losing to fifteen
+   hour rules of nearly the same weight. */
+.cal-now { box-shadow: 0 0 8px rgba(92,207,230,.7); }
+
+/* ---- the modal ----
+   Square, bracketed and lit like a panel, because it is one — it is where the
+   day's actual work happens, and it was the last thing in the app still
+   shaped like a web dialog. */
+#modal {
+  border-radius: 0; border-color: rgba(92,207,230,.26);
+  background: linear-gradient(180deg, rgba(223,230,242,.05), transparent 26%), var(--raised);
+  box-shadow: inset 0 1px 0 rgba(223,230,242,.12), 0 24px 70px rgba(0,0,0,.75);
+}
+#modal-head { background: var(--raised); border-bottom-color: rgba(92,207,230,.18); }
+#modal-title {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: var(--t-body); letter-spacing: .18em; text-transform: uppercase;
+  color: var(--gold-text);
+}
+#modal-close { border-radius: 0; }
+#toast { border-radius: 0; font-family: var(--font-display); font-size: 10px;
+         letter-spacing: .14em; text-transform: uppercase; }
+
+/* ---- scrollbars ----
+   The last light-grey thing on the screen, and on a dashboard with a week grid
+   that scrolls sideways and a modal that scrolls down, it is on screen most of
+   the time. Styled rather than hidden: this app is keyboard-first but the bar
+   is also the only thing that says how much is below the fold.
+
+   Both syntaxes, because the standard properties give a thin bar with no
+   texture and the WebKit ones give the rest. */
+* { scrollbar-width: thin; scrollbar-color: rgba(92,207,230,.34) #070910; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #070910; border-left: 1px solid rgba(92,207,230,.12); }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(92,207,230,.34), rgba(92,207,230,.16));
+  border: 1px solid rgba(92,207,230,.26);
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(92,207,230,.46); }
+::-webkit-scrollbar-corner { background: #070910; }
+
+/* ---- KaTeX ----
+   The one place a display face must never reach: this is set by KaTeX in its
+   own metrics, and overriding the family breaks the spacing it computed. It is
+   here as a note rather than a rule — nothing above targets it, and nothing
+   should. The scanline is the real question for this panel, and the answer is
+   that --crt-scan is a token at the top of this file for exactly that reason. */

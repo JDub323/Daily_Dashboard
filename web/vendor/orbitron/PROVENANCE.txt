@@ -1,0 +1,15 @@
+Orbitron v35 (variable, wght 400-900), latin subset
+  https://fonts.gstatic.com/s/orbitron/v35/yMJRMIlzdpvBhQQL_Qq7dy0.woff2
+  sha256 c25a9f9da5d9f3db1bf2a01474722dc9b377675b7bbab6d0dfda6902794fd1ed
+LICENSE from https://raw.githubusercontent.com/google/fonts/main/ofl/orbitron/OFL.txt
+
+Vendored rather than linked for the same reason KaTeX is: this app has to work
+with no network, and a heading font that arrives over the wire is a dashboard
+that looks broken on a plane. One file — Orbitron ships as a variable font, so
+the 500/700/900 the app uses are all the same 11.8 kB download.
+
+Latin subset only. Nothing in this app's chrome is anything but ASCII; the
+panels' own text is Cascadia, which is not this file's problem.
+
+Display only: the wordmark, panel headings, hero figures, the statusline. Body
+copy stays monospace — see the note in style.css above --font-display.
