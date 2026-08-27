@@ -1,44 +1,73 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
-<!-- Health: an ECG across the foot of the page, a heart left, sleep right. -->
-<g fill="none" stroke="#cdd6e4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<!-- Health: Orion down the left — shoulders, belt, sword, both feet. The
+     fighter, and the easiest figure in the sky to find. A pulse in stars low
+     right, which is what the art this replaces was. -->
+<g fill="#cdd6e4" stroke="#cdd6e4" stroke-linecap="round" stroke-linejoin="round">
 
-  <!-- the trace. Flat through the middle third so it passes behind the
-       content column without competing with it. -->
-  <path d="M0 700 h150 l24 -60 l22 130 l26 -190 l26 160 l24 -40 h110
-           M1140 700 h60 l24 -60 l22 130 l26 -190 l26 160 l24 -40 h278"
-        stroke-width="3"/>
-  <path d="M512 700 h576" opacity=".3"/>
-
-  <!-- heart, left -->
-  <g transform="translate(90 180)">
-    <path d="M170 300 c-100 -70 -170 -130 -170 -200 c0 -50 40 -84 84 -84
-             c34 0 62 20 86 52 c24 -32 52 -52 86 -52 c44 0 84 34 84 84
-             c0 70 -70 130 -170 200 z"/>
-    <path d="M60 116 h60 l20 -40 l30 80 l24 -50 h140" opacity=".7" stroke-width="3"/>
+  <!-- the field -->
+  <g stroke="none">
+    <circle cx="1454" cy="193" r="2.1" opacity="0.59"/>
+    <circle cx="329" cy="124" r="2.2" opacity="0.60"/>
+    <circle cx="1400" cy="221" r="1.9" opacity="0.47"/>
+    <circle cx="298" cy="660" r="1.5" opacity="0.35"/>
+    <circle cx="239" cy="813" r="1.0" opacity="0.65"/>
+    <circle cx="147" cy="757" r="2.2" opacity="0.37"/>
+    <circle cx="1557" cy="119" r="1.8" opacity="0.33"/>
+    <circle cx="1275" cy="824" r="0.9" opacity="0.50"/>
+    <circle cx="445" cy="210" r="1.5" opacity="0.58"/>
+    <circle cx="49" cy="127" r="1.5" opacity="0.40"/>
+    <circle cx="148" cy="470" r="1.1" opacity="0.26"/>
+    <circle cx="1406" cy="506" r="1.2" opacity="0.28"/>
+    <circle cx="285" cy="413" r="1.7" opacity="0.43"/>
+    <circle cx="1362" cy="681" r="1.0" opacity="0.65"/>
+    <circle cx="31" cy="665" r="1.1" opacity="0.49"/>
+    <circle cx="1569" cy="209" r="1.9" opacity="0.35"/>
+    <circle cx="310" cy="736" r="2.0" opacity="0.64"/>
+    <circle cx="1525" cy="303" r="2.2" opacity="0.33"/>
+    <circle cx="1260" cy="109" r="1.4" opacity="0.51"/>
+    <circle cx="99" cy="666" r="1.5" opacity="0.50"/>
+    <circle cx="355" cy="652" r="1.7" opacity="0.37"/>
+    <circle cx="1137" cy="713" r="1.1" opacity="0.53"/>
+    <circle cx="1416" cy="651" r="1.8" opacity="0.62"/>
+    <circle cx="385" cy="676" r="0.9" opacity="0.65"/>
+    <circle cx="458" cy="395" r="1.2" opacity="0.38"/>
+    <circle cx="1243" cy="50" r="1.3" opacity="0.49"/>
+    <circle cx="425" cy="193" r="2.1" opacity="0.32"/>
+    <circle cx="251" cy="246" r="1.5" opacity="0.52"/>
+    <circle cx="1429" cy="632" r="1.1" opacity="0.29"/>
+    <circle cx="302" cy="645" r="1.6" opacity="0.37"/>
+    <circle cx="1299" cy="424" r="1.0" opacity="0.35"/>
+    <circle cx="1259" cy="44" r="1.5" opacity="0.43"/>
+    <circle cx="406" cy="493" r="1.2" opacity="0.67"/>
+    <circle cx="1239" cy="58" r="1.4" opacity="0.25"/>
   </g>
 
-  <!-- a moon and z's, upper right -->
-  <g transform="translate(1240 140)">
-    <path d="M180 40 a110 110 0 1 0 84 168 a86 86 0 0 1 -84 -168 z"/>
-    <g opacity=".6" stroke-width="3">
-      <path d="M300 60 h48 l-48 54 h48"/>
-      <path d="M368 -10 h34 l-34 38 h34"/>
-    </g>
+  <!-- the figure: lines under, stars over, so a join never sits on a star -->
+  <g fill="none" stroke-width="1.6" opacity=".45">
+    <path d="M170 230 L390 210 M170 230 L240 430 M390 210 L350 478 M240 430 L150 660 M350 478 L380 690"/>
+    <path d="M240 430 L295 455 L350 478"/>
+    <path d="M292 462 L288 588"/>
+    <path d="M150 660 L380 690"/>
+    <path d="M1120 700 L1180 700 L1210 648 L1240 762 L1276 598 L1312 720 L1348 690 L1500 690"/>
   </g>
-
-  <!-- a scale, lower right -->
-  <g transform="translate(1300 560)" opacity=".65">
-    <rect x="0" y="0" width="200" height="150" rx="16"/>
-    <path d="M100 130 a54 54 0 0 1 -54 -54" opacity=".8"/>
-    <path d="M100 130 a54 54 0 0 1 54 -54" opacity=".8"/>
-    <path d="M100 130 l30 -44" stroke-width="3"/>
-    <circle cx="100" cy="130" r="6" fill="#cdd6e4"/>
-  </g>
-
-  <!-- a water glass, small, left edge -->
-  <g transform="translate(430 520)" opacity=".45">
-    <path d="M0 0 h80 l-10 130 h-60 z"/>
-    <path d="M6 60 h68" />
+  <g stroke="none">
+    <circle cx="170" cy="230" r="6.5"/>
+    <circle cx="390" cy="210" r="5"/>
+    <circle cx="240" cy="430" r="4"/>
+    <circle cx="295" cy="455" r="4"/>
+    <circle cx="350" cy="478" r="4"/>
+    <circle cx="290" cy="512" r="2.5"/>
+    <circle cx="288" cy="550" r="3"/>
+    <circle cx="288" cy="588" r="2.5"/>
+    <circle cx="150" cy="660" r="6"/>
+    <circle cx="380" cy="690" r="4.5"/>
+    <circle cx="1120" cy="700" r="2.5"/>
+    <circle cx="1210" cy="648" r="3"/>
+    <circle cx="1240" cy="762" r="3.5"/>
+    <circle cx="1276" cy="598" r="4.5"/>
+    <circle cx="1312" cy="720" r="3"/>
+    <circle cx="1348" cy="690" r="3"/>
+    <circle cx="1500" cy="690" r="2.5"/>
   </g>
 </g>
 </svg>

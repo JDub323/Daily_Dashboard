@@ -1,76 +1,75 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
-<!-- Dailies: one motif per thing the page asks of you. Piano, wordle row and
-     the bee's comb on the left; a chessboard corner and the day's article on
-     the right. Weighted to the outer thirds like the rest of web/assets/bg/ —
-     the middle band stays clear for the content column. -->
-<g fill="none" stroke="#cdd6e4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<!-- Dailies: seven stars for the seven days, arced down the left. Small
+     figures on the right for the things the day asks for — a die, a knight's
+     move, a crossword cross. -->
+<g fill="#cdd6e4" stroke="#cdd6e4" stroke-linecap="round" stroke-linejoin="round">
 
-  <!-- piano, upper left: an octave with the black keys stopped short -->
-  <g transform="translate(80 120)">
-    <rect x="0"   y="0" width="56" height="180" rx="4"/>
-    <rect x="56"  y="0" width="56" height="180" rx="4"/>
-    <rect x="112" y="0" width="56" height="180" rx="4"/>
-    <rect x="168" y="0" width="56" height="180" rx="4"/>
-    <rect x="224" y="0" width="56" height="180" rx="4"/>
-    <rect x="280" y="0" width="56" height="180" rx="4"/>
-    <rect x="336" y="0" width="56" height="180" rx="4"/>
-    <rect x="39"  y="0" width="34" height="112" rx="3" fill="#cdd6e4"/>
-    <rect x="95"  y="0" width="34" height="112" rx="3" fill="#cdd6e4"/>
-    <rect x="207" y="0" width="34" height="112" rx="3" fill="#cdd6e4"/>
-    <rect x="263" y="0" width="34" height="112" rx="3" fill="#cdd6e4"/>
-    <rect x="319" y="0" width="34" height="112" rx="3" fill="#cdd6e4"/>
+  <!-- the field -->
+  <g stroke="none">
+    <circle cx="129" cy="713" r="1.0" opacity="0.68"/>
+    <circle cx="157" cy="477" r="1.0" opacity="0.60"/>
+    <circle cx="1499" cy="571" r="2.2" opacity="0.58"/>
+    <circle cx="1310" cy="844" r="1.7" opacity="0.32"/>
+    <circle cx="1308" cy="113" r="1.6" opacity="0.47"/>
+    <circle cx="1487" cy="695" r="2.0" opacity="0.35"/>
+    <circle cx="243" cy="99" r="1.8" opacity="0.33"/>
+    <circle cx="245" cy="707" r="1.3" opacity="0.61"/>
+    <circle cx="1352" cy="129" r="2.2" opacity="0.67"/>
+    <circle cx="192" cy="220" r="1.3" opacity="0.65"/>
+    <circle cx="133" cy="708" r="1.7" opacity="0.64"/>
+    <circle cx="1238" cy="119" r="2.2" opacity="0.66"/>
+    <circle cx="1342" cy="744" r="1.4" opacity="0.54"/>
+    <circle cx="1270" cy="518" r="1.6" opacity="0.26"/>
+    <circle cx="76" cy="777" r="1.5" opacity="0.65"/>
+    <circle cx="321" cy="209" r="1.6" opacity="0.55"/>
+    <circle cx="261" cy="281" r="1.2" opacity="0.47"/>
+    <circle cx="67" cy="616" r="1.2" opacity="0.36"/>
+    <circle cx="1164" cy="375" r="1.5" opacity="0.38"/>
+    <circle cx="1567" cy="443" r="1.2" opacity="0.61"/>
+    <circle cx="1563" cy="758" r="1.0" opacity="0.56"/>
+    <circle cx="1157" cy="87" r="1.0" opacity="0.31"/>
+    <circle cx="1446" cy="450" r="1.3" opacity="0.42"/>
+    <circle cx="384" cy="213" r="1.4" opacity="0.39"/>
+    <circle cx="64" cy="110" r="2.2" opacity="0.51"/>
+    <circle cx="511" cy="527" r="1.6" opacity="0.31"/>
+    <circle cx="439" cy="728" r="1.6" opacity="0.37"/>
+    <circle cx="171" cy="189" r="2.0" opacity="0.39"/>
+    <circle cx="49" cy="391" r="1.8" opacity="0.40"/>
+    <circle cx="1358" cy="530" r="2.0" opacity="0.30"/>
+    <circle cx="337" cy="263" r="1.7" opacity="0.34"/>
+    <circle cx="309" cy="442" r="1.3" opacity="0.40"/>
+    <circle cx="485" cy="79" r="2.0" opacity="0.64"/>
+    <circle cx="255" cy="740" r="2.3" opacity="0.59"/>
   </g>
 
-  <!-- the day's five letters, mid left. One green, one amber-by-position. -->
-  <g transform="translate(80 380)">
-    <rect x="0"   y="0" width="64" height="64" rx="6"/>
-    <rect x="76"  y="0" width="64" height="64" rx="6" fill="#cdd6e4"/>
-    <rect x="152" y="0" width="64" height="64" rx="6"/>
-    <rect x="228" y="0" width="64" height="64" rx="6" fill="#cdd6e4"/>
-    <rect x="304" y="0" width="64" height="64" rx="6"/>
+  <!-- the figure: lines under, stars over, so a join never sits on a star -->
+  <g fill="none" stroke-width="1.6" opacity=".45">
+    <path d="M110 200 L196 258 L268 336 L316 434 L332 546 L312 656 L258 752"/>
+    <path d="M1170 200 L1300 330 M1300 200 L1170 330"/>
+    <path d="M1380 430 L1380 520 L1470 520"/>
+    <path d="M1180 620 L1320 620 M1250 550 L1250 690"/>
   </g>
-
-  <!-- the comb, lower left -->
-  <g transform="translate(190 660)" opacity=".75">
-    <path d="M0 -44 L38 -22 L38 22 L0 44 L-38 22 L-38 -22 Z" fill="#cdd6e4"/>
-    <g transform="translate(76 0)"><path d="M0 -44 L38 -22 L38 22 L0 44 L-38 22 L-38 -22 Z"/></g>
-    <g transform="translate(38 -66)"><path d="M0 -44 L38 -22 L38 22 L0 44 L-38 22 L-38 -22 Z"/></g>
-    <g transform="translate(-38 -66)"><path d="M0 -44 L38 -22 L38 22 L0 44 L-38 22 L-38 -22 Z"/></g>
-    <g transform="translate(-76 0)"><path d="M0 -44 L38 -22 L38 22 L0 44 L-38 22 L-38 -22 Z"/></g>
-    <g transform="translate(0 66)"><path d="M0 -44 L38 -22 L38 22 L0 44 L-38 22 L-38 -22 Z"/></g>
+  <g stroke="none">
+    <circle cx="110" cy="200" r="4"/>
+    <circle cx="196" cy="258" r="3.5"/>
+    <circle cx="268" cy="336" r="3.5"/>
+    <circle cx="316" cy="434" r="4"/>
+    <circle cx="332" cy="546" r="3.5"/>
+    <circle cx="312" cy="656" r="3.5"/>
+    <circle cx="258" cy="752" r="4"/>
+    <circle cx="1170" cy="200" r="3"/>
+    <circle cx="1300" cy="200" r="3"/>
+    <circle cx="1235" cy="265" r="4"/>
+    <circle cx="1170" cy="330" r="3"/>
+    <circle cx="1300" cy="330" r="3"/>
+    <circle cx="1380" cy="430" r="3.5"/>
+    <circle cx="1380" cy="520" r="3"/>
+    <circle cx="1470" cy="520" r="3.5"/>
+    <circle cx="1250" cy="620" r="4"/>
+    <circle cx="1180" cy="620" r="2.5"/>
+    <circle cx="1320" cy="620" r="2.5"/>
+    <circle cx="1250" cy="550" r="2.5"/>
+    <circle cx="1250" cy="690" r="2.5"/>
   </g>
-
-  <!-- a board corner, upper right -->
-  <g transform="translate(1190 130)">
-    <rect x="0"   y="0"   width="84" height="84"/>
-    <rect x="84"  y="0"   width="84" height="84" fill="#cdd6e4"/>
-    <rect x="168" y="0"   width="84" height="84"/>
-    <rect x="252" y="0"   width="84" height="84" fill="#cdd6e4"/>
-    <rect x="0"   y="84"  width="84" height="84" fill="#cdd6e4"/>
-    <rect x="84"  y="84"  width="84" height="84"/>
-    <rect x="168" y="84"  width="84" height="84" fill="#cdd6e4"/>
-    <rect x="252" y="84"  width="84" height="84"/>
-    <rect x="0"   y="168" width="84" height="84"/>
-    <rect x="84"  y="168" width="84" height="84" fill="#cdd6e4"/>
-    <rect x="168" y="168" width="84" height="84"/>
-    <rect x="252" y="168" width="84" height="84" fill="#cdd6e4"/>
-    <rect x="0"   y="252" width="84" height="84" fill="#cdd6e4"/>
-    <rect x="84"  y="252" width="84" height="84"/>
-    <rect x="168" y="252" width="84" height="84" fill="#cdd6e4"/>
-    <rect x="252" y="252" width="84" height="84"/>
-  </g>
-
-  <!-- today's paper, lower right: a folded sheet with its column rules -->
-  <g transform="translate(1210 540)">
-    <path d="M0 0 h300 v300 h-300 z"/>
-    <path d="M28 46 h244" stroke-width="6"/>
-    <path d="M28 92 h110 M28 122 h110 M28 152 h110 M28 182 h84"/>
-    <rect x="164" y="86" width="108" height="72" rx="4" opacity=".7"/>
-    <path d="M28 224 h244 M28 254 h180" opacity=".7"/>
-  </g>
-
-  <!-- the day, rising over both sides -->
-  <path d="M120 860 h380 M1160 860 h380" opacity=".35"/>
-  <circle cx="1520" cy="420" r="46" opacity=".5"/>
 </g>
 </svg>

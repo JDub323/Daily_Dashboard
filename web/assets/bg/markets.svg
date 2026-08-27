@@ -1,41 +1,73 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
-<!-- Markets: candlesticks left, a trend line with axes right. -->
-<g fill="none" stroke="#cdd6e4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<!-- Markets: Taurus. The bull is the joke and also the actual sky — the
+     V of the Hyades with Aldebaran as the eye, horns out, Pleiades top right. -->
+<g fill="#cdd6e4" stroke="#cdd6e4" stroke-linecap="round" stroke-linejoin="round">
 
-  <!-- candlesticks, left, sitting on a baseline -->
-  <g transform="translate(70 200)">
-    <path d="M0 500 h420" opacity=".5"/>
-    <!-- each: wick, then body -->
-    <path d="M30 150 v300"/>   <rect x="14"  y="220" width="32" height="150"/>
-    <path d="M90 200 v290"/>   <rect x="74"  y="300" width="32" height="120" fill="#cdd6e4"/>
-    <path d="M150 120 v320"/>  <rect x="134" y="190" width="32" height="180"/>
-    <path d="M210 90  v300"/>  <rect x="194" y="140" width="32" height="200" fill="#cdd6e4"/>
-    <path d="M270 60  v290"/>  <rect x="254" y="110" width="32" height="170"/>
-    <path d="M330 130 v320"/>  <rect x="314" y="200" width="32" height="190" fill="#cdd6e4"/>
-    <path d="M390 40  v300"/>  <rect x="374" y="90"  width="32" height="180"/>
+  <!-- the field -->
+  <g stroke="none">
+    <circle cx="1205" cy="171" r="1.7" opacity="0.56"/>
+    <circle cx="275" cy="200" r="1.8" opacity="0.39"/>
+    <circle cx="1482" cy="610" r="1.7" opacity="0.50"/>
+    <circle cx="1307" cy="472" r="2.2" opacity="0.46"/>
+    <circle cx="1150" cy="128" r="1.7" opacity="0.54"/>
+    <circle cx="137" cy="45" r="1.3" opacity="0.56"/>
+    <circle cx="251" cy="772" r="1.0" opacity="0.42"/>
+    <circle cx="286" cy="247" r="1.5" opacity="0.35"/>
+    <circle cx="414" cy="429" r="1.7" opacity="0.40"/>
+    <circle cx="1441" cy="721" r="1.4" opacity="0.60"/>
+    <circle cx="195" cy="757" r="1.7" opacity="0.35"/>
+    <circle cx="347" cy="379" r="1.9" opacity="0.64"/>
+    <circle cx="480" cy="213" r="1.2" opacity="0.35"/>
+    <circle cx="1148" cy="212" r="1.7" opacity="0.32"/>
+    <circle cx="1235" cy="322" r="1.1" opacity="0.52"/>
+    <circle cx="312" cy="382" r="1.5" opacity="0.38"/>
+    <circle cx="1294" cy="289" r="2.1" opacity="0.60"/>
+    <circle cx="1366" cy="275" r="2.0" opacity="0.57"/>
+    <circle cx="1242" cy="428" r="1.9" opacity="0.43"/>
+    <circle cx="1538" cy="321" r="1.1" opacity="0.38"/>
+    <circle cx="1299" cy="352" r="0.9" opacity="0.43"/>
+    <circle cx="198" cy="526" r="2.1" opacity="0.60"/>
+    <circle cx="1514" cy="282" r="1.5" opacity="0.33"/>
+    <circle cx="1422" cy="109" r="1.4" opacity="0.63"/>
+    <circle cx="1467" cy="774" r="2.1" opacity="0.67"/>
+    <circle cx="1135" cy="333" r="1.5" opacity="0.62"/>
+    <circle cx="1255" cy="150" r="2.0" opacity="0.59"/>
+    <circle cx="440" cy="484" r="1.8" opacity="0.37"/>
+    <circle cx="377" cy="266" r="1.8" opacity="0.53"/>
+    <circle cx="181" cy="643" r="1.0" opacity="0.52"/>
+    <circle cx="1364" cy="553" r="1.0" opacity="0.26"/>
+    <circle cx="178" cy="473" r="2.1" opacity="0.65"/>
+    <circle cx="456" cy="810" r="1.5" opacity="0.56"/>
+    <circle cx="90" cy="150" r="1.9" opacity="0.65"/>
   </g>
 
-  <!-- axes and a line, right -->
-  <g transform="translate(1120 180)">
-    <path d="M40 0 v480 h420" opacity=".55"/>
-    <!-- tick marks -->
-    <g opacity=".4">
-      <path d="M34 100 h12 M34 200 h12 M34 300 h12 M34 400 h12"/>
-      <path d="M140 474 v12 M240 474 v12 M340 474 v12 M440 474 v12"/>
-    </g>
-    <path d="M40 400 L120 340 L200 380 L280 250 L360 290 L440 120" stroke-width="3"/>
-    <!-- the last point, and the arrow off the top -->
-    <circle cx="440" cy="120" r="8"/>
-    <path d="M400 70 h60 v60" opacity=".6"/>
+  <!-- the figure: lines under, stars over, so a join never sits on a star -->
+  <g fill="none" stroke-width="1.6" opacity=".45">
+    <path d="M140 430 L205 362 L268 300 L340 240"/>
+    <path d="M268 300 L216 232 L166 168"/>
+    <path d="M340 240 L455 150 M340 240 L430 335"/>
+    <path d="M1390 168 L1424 150 L1452 172 L1418 190 L1390 168 M1424 150 L1418 190"/>
+    <path d="M1180 620 L1290 560 L1380 610 L1500 470"/>
   </g>
-
-  <!-- percent and dollar glyphs, outlined, far edges -->
-  <text x="1400" y="800" font-family="Georgia, 'Times New Roman', serif" font-size="190"
-        fill="none" stroke="#cdd6e4" stroke-width="2" opacity=".55">%</text>
-  <text x="120" y="820" font-family="Georgia, 'Times New Roman', serif" font-size="170"
-        fill="none" stroke="#cdd6e4" stroke-width="2" opacity=".55">$</text>
-
-  <!-- a sparkline, faint, top left -->
-  <path d="M90 120 l40 -26 l40 34 l40 -50 l40 22 l40 -40" opacity=".4"/>
+  <g stroke="none">
+    <circle cx="140" cy="430" r="3"/>
+    <circle cx="205" cy="362" r="3"/>
+    <circle cx="268" cy="300" r="3.5"/>
+    <circle cx="340" cy="240" r="6.5"/>
+    <circle cx="216" cy="232" r="3"/>
+    <circle cx="166" cy="168" r="3.5"/>
+    <circle cx="455" cy="150" r="4"/>
+    <circle cx="430" cy="335" r="3.5"/>
+    <circle cx="1390" cy="168" r="2.5"/>
+    <circle cx="1424" cy="150" r="3"/>
+    <circle cx="1452" cy="172" r="2.5"/>
+    <circle cx="1418" cy="190" r="2.5"/>
+    <circle cx="1466" cy="140" r="2"/>
+    <circle cx="1372" cy="200" r="2"/>
+    <circle cx="1180" cy="620" r="3"/>
+    <circle cx="1290" cy="560" r="2.5"/>
+    <circle cx="1380" cy="610" r="2.5"/>
+    <circle cx="1500" cy="470" r="4"/>
+  </g>
 </g>
 </svg>

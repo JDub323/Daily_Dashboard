@@ -1,58 +1,68 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
-<!-- Home: the contribution grid and a rising staircase. Weighted left and
-     right; the middle band is left clear for the content column. -->
-<g fill="none" stroke="#cdd6e4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<!-- Home: the Plough, left, with the pointers running to Polaris and the
+     Little Dipper on the right. The one constellation that is actually for
+     working out where you are. -->
+<g fill="#cdd6e4" stroke="#cdd6e4" stroke-linecap="round" stroke-linejoin="round">
 
-  <!-- a contribution grid, upper left -->
-  <g>
-    <rect x="70"  y="120" width="26" height="26" rx="4"/>
-    <rect x="106" y="120" width="26" height="26" rx="4"/>
-    <rect x="142" y="120" width="26" height="26" rx="4"/>
-    <rect x="178" y="120" width="26" height="26" rx="4"/>
-    <rect x="214" y="120" width="26" height="26" rx="4"/>
-    <rect x="70"  y="156" width="26" height="26" rx="4"/>
-    <rect x="106" y="156" width="26" height="26" rx="4" fill="#cdd6e4"/>
-    <rect x="142" y="156" width="26" height="26" rx="4"/>
-    <rect x="178" y="156" width="26" height="26" rx="4" fill="#cdd6e4"/>
-    <rect x="214" y="156" width="26" height="26" rx="4"/>
-    <rect x="70"  y="192" width="26" height="26" rx="4" fill="#cdd6e4"/>
-    <rect x="106" y="192" width="26" height="26" rx="4"/>
-    <rect x="142" y="192" width="26" height="26" rx="4" fill="#cdd6e4"/>
-    <rect x="178" y="192" width="26" height="26" rx="4"/>
-    <rect x="214" y="192" width="26" height="26" rx="4" fill="#cdd6e4"/>
-    <rect x="70"  y="228" width="26" height="26" rx="4"/>
-    <rect x="106" y="228" width="26" height="26" rx="4" fill="#cdd6e4"/>
-    <rect x="142" y="228" width="26" height="26" rx="4"/>
-    <rect x="178" y="228" width="26" height="26" rx="4"/>
-    <rect x="214" y="228" width="26" height="26" rx="4" fill="#cdd6e4"/>
+  <!-- the field -->
+  <g stroke="none">
+    <circle cx="1340" cy="481" r="1.0" opacity="0.49"/>
+    <circle cx="1329" cy="384" r="1.8" opacity="0.56"/>
+    <circle cx="278" cy="186" r="1.3" opacity="0.43"/>
+    <circle cx="226" cy="530" r="1.7" opacity="0.44"/>
+    <circle cx="1330" cy="700" r="2.0" opacity="0.39"/>
+    <circle cx="418" cy="86" r="1.9" opacity="0.69"/>
+    <circle cx="487" cy="160" r="1.9" opacity="0.41"/>
+    <circle cx="1332" cy="157" r="2.1" opacity="0.62"/>
+    <circle cx="69" cy="103" r="2.1" opacity="0.47"/>
+    <circle cx="446" cy="452" r="1.9" opacity="0.29"/>
+    <circle cx="99" cy="405" r="1.8" opacity="0.69"/>
+    <circle cx="104" cy="641" r="1.5" opacity="0.59"/>
+    <circle cx="493" cy="495" r="1.4" opacity="0.63"/>
+    <circle cx="277" cy="137" r="1.8" opacity="0.53"/>
+    <circle cx="223" cy="343" r="1.4" opacity="0.67"/>
+    <circle cx="1343" cy="557" r="1.5" opacity="0.66"/>
+    <circle cx="504" cy="462" r="0.9" opacity="0.65"/>
+    <circle cx="494" cy="375" r="1.1" opacity="0.29"/>
+    <circle cx="1177" cy="487" r="1.6" opacity="0.30"/>
+    <circle cx="1392" cy="828" r="1.7" opacity="0.52"/>
+    <circle cx="175" cy="574" r="1.8" opacity="0.70"/>
+    <circle cx="1124" cy="151" r="1.1" opacity="0.54"/>
+    <circle cx="1527" cy="322" r="2.2" opacity="0.42"/>
+    <circle cx="1201" cy="576" r="1.0" opacity="0.38"/>
+    <circle cx="377" cy="629" r="1.3" opacity="0.29"/>
+    <circle cx="309" cy="710" r="2.2" opacity="0.59"/>
+    <circle cx="38" cy="395" r="2.1" opacity="0.51"/>
+    <circle cx="1108" cy="556" r="0.9" opacity="0.47"/>
+    <circle cx="281" cy="702" r="1.0" opacity="0.29"/>
+    <circle cx="1566" cy="543" r="1.9" opacity="0.63"/>
+    <circle cx="1445" cy="846" r="1.0" opacity="0.33"/>
+    <circle cx="108" cy="90" r="1.5" opacity="0.37"/>
+    <circle cx="1148" cy="379" r="1.4" opacity="0.51"/>
+    <circle cx="1532" cy="283" r="1.5" opacity="0.36"/>
   </g>
 
-  <!-- a second, sparser grid low left -->
-  <g opacity=".7">
-    <rect x="120" y="640" width="22" height="22" rx="3"/>
-    <rect x="150" y="640" width="22" height="22" rx="3" fill="#cdd6e4"/>
-    <rect x="180" y="640" width="22" height="22" rx="3"/>
-    <rect x="120" y="670" width="22" height="22" rx="3" fill="#cdd6e4"/>
-    <rect x="150" y="670" width="22" height="22" rx="3"/>
-    <rect x="180" y="670" width="22" height="22" rx="3" fill="#cdd6e4"/>
-    <rect x="120" y="700" width="22" height="22" rx="3"/>
-    <rect x="150" y="700" width="22" height="22" rx="3" fill="#cdd6e4"/>
-    <rect x="180" y="700" width="22" height="22" rx="3"/>
+  <!-- the figure: lines under, stars over, so a join never sits on a star -->
+  <g fill="none" stroke-width="1.6" opacity=".45">
+    <path d="M95 400 L170 355 L245 330 L325 335 L400 265 L430 370 L350 420 L325 335"/>
+    <path d="M430 370 L400 265 L1180 120" stroke-dasharray="3 14" opacity=".2"/>
+    <path d="M1180 120 L1218 192 L1258 258 L1332 288 L1392 232 L1356 166 L1288 202 L1332 288"/>
   </g>
-
-  <!-- the streak, climbing right -->
-  <path d="M1140 720 h70 v-60 h70 v-90 h70 v-70 h70 v-110 h70 v-80 h70"/>
-  <circle cx="1560" cy="310" r="9"/>
-
-  <!-- a ring, upper right — the completion ring writ large -->
-  <circle cx="1330" cy="200" r="96" opacity=".5"/>
-  <path d="M1330 104 a96 96 0 0 1 83 144" stroke-width="7"/>
-
-  <!-- the perfect-day star -->
-  <path d="M1230 790 l14 -40 l14 40 l40 14 l-40 14 l-14 40 l-14 -40 l-40 -14 z"/>
-  <path d="M300 430 l10 -28 l10 28 l28 10 l-28 10 l-10 28 l-10 -28 l-28 -10 z" opacity=".6"/>
-
-  <!-- horizon rules, very faint, to tie the two sides together -->
-  <path d="M0 860 h420 M1180 860 h420" opacity=".35"/>
+  <g stroke="none">
+    <circle cx="95" cy="400" r="3.5"/>
+    <circle cx="170" cy="355" r="3"/>
+    <circle cx="245" cy="330" r="3.5"/>
+    <circle cx="325" cy="335" r="3"/>
+    <circle cx="400" cy="265" r="5"/>
+    <circle cx="430" cy="370" r="4"/>
+    <circle cx="350" cy="420" r="3.5"/>
+    <circle cx="1180" cy="120" r="5.5"/>
+    <circle cx="1218" cy="192" r="2.5"/>
+    <circle cx="1258" cy="258" r="3"/>
+    <circle cx="1332" cy="288" r="3"/>
+    <circle cx="1392" cy="232" r="2.5"/>
+    <circle cx="1356" cy="166" r="3"/>
+    <circle cx="1288" cy="202" r="2.5"/>
+  </g>
 </g>
 </svg>

@@ -136,16 +136,32 @@ a:hover { text-decoration: underline; }
 
 /* ---- the per-tab backdrop ----
    A fixed layer behind everything, at an opacity low enough that it reads as
-   texture in the margins rather than as a picture behind the text. The art is
-   line work weighted to the outer thirds (see web/assets/bg/), so what shows
+   texture in the margins rather than as a picture behind the text. Still line
+   work weighted to the outer thirds (see web/assets/bg/), so what shows
    through beside the content column is the whole composition and what sits
-   behind the panels is mostly empty canvas. */
+   behind the panels is mostly empty canvas.
+
+   It is a constellation per tab now, which is the title screen's starfield
+   continuing underneath the dashboard rather than a separate idea: the Plough
+   and the pointers for home, Libra for politics, Taurus for markets, Orion for
+   health, a sigma and a 3-4-5 for math, seven stars for the seven days.
+
+   .07 was right for continuous line art and is not right for this. A stroke a
+   pixel wide holds together at that opacity because it is long; a 3px dot has
+   nothing to hold on to and simply disappears. .12 is where the figures
+   resolve without the field competing with body copy. */
 #bg {
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background-repeat: no-repeat; background-position: center; background-size: cover;
-  opacity: .07;
+  opacity: .12;
   transition: opacity .35s ease;
+  /* Very slow, very small. A sky that is perfectly static reads as wallpaper;
+     one that moves enough to notice is a thing you end up fighting. 18s and
+     three hundredths of opacity is under the threshold of anything you could
+     look at directly, which is the point. */
+  animation: skyBreathe 18s ease-in-out infinite;
 }
+@keyframes skyBreathe { 0%, 100% { opacity: .105; } 50% { opacity: .135; } }
 body[data-tab="home"]     #bg { background-image: url("/assets/bg/home.svg"); }
 body[data-tab="math"]     #bg { background-image: url("/assets/bg/math.svg"); }
 body[data-tab="politics"] #bg { background-image: url("/assets/bg/politics.svg"); }
@@ -1196,3 +1212,77 @@ body.booting, body.splash-up { overflow: hidden; }
   .sp-stars, .sp-stars2, .sp-horizon, .sp-grain { animation: none !important; }
   .sp-press { animation: none !important; opacity: 1 !important; }
 }
+
+/* ==========================================================================
+   The cartridge treatment
+   ==========================================================================
+   The title screen's look, carried into the dashboard — but carried, not
+   copied. What travels is the plating and the vignette. What does not is the
+   scanline veil over body copy, for the reason written at the top of the
+   splash block: this app is read, and every text colour in this file was
+   measured against an unveiled surface.
+
+   So the veil goes on the chrome instead — the tab bar, the statusline, the
+   modal's head. Those are bands you look *at* to orient and never read a
+   paragraph in, and they are exactly the parts that should feel like hardware
+   rather than like a web page. */
+
+/* The vignette is the cheapest half of the effect and the one with no cost:
+   it lives at the edges, where there is no text, and it makes the content
+   column sit in a pool of light rather than on a flat sheet. */
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(ellipse 92% 80% at 50% 42%, transparent 46%, rgba(0,0,0,.55) 100%);
+}
+
+/* ---- plated type ----
+   Guarded, because the plate works by painting the glyph transparent and
+   letting a gradient show through the cut-out. Where that is not supported
+   the text has to stay a colour rather than become a hole. */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  #topbar h1, .figure {
+    background: var(--plate-flat);
+    -webkit-background-clip: text; background-clip: text;
+    color: transparent;
+  }
+  /* The wordmark, matching the title screen it just came from. Bigger than it
+     was: --t-head is 21px, and the plate needs size before its bands stop
+     landing inside two pixels of each other. */
+  #topbar h1 {
+    font-size: var(--t-display); letter-spacing: .12em; text-transform: lowercase;
+    filter: drop-shadow(0 1px 0 #05070c);
+  }
+  /* Hero figures are --t-hero, which carries it comfortably. These are the
+     numbers the tab exists to report, and catching the light is the point. */
+  .figure { filter: drop-shadow(0 1px 0 rgba(0,0,0,.6)); }
+}
+
+/* ---- the chrome ----
+   One shared veil, three bands. `position` is already set on all three, so
+   these only need the layer. */
+#tabbar, #statusline, #modal-head { position: relative; }
+#tabbar::after, #statusline::after, #modal-head::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    repeating-linear-gradient(180deg, rgba(0,0,0,.20) 0 1px, transparent 1px 3px),
+    var(--grain);
+  background-size: auto, 160px 160px;
+  opacity: .5;
+}
+/* The band's own contents have to sit above its veil. */
+#tabbar > *, #statusline > *, #modal-head > * { position: relative; z-index: 1; }
+
+/* A hairline of cyan under the tab bar, which is the title screen's horizon
+   line doing the same job one storey down: it separates the fixed furniture
+   from the thing that scrolls. */
+#tabbar { border-bottom-color: rgba(92,207,230,.22); }
+#statusline { border-top-color: rgba(92,207,230,.18); }
+
+/* ---- small caps for the labels ----
+   The title screen sets every small line in wide tracking, and it is most of
+   why it reads as a machine rather than as a document. Panel headings are the
+   one place in the dashboard that can take the same treatment: they are two or
+   three words, never a sentence, and they are the app's most repeated element
+   — so a change here is felt everywhere for the cost of one rule. */
+.panel h2 { text-transform: uppercase; letter-spacing: .16em; }
+.panel.hero h2 { text-transform: none; letter-spacing: .3px; }
