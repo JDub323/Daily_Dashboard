@@ -1,4 +1,4 @@
-# Daily Dashboard
+# Sharpness
 
 One-command personal dashboard, opens http://localhost:8502.
 
