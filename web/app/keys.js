@@ -35,6 +35,7 @@ import { JUMPS, takeArrow } from "./carousel.js";
 import { chipTasks, openNextUnfinished, required, score } from "./chips.js";
 import { $, el } from "./dom.js";
 import * as nav from "./nav.js";
+import { nudgeCount, openNudge } from "./nudges.js";
 import { focusPanel, panelEnter, panelKey, quickStart } from "./panel.js";
 import { splashOpen } from "./splash.js";
 import { TABS, activateNth, cycle } from "./tabs.js";
@@ -126,9 +127,9 @@ const BINDINGS = [
     keys: ["f"],
     hint: "letter every link in this panel, then press its letter to open it "
       + "· c l m p go to the check-in, the session log, the meals and the "
-      + "in-and-out, from any section",
+      + "in-and-out · a digit opens that numbered notification",
     match: (e) => e.key === "f",
-    run: () => nav.hint(),
+    run: () => nav.hint(nudgeCount()),
   },
   {
     keys: ["←", "→"],
@@ -299,6 +300,18 @@ export function initKeys() {
     if (nav.inHints()) {
       e.preventDefault();
       const key = e.key.toLowerCase();
+      // A digit is a notification, top card first.
+      //
+      // This is what `f` is *for* on a panel full of links: the letters go to
+      // the links, and the digits go to the stack in the corner, so there is
+      // no page anywhere in the app where reaching a notification competes
+      // with reaching an article. The two alphabets never touch because one
+      // of them is not an alphabet.
+      if (/^[1-9]$/.test(key)) {
+        nav.exitHints();
+        openNudge(Number(key));
+        return;
+      }
       // Four letters are the carousel rather than a link, and `nav` has been
       // told not to paint them, so the two can never mean the same key.
       // `focusPanel` rather than `quickStart`: `f c` is "show me the

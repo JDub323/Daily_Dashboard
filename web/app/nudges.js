@@ -43,7 +43,7 @@
 // a panel.
 
 import * as api from "./api.js";
-import { MEALS_A_DAY, chipTasks } from "./chips.js";
+import { chipTasks } from "./chips.js";
 import { el } from "./dom.js";
 import { focusPanel } from "./panel.js";
 import { splashOpen } from "./splash.js";
@@ -115,22 +115,35 @@ const RULES = [
     every: 2,
     check: ({ tasks }) => (isDone(tasks, "checkin") ? null : "the morning check-in is not done"),
   },
-  {
-    id: "meals",
+  // The three meals, each named and each on its own clock.
+  //
+  // One rule counting "meals so far against meals expected by now" was the
+  // first version of this and it was worse in the way that matters: it said
+  // "1 meal not logged" at two in the afternoon, which is a number you have to
+  // stop and translate into *which* meal, and the translation is the whole
+  // content of the reminder. "lunch is not logged" needs no translation.
+  //
+  // The hours are his: 8am, 2pm, 9pm. They are the times *by which* each meal
+  // has normally happened rather than the times he eats, because a reminder
+  // that arrives while you are holding the fork is a reminder about nothing.
+  //
+  // Each fires once and the nth meal of the day clears the nth reminder. That
+  // is deliberately not "was a meal logged near this hour" — a late breakfast
+  // and an early lunch would then both satisfy lunch and neither satisfy
+  // breakfast, and the log has no field saying which meal a row *is*.
+  ...[
+    ["breakfast", 8],
+    ["lunch", 14],
+    ["dinner", 21],
+  ].map(([meal, at], i) => ({
+    id: `meal-${meal}`,
     panel: "meals",
-    // Not one window but three, so "you are behind" can be said at lunchtime
-    // rather than only at the end of the day when nothing can be done about
-    // it. Expected-by-now against logged-so-far.
-    after: 11,
-    every: 3,
-    check: ({ hour }) => {
-      const logged = store.state.health.meals_today.length;
-      const expected = hour >= 21 ? 3 : hour >= 15 ? 2 : 1;
-      if (logged >= Math.min(expected, MEALS_A_DAY)) return null;
-      const missing = Math.min(expected, MEALS_A_DAY) - logged;
-      return `${missing} meal${missing === 1 ? "" : "s"} not logged — ${logged}/${MEALS_A_DAY} today`;
-    },
-  },
+    after: at,
+    // Once each. Three named reminders that all repeat would be nine a day by
+    // bedtime, and the third one is not more persuasive than the first.
+    every: 24,
+    check: () => (store.state.health.meals_today.length > i ? null : `${meal} is not logged`),
+  })),
   {
     id: "required",
     // No fixed panel: it goes to whichever required thing is still open, which
@@ -198,8 +211,41 @@ function dismiss(card) {
   card.classList.add("out");
   // Removed after the transition rather than on it, so a stack of three does
   // not jump when the middle one goes.
-  setTimeout(() => card.remove(), 200);
+  setTimeout(() => {
+    card.remove();
+    // The numbers are positions, so taking one out renumbers the rest. Doing
+    // it with the removal rather than before it means `f 2` never addresses a
+    // card that is mid-fade.
+    renumber();
+  }, 200);
 }
+
+/**
+ * Number the cards, top to bottom, and print the number on each.
+ *
+ * The digit is what `f 1` addresses, so it has to be *on* the card — a
+ * shortcut whose target you have to count out is one you will not use while
+ * the thing it is about is still worth doing. Renumbered on every change,
+ * because the numbers are positions and not names: the top card is always 1.
+ */
+function renumber() {
+  const cards = [...shelf().children].reverse();
+  cards.forEach((card, i) => {
+    card.querySelector(".nudge-n").textContent = String(i + 1);
+  });
+}
+
+/** Take the nth card's door, 1-based from the top. True if there was one. */
+export function openNudge(n) {
+  const card = [...shelf().children].reverse()[n - 1];
+  if (!card) return false;
+  card.querySelector(".nudge-body").click();
+  return true;
+}
+
+/** How many are on screen — what the hint layer prints so the digits it will
+ *  accept are the digits you can see. */
+export const nudgeCount = () => (stack ? stack.children.length : 0);
 
 function raise({ id, text, panel }) {
   const node = shelf();
@@ -210,13 +256,15 @@ function raise({ id, text, panel }) {
 
   const card = el("div.nudge", { dataset: { nudge: id } },
     el("button.nudge-body", {
-      text,
       title: panel ? "go there" : "",
       onclick: () => {
         dismiss(card);
         if (panel) focusPanel(panel);
       },
-    }),
+    },
+      el("span.nudge-n"),
+      el("span", { text }),
+    ),
     el("button.nudge-x", {
       text: "✕",
       title: "dismiss",
@@ -228,6 +276,7 @@ function raise({ id, text, panel }) {
     }),
   );
   node.append(card);
+  renumber();
   remember(id);
 }
 

@@ -334,7 +334,13 @@ export const inHints = () => mode === "hints";
  * no links on it at all — so an empty panel opens the layer with nothing
  * painted rather than swallowing the keypress.
  */
-export function hint() {
+/**
+ * @param nudges how many notifications are on screen, so the mode line can say
+ *   which digits this layer will answer. Passed in rather than imported: nav
+ *   is underneath everything and importing the notification stack from here
+ *   would be a cycle through keys.js.
+ */
+export function hint(nudges = 0) {
   const list = links().slice(0, HINT_KEYS.length);
   clearHints();
   hintReturn = mode === "hints" ? hintReturn : mode;
@@ -347,7 +353,8 @@ export function hint() {
   });
   mode = "hints";
   const painted = hinted.length ? `a–${HINT_KEYS[hinted.length - 1]} · ` : "";
-  $("#st-mode").textContent = `hints ${painted}c l m p`;
+  const numbered = nudges > 0 ? ` · 1–${nudges}` : "";
+  $("#st-mode").textContent = `hints ${painted}c l m p${numbered}`;
   return true;
 }
 

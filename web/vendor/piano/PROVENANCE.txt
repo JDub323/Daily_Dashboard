@@ -1,0 +1,28 @@
+FluidR3_GM acoustic grand piano, one mp3 per semitone, C4 through Ab6 (33 files).
+
+Source: https://github.com/gleitz/midi-js-soundfonts
+        gh-pages/FluidR3_GM/acoustic_grand_piano-mp3/<note>.mp3
+Licence: MIT (LICENSE.txt beside this file). The samples come from Frank Wen's
+         FluidR3 GM soundfont, itself MIT-licensed.
+
+Downloaded 2026-08-28. ~800 KB total.
+
+WHY EVERY SEMITONE RATHER THAN A FEW, PITCH-SHIFTED
+---------------------------------------------------
+Sampled sets are normally thinned by keeping one recording every third or
+fourth key and resampling for the gaps, which is what `playbackRate` does. That
+moves the whole spectrum, formants and all, so a note shifted up three
+semitones is not a piano playing higher, it is a smaller piano -- and the
+seam is audible exactly where it matters, in the middle of a chord. At 25 KB a
+note the whole range costs less than one photograph, so there is nothing to
+resample and nothing to hear.
+
+C4 is middle C, which is the note `piano.js` measures its intervals from. The
+top is Ab6 because the widest thing the panel plays is a thirteenth chord on
+the highest root -- interval 21 above semitone 11 -- which lands on 32.
+
+REPLACING THEM
+--------------
+Any set of one file per semitone named `<note><octave>.mp3` with the same
+spelling (flats, not sharps: Db not C#) will drop straight in. `SAMPLES` in
+web/app/piano.js is the only place the naming is known.

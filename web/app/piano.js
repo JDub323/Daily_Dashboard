@@ -1,92 +1,78 @@
-// A piano voice, built rather than fetched.
+// A piano, from recordings of one.
 //
-// The panel used to play one triangle oscillator per note into the
-// destination. That is a tone at the right pitch and it is not a piano, and
-// the gap between the two is not subtlety — a triangle wave has no attack, its
-// partials sit at exact multiples of the fundamental, and every one of them
-// decays at the same rate. Those three facts are, between them, most of what
-// the ear uses to decide it is hearing a string that was struck.
+// This started as a triangle oscillator, then became an additive synth with
+// inharmonic partials, a hammer transient and two detuned strings per note.
+// That was a real improvement and it was still obviously not a piano, because
+// the thing it was modelling has a soundboard, and a soundboard is not a
+// handful of sine waves — it is a resonant body whose response is different at
+// every frequency and which is still ringing from the last note when the next
+// one lands. You do not get there by adding partials. You get there by
+// recording it.
 //
-// --- why this is not a dependency ------------------------------------------
+// So: `web/vendor/piano`, one mp3 per semitone from middle C to Ab6, off the
+// FluidR3 GM acoustic grand. 800 KB, served from the same origin as everything
+// else, cached immutable like the vendored KaTeX.
 //
-// The obvious answer is a sampled library: Tone.js over the Salamander set, or
-// a soundfont player. Both are ruled out by the same invariant the vendored
-// KaTeX exists to keep — this app has no external runtime dependency and works
-// with the network unplugged — and vendoring the samples is not the way round
-// it. The Salamander set is tens of megabytes; the trimmed sets that are not
-// are trimmed by pitching a handful of recordings up and down by playback
-// rate, which drags the formants along with the pitch and sounds worse than
-// synthesis rather than better.
+// --- one file per semitone, which is not how this is usually done -----------
 //
-// So the improvement is in the voice, and the voice is additive, with the four
-// things a struck string actually does:
+// Sampled sets are normally thinned: keep one recording every third or fourth
+// key and resample for the gaps, which is what `playbackRate` does. It is the
+// obvious economy and it is the one thing that makes a sampled piano sound
+// worse than a synthesised one, because resampling moves the *whole* spectrum
+// — the formants of the body along with the pitch of the string. A note shifted
+// up three semitones is not a piano playing higher, it is a smaller piano, and
+// the seam between a sampled note and its resampled neighbour is most audible
+// inside a chord, which is the only thing this panel plays.
 //
-//   **Inharmonicity.** A real string is stiff, so its nth partial does not sit
-//   at n·f0 but at n·f0·sqrt(1 + B·n²). B is small (~2e-4 in the middle of the
-//   keyboard) and rises towards the bass. This is the single most piano-ish
-//   thing in here: it is why the upper partials of a low C sound sharp against
-//   its own octave, and why a perfectly harmonic stack sounds like an organ.
+// At 25 KB a note the entire range costs less than one photograph. There is
+// nothing to resample and so nothing to hear.
 //
-//   **Partials that decay at different rates.** High partials die first, which
-//   is why a piano note is bright at the attack and mellow a second later. One
-//   shared envelope cannot do that, so every partial gets its own.
+// --- what is left to do in code ---------------------------------------------
 //
-//   **A hammer.** About six milliseconds of filtered noise at the onset. It
-//   carries no pitch and removing it changes not one frequency in the
-//   spectrum — and without it the note begins rather than being struck.
+// Three things, and only three:
 //
-//   **Two strings, slightly apart.** Every note above the bass has two or
-//   three strings tuned within a cent or so of each other. The beating between
-//   them is the slow shimmer in a held chord; a single oscillator per partial
-//   is dead still by comparison.
+//   **An envelope.** A sample is a whole note, decay and all, and a scale of
+//   fourteen of them left to ring is mud. Each voice gets a release ramp so it
+//   is out of the way by the time the next two have landed.
 //
-// Everything then goes through one master bus with a gentle lowpass, a
-// soft-knee compressor and a small synthesised room, so a six-note chord is
-// not the sum of six things each mixed as though it were alone. Clipping is
-// what "the piano button sounds bad" usually turns out to mean.
+//   **Velocity, as brightness and not only level.** One velocity layer is all
+//   the set has, so a quiet note is a loud one turned down — which sounds like
+//   a volume knob rather than a softer touch. A lowpass that opens with
+//   velocity is the cheap approximation of the thing a real hammer does, and
+//   it is most of the difference.
+//
+//   **A bus with a limiter on it.** Six samples struck inside 35ms sum well
+//   past full scale, and the loudest moment of the loudest chord is exactly
+//   the wrong place to distort.
 
 const MIDDLE_C = 261.63;
 
-/** Semitones above middle C -> Hz. Equal temperament, so intervals above an
- *  octave (add9's 14, the 13 chord's 21) need no special case. */
+/** Semitones above middle C -> Hz. Only used for the velocity filter's corner
+ *  now that nothing is being synthesised, but that use is real: how far the
+ *  lowpass opens has to be relative to the note's own pitch. */
 export const hz = (semitones) => MIDDLE_C * 2 ** (semitones / 12);
 
 /**
- * How many partials to synthesise for a note at this pitch.
+ * Semitone above middle C -> filename in `web/vendor/piano`.
  *
- * Bounded by hearing rather than by taste: partials above ~16kHz are inaudible
- * and cost exactly as much as the ones you can hear, and near the top of the
- * keyboard a fixed count would push most of them past Nyquist, where they
- * alias back down as a metallic ring that is very audible indeed.
+ * Flats rather than sharps because that is how the source set spells them, and
+ * the spelling is the whole contract with the directory: this array is the only
+ * place in the app that knows what those files are called.
  */
-function partialCount(f0) {
-  return Math.max(4, Math.min(18, Math.floor(16000 / f0)));
-}
+const SAMPLES = [
+  "C4", "Db4", "D4", "Eb4", "E4", "F4", "Gb4", "G4", "Ab4", "A4", "Bb4", "B4",
+  "C5", "Db5", "D5", "Eb5", "E5", "F5", "Gb5", "G5", "Ab5", "A5", "Bb5", "B5",
+  "C6", "Db6", "D6", "Eb6", "E6", "F6", "Gb6", "G6", "Ab6",
+];
 
-/**
- * The inharmonicity coefficient, by pitch.
- *
- * Measured values run from about 8e-4 at the bottom of a keyboard to 2e-5 at
- * the top, roughly log-linear between. The exact curve is not important — what
- * matters is that it is *neither zero nor constant*, because a fixed B either
- * makes the treble sound out of tune or does nothing at all for the bass.
- */
-function inharmonicity(f0) {
-  const octavesFromMiddleC = Math.log2(f0 / MIDDLE_C);
-  return 4e-4 * 2 ** (-octavesFromMiddleC * 0.9);
-}
+const url = (semitone) => `/vendor/piano/${SAMPLES[semitone]}.mp3`;
 
-/**
- * How long a note rings, by pitch.
- *
- * Bass strings are heavier and lose energy more slowly: a bottom A rings for
- * the better part of a minute where a top C is gone in about one. Capped well
- * under either, because this is a panel that names a chord, not a sustain
- * pedal.
- */
-function decayFor(f0) {
-  return Math.max(0.9, Math.min(7, 24 / Math.sqrt(f0)));
-}
+/** Into the range the set covers. Nothing the panel plays falls outside it —
+  * the widest is a thirteenth on the highest root, which lands on 32 — but a
+  * new chord shape in piano.json should be a note at the edge of the keyboard
+  * rather than an exception. */
+const clamp = (semitone) =>
+  Math.max(0, Math.min(SAMPLES.length - 1, Math.round(semitone)));
 
 // --- the graph --------------------------------------------------------------
 
@@ -110,175 +96,143 @@ export function audio() {
 }
 
 /**
- * A small room, as an impulse response.
- *
- * Generated rather than shipped, for the same reason the notes are: an IR file
- * is an audio asset, and this one is two seconds of shaped noise that nobody
- * could pick out of a recorded one at this length. Stereo, with the two
- * channels generated independently — that decorrelation is the whole
- * difference between "a room" and "the same thing, slightly louder".
- */
-function reverbIR(c, seconds = 1.9, decay = 2.6) {
-  const length = Math.floor(c.sampleRate * seconds);
-  const buffer = c.createBuffer(2, length, c.sampleRate);
-  for (let channel = 0; channel < 2; channel++) {
-    const data = buffer.getChannelData(channel);
-    for (let i = 0; i < length; i++) {
-      data[i] = (Math.random() * 2 - 1) * (1 - i / length) ** decay;
-    }
-  }
-  return buffer;
-}
-
-/**
  * Everything every note goes through, built once.
  *
  * The compressor is doing real work and is not a mastering affectation: a
- * thirteenth chord is six notes of a dozen partials each, all struck inside
- * 35ms, and the sum of them is well past full scale. Without it the loudest
- * moment of the loudest chord is the one that distorts, which is exactly
- * backwards.
+ * thirteenth is six samples struck inside 35ms and their sum is well past full
+ * scale. Without it the loudest moment of the loudest chord is the one that
+ * distorts, which is exactly backwards.
+ *
+ * No reverb. The additive version needed a room because a stack of sine waves
+ * has none; these recordings were made in one.
  */
 function masterBus(c) {
-  const tone = c.createBiquadFilter();
-  tone.type = "lowpass";
-  // Above the top of the keyboard, so this shapes the upper partials rather
-  // than dulling the notes: it takes the fizz off the hammer noise and off
-  // whatever the highest partials are doing, and leaves the pitch alone.
-  tone.frequency.value = 6500;
-  tone.Q.value = 0.5;
-
   const comp = c.createDynamicsCompressor();
-  comp.threshold.value = -18;
-  comp.knee.value = 24;
-  comp.ratio.value = 3;
-  comp.attack.value = 0.006;
-  comp.release.value = 0.22;
-
-  const dry = c.createGain();
-  dry.gain.value = 0.86;
-
-  const wet = c.createGain();
-  wet.gain.value = 0.14;
-  const room = c.createConvolver();
-  room.buffer = reverbIR(c);
+  comp.threshold.value = -16;
+  comp.knee.value = 22;
+  comp.ratio.value = 3.5;
+  comp.attack.value = 0.005;
+  comp.release.value = 0.2;
 
   const out = c.createGain();
   out.gain.value = 0.9;
 
-  tone.connect(comp);
-  comp.connect(dry).connect(out);
-  comp.connect(room).connect(wet).connect(out);
-  out.connect(c.destination);
+  comp.connect(out).connect(c.destination);
+  return comp;
+}
 
-  return tone;
+// --- the samples ------------------------------------------------------------
+
+/** semitone -> AudioBuffer, once decoded. */
+const buffers = new Map();
+/** semitone -> the in-flight decode, so a chord does not fetch C5 six times. */
+const pending = new Map();
+
+async function buffer(semitone) {
+  if (buffers.has(semitone)) return buffers.get(semitone);
+  if (pending.has(semitone)) return pending.get(semitone);
+
+  const job = (async () => {
+    const c = audio();
+    const bytes = await fetch(url(semitone)).then((r) => {
+      if (!r.ok) throw new Error(`${r.status}`);
+      return r.arrayBuffer();
+    });
+    // The callback form, not the promise form: Safari has never implemented
+    // the promise overload of decodeAudioData, and this file is the one place
+    // it would matter.
+    const decoded = await new Promise((resolve, reject) =>
+      c.decodeAudioData(bytes, resolve, reject),
+    );
+    buffers.set(semitone, decoded);
+    pending.delete(semitone);
+    return decoded;
+  })();
+
+  pending.set(semitone, job);
+  return job;
+}
+
+/**
+ * Pull the whole range into memory.
+ *
+ * Called on the first play and never awaited by it — the note you asked for is
+ * fetched on its own path and does not queue behind the other thirty-two. This
+ * is only so the *second* thing you press is instant, which on this panel is
+ * always the case: nobody plays the scale and then leaves.
+ */
+let warmed = false;
+function warm() {
+  if (warmed) return;
+  warmed = true;
+  for (let i = 0; i < SAMPLES.length; i++) buffer(i).catch(() => {});
 }
 
 // --- one note ---------------------------------------------------------------
 
-/** The two strings of a unison, in cents. One of them is exactly zero, so the
- *  note is still in tune — the second is what beats against it. */
-const UNISON_CENTS = [0, 2.4];
-
 /**
- * The hammer: a few milliseconds of bandpassed noise at the onset.
+ * How far above the note's own fundamental the lowpass sits at full velocity.
  *
- * Bandpassed around the fundamental rather than left broadband, because a
- * click that sounds the same at every pitch reads as a defect in the playback
- * and not as part of the note.
+ * Relative to pitch rather than absolute, because "bright" means a different
+ * number of Hz at the top of the keyboard than in the middle. At the bottom of
+ * the velocity range this closes to about a third of the way up, which is
+ * audibly softer without sounding like a blanket over the strings.
  */
-function hammer(c, at, f0, gain) {
-  const length = Math.max(1, Math.floor(c.sampleRate * 0.006));
-  const buffer = c.createBuffer(1, length, c.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < length; i++) {
-    data[i] = (Math.random() * 2 - 1) * (1 - i / length) ** 2;
-  }
-
-  const src = c.createBufferSource();
-  src.buffer = buffer;
-
-  const band = c.createBiquadFilter();
-  band.type = "bandpass";
-  band.frequency.value = Math.min(c.sampleRate / 2 - 1000, f0 * 3.2);
-  band.Q.value = 0.7;
-
-  const env = c.createGain();
-  env.gain.value = gain * 0.35;
-
-  src.connect(band).connect(env).connect(bus);
-  src.start(at);
-  src.stop(at + 0.02);
-}
+const OPEN = 26;
 
 /**
- * One struck note.
+ * Play one sample.
  *
  * `velocity` is 0–1 and does two things, both of which a real piano does: it
- * scales the level, and it opens the note's own lowpass. A piano played harder
- * is not the same sound turned up — it is a brighter sound, because a faster
- * hammer excites more of the upper partials. Level alone sounds like a volume
- * knob, which is the giveaway.
+ * scales the level and it opens the note's lowpass. A piano played harder is
+ * not the same sound turned up — it is a brighter sound, because a faster
+ * hammer excites more of the upper partials — and level alone is the giveaway.
+ *
+ * `sustain` is how long the note is allowed to ring before it is faded out.
+ * The recordings run for several seconds each; a scale of fourteen left to
+ * their own devices is fourteen notes sounding at once by the end of it.
  */
-export function note(semitones, { at = 0, velocity = 0.7, sustain = null } = {}) {
+export async function note(semitones, { at = 0, velocity = 0.7, sustain = 2.4 } = {}) {
   const c = audio();
-  const when = at || c.currentTime + 0.02;
-  const f0 = hz(semitones);
-  const B = inharmonicity(f0);
-  const count = partialCount(f0);
-  const ring = sustain ?? decayFor(f0);
+  warm();
+  const index = clamp(semitones);
 
-  hammer(c, when, f0, velocity);
+  let sample;
+  try {
+    sample = await buffer(index);
+  } catch {
+    // A missing file is silence for that note rather than a broken panel. The
+    // set is vendored and served from this origin, so this is close to
+    // unreachable — but "the piano button does nothing" is a better failure
+    // than "the piano button throws".
+    return;
+  }
 
-  // Per note, not per partial: a filter each would be a dozen biquads for one
-  // key, and the ear cannot tell them apart from one.
+  // Recomputed after the await rather than captured before it: the first note
+  // of a session waits on a fetch and a decode, and a start time worked out
+  // before that would already be in the past by the time it was used, which
+  // the Web Audio clock reads as "now" and plays the whole phrase at once.
+  const when = Math.max(at, c.currentTime + 0.02);
+
+  const src = c.createBufferSource();
+  src.buffer = sample;
+
   const colour = c.createBiquadFilter();
   colour.type = "lowpass";
-  colour.frequency.value = Math.min(12000, f0 * (6 + velocity * 16));
-  colour.Q.value = 0.3;
+  colour.frequency.value = Math.min(16000, hz(index) * (OPEN * (0.35 + velocity * 0.65)));
+  colour.Q.value = 0.2;
 
-  const body = c.createGain();
-  // Normalised against the partial count, so a bass note with eighteen
-  // partials is not four times the level of a treble note with four.
-  body.gain.value = (velocity * 0.5) / Math.sqrt(count);
-  colour.connect(body).connect(bus);
+  const env = c.createGain();
+  env.gain.setValueAtTime(velocity * 0.9, when);
+  // Held flat and then faded, rather than decayed from the start: the sample
+  // already has the piano's own decay in it, and a second one on top of it is
+  // a note that dies twice.
+  env.gain.setValueAtTime(velocity * 0.9, when + sustain * 0.7);
+  env.gain.exponentialRampToValueAtTime(0.0001, when + sustain);
 
-  for (let n = 1; n <= count; n++) {
-    // The stiff-string series. Plain `n` here would be an organ.
-    const ratio = n * Math.sqrt(1 + B * n * n);
-    const freq = f0 * ratio;
-    if (freq > c.sampleRate / 2 - 500) break;
-
-    // Rolloff, with a slight tilt against the even partials. A perfectly
-    // smooth 1/n^p spectrum is the sound of a synthesiser being reasonable;
-    // real strings have a comb in them from wherever the hammer strikes.
-    const level = (1 / n ** 1.25) * (n % 2 === 0 ? 0.82 : 1);
-    // Upper partials die first. This one line is most of the difference
-    // between "bright, then mellow" and "the same all the way down".
-    const life = Math.max(0.12, ring / (1 + (n - 1) * 0.42));
-
-    for (const cents of UNISON_CENTS) {
-      const osc = c.createOscillator();
-      // A sine per partial, because the partials *are* the timbre — anything
-      // richer would stack a second, harmonic series on top of the inharmonic
-      // one this function exists to compute.
-      osc.type = "sine";
-      osc.frequency.value = freq * 2 ** (cents / 1200);
-
-      const env = c.createGain();
-      env.gain.setValueAtTime(0.0001, when);
-      // 3ms: long enough that there is no click, short enough that it is still
-      // a strike. A 10ms attack on a piano note sounds like a bowed one.
-      env.gain.linearRampToValueAtTime(level / UNISON_CENTS.length, when + 0.003);
-      // Exponential, because a linear fade sounds like a note being switched
-      // off rather than one dying away.
-      env.gain.exponentialRampToValueAtTime(0.0001, when + life);
-
-      osc.connect(env).connect(colour);
-      osc.start(when);
-      osc.stop(when + life + 0.05);
-    }
-  }
+  src.connect(colour).connect(env).connect(bus);
+  src.start(when);
+  src.stop(when + sustain + 0.05);
 }
 
 // --- phrases ----------------------------------------------------------------
@@ -299,32 +253,54 @@ const ROLL = 0.035;  // between notes of a chord — a roll, not an arpeggio
  * hand does without being asked. In the chord the root is struck hardest and
  * the extensions lightest, which is voicing rather than dynamics — it is what
  * keeps a ♭13 an extension instead of an argument with the fifth.
+ *
+ * Every note is scheduled against one `start`, taken before any of them are
+ * awaited, so the phrase keeps its rhythm across the first play's fetch.
  */
-export function play(rootIndex, intervals, kind) {
+export async function play(rootIndex, intervals, kind) {
   const c = audio();
-  const start = c.currentTime + 0.06;
+  warm();
 
-  if (kind === "chord") {
-    intervals.forEach((iv, i) => {
-      note(rootIndex + iv, {
-        at: start + i * ROLL,
-        velocity: i === 0 ? 0.78 : Math.max(0.42, 0.68 - i * 0.05),
+  const voices = kind === "chord"
+    ? intervals.map((iv, i) => ({
+        semitone: rootIndex + iv,
+        at: i * ROLL,
+        velocity: i === 0 ? 0.85 : Math.max(0.5, 0.76 - i * 0.05),
         // Long enough to still be ringing under the last note of the roll,
         // which is the whole reason to roll it.
-        sustain: 2.6,
-      });
-    });
-    return;
-  }
+        sustain: 3.2,
+      }))
+    : (() => {
+        const up = [...intervals, 12];
+        const notes = [...up, ...up.slice(0, -1).reverse()];
+        const top = (notes.length - 1) / 2;
+        return notes.map((iv, i) => ({
+          semitone: rootIndex + iv,
+          at: i * STEP,
+          // A shallow arc peaking at the octave: up into it, back off on the
+          // way down. ±0.09 is under a decibel and a half — audible as
+          // phrasing rather than as an effect.
+          velocity: 0.68 + 0.09 * (1 - Math.abs(i - top) / top),
+          sustain: STEP * 4.5,
+        }));
+      })();
 
-  const up = [...intervals, 12];
-  const notes = [...up, ...up.slice(0, -1).reverse()];
-  const top = (notes.length - 1) / 2;
-  notes.forEach((iv, i) => {
-    // A shallow arc peaking at the octave: up into it, back off on the way
-    // down. ±0.09 is under a decibel and a half — audible as phrasing rather
-    // than as an effect.
-    const arc = 0.62 + 0.09 * (1 - Math.abs(i - top) / top);
-    note(rootIndex + iv, { at: start + i * STEP, velocity: arc, sustain: STEP * 3.4 });
-  });
+  // Every buffer before any of them is scheduled, and this is the whole reason
+  // `play` is async.
+  //
+  // Scheduling first and letting each note wait on its own decode looks
+  // equivalent and is not: the Web Audio clock has already passed a start time
+  // worked out before a 200ms fetch, and a start time in the past means *now*.
+  // On the first press the roll therefore arrived as a chord — the first note
+  // on time and the rest piled on top of it the moment their files landed. It
+  // came right on the second press, which is the worst way for a bug like this
+  // to behave.
+  await Promise.all(voices.map((v) => buffer(clamp(v.semitone)).catch(() => null)));
+
+  // Taken after the await, so it is a lead on the schedule rather than a
+  // budget for the download.
+  const start = c.currentTime + 0.06;
+  for (const v of voices) {
+    note(v.semitone, { at: start + v.at, velocity: v.velocity, sustain: v.sustain });
+  }
 }

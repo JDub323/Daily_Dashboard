@@ -16,7 +16,7 @@ import { $ } from "./dom.js";
 import { initKeys } from "./keys.js";
 import { invalidateHistory } from "./modals/daylogs.js";
 import { invalidateTrickArchive } from "./modals/tricks.js";
-import { initNav, resetToTab } from "./nav.js";
+import { focusedPanel, initNav, resetToTab } from "./nav.js";
 import { checkNudges, clearNudges, initNudges } from "./nudges.js";
 import { mountAll, refreshLive, register, rerender, rerenderAll, resetCollapse } from "./panel.js";
 import bathroom from "./panels/bathroom.js";
@@ -270,6 +270,20 @@ async function boot() {
   // Waking and going idle both leave the live panels holding data from
   // whenever you last looked. The rollover path does its own, heavier refresh.
   onSplashDismiss((reason) => {
+    // The ring, first and unconditionally.
+    //
+    // `body.booting` hides the whole shell behind the title screen, and
+    // `resetToTab` picks the first *visible* panel — so the one it runs at
+    // boot picks from an empty list and parks the ring on nothing. Every
+    // panel-scoped key then does nothing at all until you press h/j/k/l,
+    // which is a rule nobody was ever told: the app came up with no cell
+    // selected and no way to know it.
+    //
+    // Only when there is no ring, not on every dismissal. The screen also
+    // comes back on idle and on waking, and resetting then would move the
+    // ring off whatever you had selected when you walked away — losing your
+    // place is the thing the ring exists not to do.
+    if (!focusedPanel()) resetToTab();
     if (reason === "wake" || reason === "idle") refreshLive();
   });
 

@@ -734,7 +734,16 @@ kbd { font: inherit; font-size: var(--t-meta); border: 1px solid var(--border); 
   padding: var(--s2) var(--s3); font-size: var(--t-meta); line-height: 1.45;
   color: var(--fg); cursor: pointer;
 }
+.nudge-body { display: flex; gap: var(--s2); align-items: baseline; }
 .nudge-body:hover { color: var(--accent); border: none; }
+/* The digit `f` addresses. Boxed rather than merely coloured, because it is a
+   key you press and not a bullet: the same square the tabs print their digit
+   in, for the same reason. */
+.nudge-n {
+  flex: none; min-width: 1.15em; text-align: center;
+  border: 1px solid var(--accent-dim); color: var(--accent);
+  font-size: 10px; line-height: 1.4; padding: 0 2px;
+}
 .nudge-x {
   border: none; border-left: 1px solid var(--border-soft); border-radius: 0;
   padding: 0 var(--s2); color: var(--faint); font-size: var(--t-meta);
@@ -1049,6 +1058,30 @@ table.holdings td:first-child .small { max-width: 22ch; overflow-wrap: anywhere;
 }
 
 .cal-ruler { position: relative; height: var(--cal-height); border-right: 1px solid var(--border); }
+
+/* ---- the two edge strips ----
+   The grid is clamped to waking hours (see CLAMP in calendar.js), and anything
+   wholly outside it lands here instead of stretching the day. One line per
+   day, above the ruler for the early events and below the columns for the late
+   ones, so the strip sits on the side of the grid the events are on. They are
+   emitted only on weeks that have something to put in them. */
+.cal-edge-gutter {
+  font-size: var(--t-meta); color: var(--faint); text-align: right;
+  padding: var(--s1) var(--s2) var(--s1) 0; white-space: nowrap;
+}
+.cal-edge {
+  display: flex; flex-wrap: wrap; gap: 2px; align-content: flex-start;
+  padding: var(--s1) 2px; min-height: 20px;
+  border-left: 1px solid var(--border-soft);
+}
+/* Hairlines against the grid, so the strips read as outside it rather than as
+   two more hours of it. */
+.cal-edge-before { border-bottom: 1px dashed var(--border); }
+.cal-edge-after { border-top: 1px dashed var(--border); }
+/* The clock on a strip chip. The chip has given up its position on the grid,
+   so this is the only thing left saying when it is. */
+.cal-chip-at { color: hsl(var(--hue) 55% 78%); margin-right: 4px; }
+
 .cal-hour {
   position: absolute;
   right: var(--s2);
@@ -1255,6 +1288,23 @@ button.cal-help {
    calendar cannot be written to and offering one is offering a failure. */
 .cal-add-row { display: flex; gap: var(--s2); align-items: flex-start; }
 .cal-add-row > textarea { flex: 1; min-width: 0; }
+.cal-add-controls { display: flex; gap: var(--s2); align-items: flex-start; }
+
+/* Folded until it is wanted.
+
+   Open, the box holds 176px of the home tab permanently -- a dropdown, three
+   buttons and an empty preview line, all of which matter only while a line is
+   being typed into it. Everything comes back on focus, on hover, and whenever
+   there is text in the box, so nothing is folded away while it could be read.
+
+   `visibility` and a zero height rather than `display: none`: the preview is
+   written to on a timer while you type, and a node that has left the layout
+   cannot be measured, which is how the auto-growing textarea pins itself shut
+   at zero. See `fit()` in calendar.js. */
+.cal-add:not(:focus-within):not(:hover):not(.filled) .cal-add-controls,
+.cal-add:not(:focus-within):not(:hover):not(.filled) .cal-preview {
+  visibility: hidden; height: 0; margin: 0; padding: 0; overflow: hidden;
+}
 
 select.cal-picker {
   background: var(--panel);

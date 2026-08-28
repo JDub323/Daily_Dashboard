@@ -26,19 +26,34 @@ import { rerender } from "../panel.js";
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
 
-// The clamp on the drawn window. A calendar rendered midnight-to-midnight
-// spends two thirds of its height on hours nobody has ever scheduled anything
-// in, which is exactly the space the events needed.
+// --- how much of the day is drawn to scale ----------------------------------
+//
+// These four numbers are the whole of the calendar's height, and they are
+// grouped here so the decision is one place and reversible in one edit. What
+// they replaced was a window that *grew*: it started at 8am–9pm and then
+// widened to cover whatever the week actually contained, so a single 11:30pm
+// event made every day on screen 16 hours tall and pushed the rest of the home
+// tab under the fold. The page got longer the busier the week was, which is
+// exactly backwards.
+//
+// The window is now fixed. Events outside it are not dropped — see
+// `outsiders` below and the two strips the grid grew for them — they simply
+// stop being drawn to scale, which is the right trade for a 7am gym session
+// against thirteen hours of empty grid.
+//
+// To go back to the old behaviour: set CLAMP to false. `windowFor` then
+// widens as it used to and both strips come up empty, because nothing falls
+// outside a window that has stretched to fit.
+const CLAMP = true;
 const DEFAULT_OPEN = 8 * 60;
-const DEFAULT_CLOSE = 21 * 60;
+const DEFAULT_CLOSE = 20 * 60;
 
-// The grid's whole height is this times the drawn window, so it is the one
-// number that decides whether home fits on a screen. At 0.9 a default
-// 8am–9pm week was 700px before the legend and the box below it, which put
-// the year-so-far heatmap under the fold on every laptop. Two thirds of that
-// still leaves an hour taller than a line of text, which is the floor: below
-// it the ruler stops being readable as hours and becomes a texture.
-const PX_PER_MIN = 0.62;
+// The grid's height is this times the drawn window. At 0.9 the old
+// 8am–9pm week was 700px before the legend and the box under it; at 0.42 a
+// clamped twelve hours is ~300px, which is an hour to a line and a bit of
+// text — readable as a week, and small enough that the year-so-far heatmap
+// below it is on the same screen.
+const PX_PER_MIN = 0.42;
 
 // The height at which an event has room for a second line. Derived from the
 // scale rather than fixed in minutes, because the question is how many pixels
@@ -168,16 +183,49 @@ export function pack(events) {
   return out;
 }
 
-/** The drawn window: waking hours, widened to fit whatever is actually on. */
+/**
+ * The drawn window.
+ *
+ * Fixed at the waking hours while `CLAMP` holds, and widened to fit the day's
+ * own events when it does not. Exported and pure because which events fall
+ * outside it is the other half of this decision, and both halves have to
+ * agree about where the edges are.
+ */
 export function windowFor(timed) {
   let open = DEFAULT_OPEN;
   let close = DEFAULT_CLOSE;
-  for (const event of timed) {
-    open = Math.min(open, event.from);
-    close = Math.max(close, event.to);
+  if (!CLAMP) {
+    for (const event of timed) {
+      open = Math.min(open, event.from);
+      close = Math.max(close, event.to);
+    }
   }
   // Rounded out to the hour so the ruler carries whole labels.
   return [Math.floor(open / 60) * 60, Math.ceil(close / 60) * 60];
+}
+
+/**
+ * Split a day's timed events into the ones the grid can draw and the ones it
+ * cannot.
+ *
+ * `before` and `after` are the two strips above and below the grid. An event
+ * that merely *overlaps* an edge — a 7:30 session that runs to 8:30 — stays in
+ * the grid and is clipped by it, because it is mostly inside and a clipped
+ * block still says roughly when it is. Only an event lying wholly outside
+ * moves to a strip, where it keeps its title and its time and gives up only
+ * its height.
+ */
+export function outsiders(timed, open, close) {
+  const before = [];
+  const after = [];
+  const inside = [];
+  for (const event of timed) {
+    if (event.to <= open) before.push(event);
+    else if (event.from >= close) after.push(event);
+    else inside.push(event);
+  }
+  const byStart = (a, b) => a.from - b.from;
+  return { before: before.sort(byStart), after: after.sort(byStart), inside };
 }
 
 export default {
@@ -262,6 +310,25 @@ export default {
 
     const [open, close] = windowFor([...byDay.values()].flatMap((b) => b.timed));
 
+    // Everything outside the drawn window, per day, worked out once and used
+    // three times: the grid draws `inside`, and the two strips draw the rest.
+    const split = new Map(
+      days.map((d) => [isoOf(d), outsiders(byDay.get(isoOf(d)).timed, open, close)]),
+    );
+    const anyBefore = [...split.values()].some((s) => s.before.length);
+    const anyAfter = [...split.values()].some((s) => s.after.length);
+
+    /** One edge strip: a row of seven cells, each a line of chips. */
+    const strip = (which, label) =>
+      [
+        el(`div.cal-edge-gutter.cal-edge-${which}`, { text: label }),
+        ...days.map((date) =>
+          el(`div.cal-edge.cal-edge-${which}`, null,
+            ...split.get(isoOf(date))[which].map((event) => chip(event, hues, clock(event.from))),
+          ),
+        ),
+      ];
+
     mount(node,
       header(this, node, days),
       el("div.cal-scroll", null,
@@ -282,8 +349,14 @@ export default {
           ...days.map((date) =>
             el("div.cal-allday", null,
               ...byDay.get(isoOf(date)).allDay.map((event) => chip(event, hues)))),
+          // The two strips are present only on weeks that need them, so a week
+          // that starts at nine and ends at six is the plain grid it was — the
+          // clamp costs nothing on the days it is not doing anything.
+          ...(anyBefore ? strip("before", `before ${hourLabel(open)}`) : []),
           el("div.cal-ruler", null, ...ruler(open, close)),
-          ...days.map((date) => column(byDay.get(isoOf(date)), date, open, hues)),
+          ...days.map((date) =>
+            column(split.get(isoOf(date)).inside, date, open, close, hues)),
+          ...(anyAfter ? strip("after", `after ${hourLabel(close)}`) : []),
         ),
       ),
       legend(week.calendars, hues),
@@ -355,15 +428,27 @@ function ruler(open, close) {
   return rows;
 }
 
-function column(bucket, date, open, hues) {
+/**
+ * One day's column. `timed` is already the events the grid can draw — the ones
+ * lying wholly outside the window went to the strips before this was called.
+ *
+ * What is left can still *overlap* an edge, and those are clamped to it: a 7:30
+ * session on an 8am window starts at the top of the column and is drawn half an
+ * hour shorter than it is. Drawing it at a negative offset would put it behind
+ * the day headings, and moving it to a strip would exile an event that is
+ * mostly on screen.
+ */
+function column(timed, date, open, close, hues) {
   const today = isoOf(date) === api.today();
-  const blocks = pack(bucket.timed).map((event) => {
+  const blocks = pack(timed).map((event) => {
     const width = 100 / event.of;
-    const short = (event.to - event.from) * PX_PER_MIN < TWO_LINE_PX;
+    const from = Math.max(event.from, open);
+    const to = Math.min(event.to, close);
+    const short = (to - from) * PX_PER_MIN < TWO_LINE_PX;
     return el(`div.cal-event${short ? ".is-short" : ""}`, {
       style: [
-        `top:${(event.from - open) * PX_PER_MIN}px`,
-        `height:${(event.to - event.from) * PX_PER_MIN}px`,
+        `top:${(from - open) * PX_PER_MIN}px`,
+        `height:${(to - from) * PX_PER_MIN}px`,
         `left:${event.column * width}%`,
         `width:calc(${width}% - 2px)`,
         `--hue:${hues.get(event.calendar) ?? HUES[0]}`,
@@ -377,25 +462,44 @@ function column(bucket, date, open, hues) {
 
   return el(`div.cal-col${today ? ".is-today" : ""}`, null,
     ...blocks,
-    today ? nowLine(open) : null,
+    today ? nowLine(open, close) : null,
   );
 }
 
-/** The line across today. Absent from every other column — it would be a lie. */
-function nowLine(open) {
+/**
+ * The line across today. Absent from every other column — it would be a lie —
+ * and absent outside the drawn window, on the same argument: at seven in the
+ * morning a line pinned to the 8am edge would be claiming it is eight.
+ */
+function nowLine(open, close) {
   const now = new Date();
-  return el("div.cal-now", {
-    style: `top:${(now.getHours() * 60 + now.getMinutes() - open) * PX_PER_MIN}px`,
-  });
+  const mins = now.getHours() * 60 + now.getMinutes();
+  if (mins < open || mins > close) return null;
+  return el("div.cal-now", { style: `top:${(mins - open) * PX_PER_MIN}px` });
 }
 
-function chip(event, hues) {
+/**
+ * One event as a line of text rather than a block.
+ *
+ * Used by the all-day gutter, which has no time to show, and by the two edge
+ * strips, which do — an event that has given up its position on the grid has
+ * to say when it is in words, or the strip is a list of things happening at
+ * some unspecified point in the evening.
+ */
+function chip(event, hues, at = null) {
   return el("span.cal-chip", {
     style: `--hue:${hues.get(event.calendar) ?? HUES[0]}`,
-    text: event.title,
-    title: `${event.title}\n${event.calendar}`,
-  });
+    title: at
+      ? `${event.title}\n${at}\n${event.calendar}`
+      : `${event.title}\n${event.calendar}`,
+  },
+    at ? el("span.cal-chip-at", { text: at }) : null,
+    el("span", { text: event.title }),
+  );
 }
+
+/** `8am` — a window edge, said the way the ruler says its hours. */
+const hourLabel = (mins) => clock(mins);
 
 function legend(calendars, hues) {
   return el("div.cal-legend", null,
@@ -588,8 +692,15 @@ function quickAdd(panel, node) {
     },
   });
 
+  // The controls sit in their own row so the box can shed them when nobody is
+  // typing. Open, this block is 176px of the home tab held permanently by three
+  // buttons, a dropdown and an empty preview line — for a box that is used a
+  // few times a day and is one keystroke (`i`) from being ready. It comes back
+  // whole on focus, on hover, and whenever there is text in it, so nothing is
+  // ever hidden while it could matter.
+  const controls = el("div.cal-add-controls", null, picker, help, retrain);
   const wrap = el("div.cal-add", null,
-    el("div.cal-add-row", null, input, picker, help, retrain),
+    el("div.cal-add-row", null, input, controls),
     aliases.node,
     preview,
   );
@@ -598,6 +709,9 @@ function quickAdd(panel, node) {
   let writable = [];
   let timer = null;
   let sequence = 0;
+
+  /** Open while it holds anything, so a half-typed line cannot fold away. */
+  const markFilled = () => wrap.classList.toggle("filled", input.value.trim() !== "");
 
   /** The picker is the single source of truth; `auto` defers to the default. */
   const chosen = () => picker.value || null;
@@ -675,6 +789,7 @@ function quickAdd(panel, node) {
 
   input.addEventListener("input", () => {
     fit();
+    markFilled();
     clearTimeout(timer);
     // Long enough that typing a sentence is one round trip rather than thirty,
     // short enough that stopping to look shows an answer immediately.

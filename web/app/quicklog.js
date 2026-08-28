@@ -37,11 +37,26 @@ import { el, mount } from "./dom.js";
 import { leaveCell } from "./nav.js";
 import { put, store } from "./store.js";
 
-/** Keys that move the hour rather than answering the question in front of
- *  you. Two spellings each, because `+` needs a shift on most layouts and `=`
- *  is the key it lives on. */
-const EARLIER = new Set(["-", "_", ","]);
-const LATER = new Set(["+", "=", "."]);
+/**
+ * Keys that move the hour rather than answering the question in front of you.
+ *
+ * Four spellings each, and the reason is that the obvious two are both awkward
+ * to reach: `+` needs a shift on most layouts, and `-` is a stretch from the
+ * home row for a key you press two or three times in a row. `,`/`.` sit under
+ * the fingers, and `m`/`p` are minus and plus said as words — which is the pair
+ * that gets used, because the hour is now the first thing this panel asks and
+ * they are what opens it.
+ *
+ * `m` is safe here despite also meaning *medium* on the meal log's size row:
+ * the hour is answered and gone before that row is reached, so the two never
+ * compete for the same keystroke.
+ */
+const EARLIER = new Set(["-", "_", ",", "m"]);
+const LATER = new Set(["+", "=", ".", "p"]);
+
+/** `cursor` while the hour is the question. Anything else is an index into
+ *  the applicable steps, or null for an idle panel. */
+const HOUR = "hour";
 
 const pad = (n) => String(n).padStart(2, "0");
 
@@ -76,6 +91,7 @@ export function quickLog({
   id,
   title,
   span = 3,
+  hourFirst = false,
   steps,
   endpoint,
   deleteEndpoint,
@@ -103,8 +119,11 @@ export function quickLog({
 
   const applicable = () => applicableSteps(steps, draft);
 
-  const label = () =>
-    cursor === null ? title : `${title} ▸ ${applicable()[cursor]?.name} · ${pad(hour)}:00`;
+  const label = () => {
+    if (cursor === null) return title;
+    const step = cursor === HOUR ? "when" : applicable()[cursor]?.name;
+    return `${title} ▸ ${step} · ${pad(hour)}:00`;
+  };
 
   /** The next step that applies, given what has been answered. Null when the
    *  ladder is finished — which is the signal to post. */
@@ -112,10 +131,21 @@ export function quickLog({
     return from + 1 < applicable().length ? from + 1 : null;
   }
 
-  function start() {
+  /**
+   * Open the ladder.
+   *
+   * `at` is where the keyboard lands. `HOUR` is the meal log's first question
+   * — which hour this belongs to — and `0` skips straight past it to the
+   * first real one, which is what Enter means: the hour is already right.
+   *
+   * Always a fresh entry. This panel has no half-finished state worth
+   * resuming, and resuming one would mean the second meal of the day
+   * inherited the first one's hour.
+   */
+  function start(at = 0) {
     draft = {};
     hour = new Date().getHours();
-    cursor = 0;
+    cursor = at;
     handlers?.paint();
     take();
   }
@@ -138,34 +168,46 @@ export function quickLog({
     // cost no height at all on the days nobody scrolls past them.
     host: "cyc",
 
-    /** Enter, from the focus ring — and the global key, through `quickStart`.
-     *  Always a fresh entry: this panel has no half-finished state worth
-     *  resuming, and resuming one would mean the second meal of the day
-     *  inherited the first one's hour. */
+    /**
+     * Enter, from the focus ring — and the global key, through `quickStart`.
+     *
+     * Enter means *the hour is already right*, so it opens past the hour and
+     * onto the first real question. That is what keeps a meal at three
+     * keystrokes (`m` `l` `4`) now that the hour is a question at all: the
+     * common case is a meal you are logging as you eat it, and the common case
+     * must not pay for the exception.
+     */
     onEnter() {
-      start();
+      start(0);
       return true;
     },
 
     /**
-     * A first-rung answer, pressed at the card rather than inside the ladder.
+     * A key pressed at the card, which opens it *and* answers with the same
+     * press. This is the "one key to enter a cell" rule, and which keys count
+     * differs between the two logs because their first questions differ.
      *
-     * `s` on the meal log means a small meal and always did — it just needed
-     * an Enter in front of it to open the ladder the `s` belonged to. Only
-     * the first step is offered here, because only the first step is
-     * answerable without context: every rung after it is a question that
-     * depends on what came before, and there is nothing before yet.
+     * On the meal log the first control is the hour, so `m`/`p`/`-`/`+` open
+     * it standing on the hour with that shift already applied — `m` `m` is a
+     * meal two hours ago, and Enter from there moves on to the size. Nothing
+     * else opens it, which is what keeps `m` unambiguous: at the card it is
+     * always minus, and by the time the size row asks, the hour is behind you.
      *
-     * The hour is deliberately not reachable this way. `-` and `+` at an
-     * idle card would start an entry whose only content was a timestamp,
-     * which is a row nobody wants and an easy one to leave half made.
+     * On the in-and-out log the first control is the kind, so `s` and `u` open
+     * it already answered — that log has no global key of its own and is the
+     * one answered most often, so a hidden question in front of it would cost
+     * a keystroke on every entry to save one on a few.
      */
     onKey(e) {
       if (cursor !== null) return false;
+      if (hourFirst) {
+        if (!EARLIER.has(e.key) && !LATER.has(e.key)) return false;
+        start(HOUR);
+        return Boolean(handlers?.onKey(e));
+      }
       const first = applicableSteps(steps, {})[0];
-      const hit = first?.options.find(([key]) => key === e.key);
-      if (!hit) return false;
-      start();
+      if (!first?.options.some(([key]) => key === e.key)) return false;
+      start(0);
       return Boolean(handlers?.onKey(e));
     },
 
@@ -182,6 +224,9 @@ export function quickLog({
       const message = el("span.faint");
       const clock = el("span.value", { text: `${pad(hour)}:00` });
       const keyHint = el("span.faint");
+      // Wrapped rather than left as two spans in a bare row: it is a step now,
+      // and a step has to be able to light up.
+      const clockRow = el("div.scale-row.row.spread.gap", null, clock, keyHint);
 
       const rows = steps.map((step) =>
         el("div.scale-row", null,
@@ -253,7 +298,7 @@ export function quickLog({
       /** Highlight the current step, light the answers, show the hour. */
       function paint() {
         const list = applicable();
-        const current = cursor === null ? null : list[cursor];
+        const current = typeof cursor === "number" ? list[cursor] : null;
         for (const [index, step] of steps.entries()) {
           const row = rows[index];
           // A step that does not apply to this entry is hidden rather than
@@ -269,7 +314,16 @@ export function quickLog({
           }
         }
         clock.textContent = `${pad(hour)}:00`;
-        keyHint.textContent = cursor === null ? "⏎ to log one" : "a key each · − + hour · esc";
+        // The clock is a question like any other while it is the one being
+        // asked, and is lit the same way the rows are, or the ladder would be
+        // standing somewhere with nothing on screen saying where.
+        clockRow.classList.toggle("on-row", cursor === HOUR);
+        keyHint.textContent =
+          cursor === null
+            ? (hourFirst ? "⏎ now · m p to shift" : "⏎ to log one")
+            : cursor === HOUR
+              ? "m earlier · p later · ⏎ accepts"
+              : "a key each · m p hour · esc";
       }
 
       function shift(by) {
@@ -279,6 +333,21 @@ export function quickLog({
       }
 
       function onKey(e) {
+        // The hour is answerable from anywhere in the ladder, not only from its
+        // own step: realising halfway through that this was lunch and not a
+        // snack should not mean starting the entry again. It is only *asked*
+        // first; it stays available after.
+        //
+        // The one place it must not win is the meal log's size row, where `m`
+        // means medium. `EARLIER` carries `m` for the hour step, so the step's
+        // own options are matched first and the hour keys only get what is
+        // left over.
+        const step = cursor === HOUR ? null : applicable()[cursor];
+        const hit = step?.options.find(([key]) => key === e.key);
+        if (hit) {
+          answer(step, hit[1]);
+          return true;
+        }
         if (EARLIER.has(e.key)) {
           shift(-1);
           return true;
@@ -287,12 +356,17 @@ export function quickLog({
           shift(1);
           return true;
         }
-        const step = applicable()[cursor];
-        if (!step) return false;
-        const hit = step.options.find(([key]) => key === e.key);
-        if (!hit) return false;
-        answer(step, hit[1]);
-        return true;
+        // Enter accepts the hour and moves on. Only from the hour step: on an
+        // answer row there is nothing for it to accept, and a stray Enter
+        // there should fall through and leave rather than silently skip a
+        // question.
+        if (cursor === HOUR && e.key === "Enter") {
+          cursor = 0;
+          paint();
+          captureLabel(label());
+          return true;
+        }
+        return false;
       }
 
       /** Esc, a tab switch, or a key the ladder does not use. A half-answered
@@ -329,7 +403,7 @@ export function quickLog({
         : el("div.faint.divider", { text: empty });
 
       mount(node,
-        el("div.row.spread.gap", null, clock, keyHint),
+        clockRow,
         ...rows,
         el("div.row", null, message),
         logged,

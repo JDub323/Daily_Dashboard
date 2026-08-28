@@ -60,6 +60,11 @@ export const STEPS = [
 export default quickLog({
   id: "meals",
   title: "meals",
+  // The hour is asked first here and nowhere else. Meals are the log most
+  // often written down after the fact -- you notice at three that lunch never
+  // got entered -- and this is the one of the two with a global key, so the
+  // shift keys are also what opens it: `m` `m` is "a meal, two hours ago".
+  hourFirst: true,
   endpoint: "/api/meal",
   deleteEndpoint: "/api/meal/delete",
   empty: "nothing logged today",

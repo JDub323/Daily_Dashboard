@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { hueMap, pack, windowFor } from "../../web/app/panels/calendar.js";
+import { hueMap, outsiders, pack, windowFor } from "../../web/app/panels/calendar.js";
 
 // His actual nine, which is the set the collision behaviour has to hold for.
 const REAL = [
@@ -75,23 +75,79 @@ describe("pack", () => {
   });
 });
 
+// The window used to widen to fit whatever the week contained, which meant one
+// 11:30pm event made every day on screen sixteen hours tall. It is clamped now
+// and the events outside it go to the two edge strips instead, so these two
+// suites are halves of one behaviour: `windowFor` says where the edges are and
+// `outsiders` says who is past them. A disagreement between them loses an
+// event silently, which is the failure the pair exists to prevent.
 describe("windowFor", () => {
-  it("defaults to waking hours when the week is empty", () => {
-    assert.deepEqual(windowFor([]), [8 * 60, 21 * 60]);
+  it("is the waking hours, whatever the week contains", () => {
+    assert.deepEqual(windowFor([]), [8 * 60, 20 * 60]);
   });
 
-  it("opens earlier for an early event, on the hour", () => {
-    const [open] = windowFor([at(6 * 60 + 25, 7 * 60)]);
-    assert.equal(open, 6 * 60);
+  it("does not open earlier for an early event", () => {
+    assert.deepEqual(windowFor([at(6 * 60 + 25, 7 * 60)]), [8 * 60, 20 * 60]);
   });
 
-  it("closes later for a late one", () => {
-    const [, close] = windowFor([at(22 * 60, 23 * 60 + 10)]);
-    assert.equal(close, 24 * 60);
+  it("does not close later for a late one", () => {
+    assert.deepEqual(windowFor([at(22 * 60, 23 * 60 + 10)]), [8 * 60, 20 * 60]);
+  });
+});
+
+describe("outsiders", () => {
+  const WIN = [8 * 60, 20 * 60];
+
+  it("keeps an ordinary daytime event in the grid", () => {
+    const { before, after, inside } = outsiders([at(600, 660, "class")], ...WIN);
+    assert.equal(inside.length, 1);
+    assert.equal(before.length + after.length, 0);
   });
 
-  it("never narrows past the default for a mid-morning week", () => {
-    assert.deepEqual(windowFor([at(600, 660)]), [8 * 60, 21 * 60]);
+  it("sends a wholly-early event to the strip above", () => {
+    const { before, inside } = outsiders([at(6 * 60, 7 * 60, "gym")], ...WIN);
+    assert.deepEqual(before.map((e) => e.title), ["gym"]);
+    assert.equal(inside.length, 0);
+  });
+
+  it("sends a wholly-late event to the strip below", () => {
+    const { after, inside } = outsiders([at(21 * 60, 22 * 60, "film")], ...WIN);
+    assert.deepEqual(after.map((e) => e.title), ["film"]);
+    assert.equal(inside.length, 0);
+  });
+
+  it("keeps an event that straddles an edge in the grid", () => {
+    // Mostly on screen, so it is clipped by the column rather than exiled to a
+    // strip. Both edges, because the two are separate comparisons and getting
+    // one of them backwards is exactly the bug this catches.
+    const { before, after, inside } = outsiders(
+      [at(7 * 60 + 30, 8 * 60 + 30, "early"), at(19 * 60, 21 * 60, "late")], ...WIN);
+    assert.deepEqual(inside.map((e) => e.title), ["early", "late"]);
+    assert.equal(before.length + after.length, 0);
+  });
+
+  it("treats an event ending exactly on the open edge as outside", () => {
+    // It occupies no drawable height, so a block for it would be a zero-pixel
+    // sliver at the very top of the column — visible enough to be confusing
+    // and too small to read.
+    const { before, inside } = outsiders([at(7 * 60, 8 * 60, "dawn")], ...WIN);
+    assert.equal(before.length, 1);
+    assert.equal(inside.length, 0);
+  });
+
+  it("loses nothing", () => {
+    const input = [
+      at(6 * 60, 7 * 60, "a"), at(600, 660, "b"),
+      at(22 * 60, 23 * 60, "c"), at(19 * 60, 21 * 60, "d"),
+    ];
+    const { before, after, inside } = outsiders(input, ...WIN);
+    assert.equal(before.length + after.length + inside.length, input.length);
+  });
+
+  it("orders each strip by start time", () => {
+    const { after } = outsiders(
+      [at(23 * 60, 23 * 60 + 30, "late"), at(21 * 60, 22 * 60, "early")], ...WIN);
+    assert.deepEqual(after.map((e) => e.title), ["early", "late"]);
   });
 });
 
