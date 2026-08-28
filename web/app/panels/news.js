@@ -87,7 +87,7 @@ export function newsPanel(spec) {
 /** Categories with a home of their own. Everything else falls to the catch-all. */
 const CLAIMED = new Set(["finance"]);
 
-// Demoted from the hero when the debate arrived, and widened again when the
+// Demoted from the hero when the investigation arrived, and widened again when the
 // newsletters tab was folded away: the "elsewhere" card that used to live there
 // was the catch-all, and the catch-all is now this one. So the rule is simply
 // "everything the money pages did not take" — a category added to config.toml

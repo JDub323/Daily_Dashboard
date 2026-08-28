@@ -1,14 +1,19 @@
-// The investigation of the day: the pool, and the one topic drawn from it.
+// The investigation of the day: the tab's hero, and the day's biggest ask.
 //
-// The class hands out a list of things to look into. They land here in a
-// paste, one per line, and each morning one of them is drawn. That is the
-// whole panel at the moment — the write-up and the ballot come next, and they
-// hang off the same drawn row.
+// The class hands out a list of things to look into. They land here in a paste,
+// one per line, one is drawn each morning, it is written up in a real editor,
+// and the result comes back graded. Four states, all hanging off the one drawn
+// row:
+//
+//   nothing drawn   the pool, and the button that spends from it
+//   drawn           the topic, and the editor it is written in
+//   read back       the prompt to carry to the Claude app, and the paste box
+//   graded          five rubric lines, what was corrected, and the prose
 //
 // [Invariant] Drawing is a button, never something that happens on render. A
 // panel that drew on mount would spend a topic every morning the politics tab
-// was painted, which is every morning. Same rule as the theorem draw and the
-// debate session, and the reason `/api/investigate/draw` is a POST.
+// was painted, which is every morning. Same rule as the theorem draw, and the
+// reason `/api/investigate/draw` is a POST.
 //
 // The pool travels with the boot payload rather than being fetched: it is a
 // few hundred short strings at the very worst, and it has to be on screen to
@@ -21,7 +26,7 @@ import { put, store } from "../store.js";
 import { openEditor, ready as termReady } from "../term.js";
 import { toast } from "../ui.js";
 
-/** Half-pasted ballots, kept across re-renders — the debate box's lesson. */
+/** Half-pasted ballots, kept across re-renders. See `draft` below. */
 let ballotDraft = "";
 
 /**
@@ -44,7 +49,6 @@ function closeEditor() {
  * The panel is redrawn by any store change — a feed landing, a chip update, a
  * rollover check — and each redraw builds a fresh textarea. Without this, half
  * a pasted handout disappears because something unrelated finished loading.
- * The debate panel learned this the same way.
  */
 let draft = "";
 
@@ -306,8 +310,8 @@ function editorBlock(panel, redraw) {
  *
  * Only once something has been read back: the prompt quotes the *snapshot*,
  * not the file, so offering it before there is one would hand the grader an
- * empty document. Same shape as the debate's briefed state, and the copy
- * button is the same three-fallback one from `clipboard.js`.
+ * empty document. The copy button is the three-fallback one from
+ * `clipboard.js`, shared with the trick panel.
  */
 function submit(panel, redraw) {
   if (!panel.prompt) return null;
@@ -425,8 +429,8 @@ export default {
   id: "investigate",
   title: "⌕ investigation of the day",
   tab: "politics",
-  slot: "grid",
-  span: 2,
+  slot: "hero",
+  hero: true,
   collapsible: true,
 
   summary() {

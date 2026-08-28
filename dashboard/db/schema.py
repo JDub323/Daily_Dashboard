@@ -1543,6 +1543,73 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE investigation ADD COLUMN folder TEXT;
         """,
     ),
+    (
+        26,
+        """
+        -- The daily debate, removed. It shipped, it was never used once, and
+        -- the investigation replaced the tab it lived on.
+        --
+        -- Checked before writing this: `debate_session`, `debate_fact` and
+        -- `debate_reading` were all empty and `rating_event` held no row on the
+        -- track. So this drops nothing that was ever recorded -- which is the
+        -- only reason it is a DROP rather than a rename to `_old`.
+        --
+        -- The argument deck stays. It is `theorem_card`/`theorem_draw` with
+        -- `deck = 'argument'`, it has sixteen seeded cards, and it was only
+        -- ever *fed* by the debate ballot -- the investigation's ballot names
+        -- reasoning moves too, so the panel keeps its one growth path.
+        DROP TABLE debate_fact;
+        DROP TABLE debate_reading;
+        DROP TABLE debate_session;
+
+        -- Its recalls move to the investigate track, where the deck's own
+        -- rating now lives. Empty in practice, and written anyway: a migration
+        -- that is correct only because a table happened to be empty is one
+        -- that silently loses data on any other machine.
+        UPDATE rating_event SET track = 'investigate'
+         WHERE track = 'debate' AND area = 'argument-patterns';
+
+        -- Anything still on the track is a debate result, and there is nothing
+        -- left that could read it.
+        DELETE FROM rating_event WHERE track = 'debate';
+
+        -- And the track leaves the CHECK. Same rebuild as migration 25, one
+        -- name later.
+        CREATE TABLE rating_event_v8 (
+            id             INTEGER PRIMARY KEY,
+            track          TEXT    NOT NULL
+                                   CHECK (track IN ('math', 'chess',
+                                                    'spelling', 'investigate')),
+            date           TEXT    NOT NULL CHECK (date IS strftime('%Y-%m-%d', date)),
+            ref            TEXT    NOT NULL,
+            opponent       INTEGER NOT NULL CHECK (opponent BETWEEN 100 AND 4000),
+            score          REAL    NOT NULL CHECK (score BETWEEN 0.0 AND 1.0),
+            k              INTEGER NOT NULL CHECK (k >= 1),
+            rating_before  INTEGER,
+            rating_after   INTEGER,
+            provenance     TEXT    NOT NULL DEFAULT 'measured'
+                                   CHECK (provenance IN ('measured', 'reconstructed',
+                                                         'lapsed', 'late', 'unlapsed',
+                                                         'theorem')),
+            area           TEXT,
+            CHECK ((rating_before IS NULL) = (rating_after IS NULL)),
+            CHECK ((rating_after IS NULL) = (provenance = 'reconstructed'))
+        ) STRICT;
+
+        INSERT INTO rating_event_v8
+            (id, track, date, ref, opponent, score, k,
+             rating_before, rating_after, provenance, area)
+        SELECT id, track, date, ref, opponent, score, k,
+               rating_before, rating_after, provenance, area
+        FROM rating_event;
+
+        DROP TABLE rating_event;
+        ALTER TABLE rating_event_v8 RENAME TO rating_event;
+        CREATE INDEX rating_event_track_id ON rating_event (track, id);
+        CREATE INDEX rating_event_area ON rating_event (track, area, id);
+        CREATE INDEX rating_event_date ON rating_event (track, date);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

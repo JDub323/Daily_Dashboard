@@ -1,6 +1,6 @@
 // Putting a long prompt on the clipboard, with the two fallbacks it needs.
 //
-// Extracted from the debate panel when the trick panel wanted the same thing.
+// Extracted when a second panel wanted the same thing, and now serves three.
 // It is not the copying that is worth sharing — it is the fallback chain, which
 // was arrived at empirically and would have been rediscovered wrong the second
 // time.

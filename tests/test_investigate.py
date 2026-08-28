@@ -1,11 +1,11 @@
 """The investigation pool: the paste, the draw, and what a wasted day costs.
 
-The rule worth most of this file is that a drawn topic is *not* spent. Every
-other daily cell in this app claims its subject on the way in -- the theorem
-draw, the debate session, the math problem -- and each needed a reconciliation
-sweep afterwards to undo the claim when the day went unanswered. This one
-claims the day and leaves the topic alone, so "returns to the pool" is a thing
-the schema does rather than a thing a job has to remember to do at midnight.
+The rule worth most of this file is that a drawn topic is *not* spent. The
+other daily cells in this app claim their subject on the way in -- the theorem
+draw, the math problem -- and need a reconciliation sweep afterwards to undo
+the claim when the day goes unanswered. This one claims the day and leaves the
+topic alone, so "returns to the pool" is a thing the schema does rather than a
+thing a job has to remember to do at midnight.
 """
 
 from __future__ import annotations
@@ -210,7 +210,7 @@ def test_the_panel_reports_nothing_drawn_before_the_button(repo, files):
 
 def test_the_panel_never_draws(repo, files):
     """Rendering the tab must not spend a topic -- the rule the theorem draw
-    and the debate session both hold."""
+    holds too."""
     add(repo, "Hormuz")
     state.investigate_panel(repo, TODAY, files)
     assert repo.investigation_day(TODAY) is None

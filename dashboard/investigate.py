@@ -307,8 +307,8 @@ def build_prompt(topic: str, write_up: str, folders: list[str]) -> str:
 
     Long on purpose. Every section is either something the grader cannot get
     right without being told, or a rule that stops it being pleasant to you
-    instead of useful -- and the second kind matters more here than it did for
-    the debate, because there is no opponent to be unpleasant on its behalf.
+    instead of useful -- and the second kind carries the weight here, because
+    there is no opponent to be unpleasant on your behalf.
     """
     lines: list[str] = []
     add = lines.append
@@ -490,11 +490,10 @@ def parse_ballot(text: str) -> d.InvestigationBallot:
 def apply_accuracy_rule(ballot: d.InvestigationBallot) -> d.InvestigationBallot:
     """Full marks for accuracy are not available once something was corrected.
 
-    Enforced here rather than trusted to the prompt, for the reason the debate's
-    quote rule was: a rule that lives only in a prompt holds until the model has
-    a reason not to follow it, and a grader's standing reason is that it would
-    rather be encouraging. The prompt says this happens so the ballot is not
-    surprised by it, but this is what makes it true.
+    Enforced here rather than trusted to the prompt: a rule that lives only in a
+    prompt holds until the model has a reason not to follow it, and a grader's
+    standing reason is that it would rather be encouraging. The prompt says this
+    happens so the ballot is not surprised by it, but this is what makes it true.
     """
     if not ballot.corrections:
         return ballot

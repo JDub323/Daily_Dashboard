@@ -5,10 +5,16 @@
 // that showed up, and why the buttons at the bottom of this panel are the main
 // way the deck grows. The card is what stops you forgetting it again.
 //
+// That feed used to come from the daily debate. The debate is gone and the
+// investigation's ballot names them instead, which is a better source anyway:
+// a reasoning move you met while checking whether something was *true* is one
+// you met in the wild, not one an opponent chose to use on you.
+//
 // Same shape as theorem recall, and deliberately so: two boxes, written before
 // anything is revealed, each worth half, +3 / 0 / −3. What differs is where the
-// result lands — the debate track's `argument-patterns` bucket, which is not
-// one of the issues, because principal-agent is not *about* immigration.
+// result lands — the investigation track's `argument-patterns` bucket, which is
+// not one of the subject folders, because principal-agent is not *about*
+// immigration.
 //
 // [Invariant] The draw is a GET that writes, so it is a button rather than
 // something that happens on mount. A panel that drew on render would burn a
@@ -37,7 +43,7 @@ function header(patterns) {
     el("span.faint", {
       text: patterns.events
         ? `pattern recall · ${patterns.events} graded`
-        : "pattern recall · nothing graded yet — showing your debate rating",
+        : "pattern recall · nothing graded yet — showing your investigation rating",
     }),
   );
 }
@@ -89,7 +95,7 @@ function question(body, patterns) {
     oninput: (e) => { held.application = e.target.value; },
     placeholder:
       "an argument where it decided something — one you made, one made at you, or one "
-      + "you read. No need to name the debate.",
+      + "you read. No need to say where.",
   });
   const message = el("span.faint");
 

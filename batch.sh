@@ -1,27 +1,23 @@
 #!/usr/bin/env bash
 # The overnight hand-off. Used by the scheduled task that generates the day's
-# math problem and the day's debate, so the dashboard never has to pay for
+# math problem and the day's trick, so the dashboard never has to pay for
 # either.
 #
 #   ./batch.sh --context                  what the math generator needs
 #   ./batch.sh --validate FILE            the server's checks, at 3am not 8am
 #
-#   ./batch.sh --debate-context           tonight's debate jobs, and which are due
-#   ./batch.sh --validate-debate FILE     the same, for a motion or reading list
-#
 #   ./batch.sh --trick-context            tonight's trick set: topic, bands, callback
 #   ./batch.sh --validate-trick FILE      the same, for a generated trick set
 #
 # The trick is the one job here with nothing at all behind it -- the math
-# problem has a curated pool and the debate costs nothing to begin with. The
-# panel used to offer the same prompt to carry into the Claude app by hand;
-# it does not any more, so a night this does not run is a morning with no
-# trick, and the panel says so and names these two commands.
+# problem has a curated pool. The panel used to offer the same prompt to carry
+# into the Claude app by hand; it does not any more, so a night this does not
+# run is a morning with no trick, and the panel says so and names these two
+# commands.
 #
-# `--debate-context` reports two nullable jobs: `motion` on every debate day,
-# and `reading_list` only on the night before the reading day. The task writes
-# whichever it was given and validates each with the one --validate-debate,
-# which tells the two shapes apart by their fields.
+# The debate's two jobs used to live here as well. The debate is gone, and the
+# investigation that replaced it needs no overnight anything: its topics come
+# from the class, not from a generator.
 #
 # Deliberately a script rather than a `python -m ...` command line the task
 # writes out for itself. The task reaches this repo as

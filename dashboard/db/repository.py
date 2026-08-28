@@ -25,7 +25,6 @@ from ..models.common import (
     BathroomKind,
     ChessOutcome,
     ChessStatus,
-    DebateStatus,
     Deck,
     EntrySource,
     Game,
@@ -46,24 +45,23 @@ from .connection import transaction
 SEEDS = {
     Track.math: scoring.MATH_SEED,
     Track.chess: scoring.CHESS_SEED,
-    Track.debate: scoring.DEBATE_SEED,
     Track.spelling: scoring.SPELLING_SEED,
     Track.investigate: scoring.INVESTIGATE_SEED,
 }
 
 ARGUMENT_AREA = "argument-patterns"
-"""The bucket an argument-pattern recall rates into, on the debate track.
+"""The bucket an argument-pattern recall rates into, on the investigate track.
 
-Deliberately not one of the configured issue slugs, and that is the whole
-design. A pattern like principal-agent is not *about* immigration or Taiwan --
-it applies everywhere -- so filing it under whichever issue the week happened
-to be showing would be an arbitrary attribution that then shows up in the
-per-issue breakdown as evidence about that issue.
+Deliberately not one of the subject folders, and that is the whole design. A
+pattern like principal-agent is not *about* immigration or Taiwan -- it applies
+everywhere -- so filing it under whichever folder the day's topic happened to
+land in would be an arbitrary attribution that then shows up in the per-folder
+breakdown as evidence about that subject.
 
-Being outside the issue list also keeps it out of the panel strip and the
-trends chart, both of which iterate `cfg.debate.issue_slugs`. It is read in one
-place, the argument deck's own panel, which is where "do I actually know my
-patterns" is the question being asked.
+Being outside the folder list also keeps it out of the panel's rating strip,
+which reads `investigation_folders()`. It is read in one place, the argument
+deck's own panel, which is where "do I actually know my patterns" is the
+question being asked.
 """
 
 TRICK_AREA = "tricks"
@@ -206,7 +204,7 @@ class Repository:
         which is what lets the panel show the whole breakdown from day one
         instead of hiding five of six buckets for six months.
 
-        `track` because the debate's issues are the same idea in a second
+        `track` because the investigation folders are the same idea in a second
         bucket space: one row per (track, area), read the same way.
         """
         return [
@@ -671,7 +669,7 @@ class Repository:
         rather than trusted. Plotting them would draw a line through numbers
         nobody measured.
 
-        `track` because the debate's issues are the same idea in a second
+        `track` because the investigation folders are the same idea in a second
         bucket space, and its per-issue chart wants exactly this query.
         """
         rows = self.conn.execute(
@@ -1144,310 +1142,6 @@ class Repository:
             out.append((self._round(row), trick))
         return out
 
-    # -- debate -------------------------------------------------------------
-    #
-    # Shaped after the math half above rather than after the theorem deck: a
-    # session is opened, worked on, and closed with an elo update against a
-    # frozen anchor, and it can lapse. The one real difference is that closing
-    # it consumes a document -- a pasted ballot -- instead of a button.
-
-    def debate_session(self, date: dt.date) -> d.DebateSession | None:
-        row = self.conn.execute(
-            "SELECT * FROM debate_session WHERE date = ?", (_iso(date),)
-        ).fetchone()
-        return self._session(row) if row else None
-
-    @staticmethod
-    def _session(row: sqlite3.Row) -> d.DebateSession:
-        data = _unpack(row, "readings", "scorecard")
-        data["contra"] = bool(data["contra"])
-        return d.DebateSession(**data)
-
-    def open_debate(self, session: d.DebateSession) -> d.DebateSession:
-        """Claim the day for a session, or hand back the one that already has it.
-
-        `ON CONFLICT DO NOTHING` and a re-read, exactly as `record_draw` does:
-        two tabs opening the dashboard at once both see no session and both
-        insert, and the loser should get today's actual session rather than an
-        IntegrityError. It is also what makes the endpoint idempotent, so a
-        reload cannot reroll the angle or re-freeze a different reading list.
-        """
-        self.conn.execute(
-            "INSERT INTO debate_session "
-            "(date, issue, subarea, angle, motion, motion_source, motion_note, motion_url, "
-            "format, side, anchor, contra, readings) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (date) DO NOTHING",
-            (
-                _iso(session.date),
-                session.issue,
-                session.subarea,
-                session.angle,
-                session.motion,
-                session.motion_source,
-                session.motion_note,
-                str(session.motion_url) if session.motion_url else None,
-                session.format,
-                session.side.value,
-                session.anchor,
-                int(session.contra),
-                _json([r.model_dump(mode="json") for r in session.readings]),
-            ),
-        )
-        opened = self.debate_session(session.date)
-        assert opened is not None  # just inserted, or already there
-        return opened
-
-    # -- the week's reading -------------------------------------------------
-
-    def upsert_readings(self, items: list[d.DebateReading]) -> int:
-        """Store one week's reading list, returning how many rows landed.
-
-        `ON CONFLICT (week_start, kind, title)` rather than a delete-then-insert:
-        re-running the 3am task must not clear the ticks off articles already
-        read. Everything describing the item is refreshed; `read_on` is
-        deliberately absent from the SET list, so it survives a regeneration.
-        """
-        for item in items:
-            self.conn.execute(
-                "INSERT INTO debate_reading "
-                "(week_start, issue, subarea, kind, title, url, author, publisher, "
-                "published, summary, lean, required) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT (week_start, kind, title) DO UPDATE SET "
-                "issue = excluded.issue, subarea = excluded.subarea, url = excluded.url, "
-                "author = excluded.author, publisher = excluded.publisher, "
-                "published = excluded.published, summary = excluded.summary, "
-                "lean = excluded.lean, required = excluded.required",
-                (
-                    _iso(item.week_start),
-                    item.issue,
-                    item.subarea,
-                    item.kind,
-                    item.title,
-                    str(item.url) if item.url else None,
-                    item.author,
-                    item.publisher,
-                    _iso(item.published),
-                    item.summary,
-                    item.lean,
-                    int(item.required),
-                ),
-            )
-        return len(items)
-
-    def readings(self, week_start: dt.date) -> list[d.DebateReading]:
-        """The week's list: required articles first, then optional, then books.
-
-        Ordered here rather than in the panel because the order is a claim
-        about what the day is waiting on, and that claim belongs with the data.
-        """
-        rows = self.conn.execute(
-            # `kind` ascending puts 'article' before 'book' alphabetically,
-            # which is also the order of obligation -- articles are what the
-            # day waits on and books are a standing offer.
-            "SELECT * FROM debate_reading WHERE week_start = ? "
-            "ORDER BY kind ASC, required DESC, id",
-            (_iso(week_start),),
-        ).fetchall()
-        return [self._reading(r) for r in rows]
-
-    @staticmethod
-    def _reading(row: sqlite3.Row) -> d.DebateReading:
-        data = dict(row)
-        data["required"] = bool(data["required"])
-        return d.DebateReading(**data)
-
-    def mark_read(self, reading_id: int, on: dt.date | None) -> d.DebateReading:
-        """Tick or untick one item. `on=None` unticks -- a box you cannot
-        uncheck is one you hesitate to check."""
-        row = self.conn.execute(
-            "UPDATE debate_reading SET read_on = ? WHERE id = ? RETURNING *",
-            (_iso(on), reading_id),
-        ).fetchone()
-        if row is None:
-            raise LookupError(f"no reading {reading_id}")
-        return self._reading(row)
-
-    def readings_exist(self, issue: str, subarea: str) -> bool:
-        """Has this sub-area ever had a reading list?
-
-        Asked by the 3am task to decide whether to offer books. They are worth
-        offering the first time a sub-area comes round and not the second: over
-        a 26-week cycle the alternative is a hundred-odd recommendations, and
-        the fifth list you have not read stops you reading the first.
-        """
-        return (
-            self.conn.execute(
-                "SELECT 1 FROM debate_reading WHERE issue = ? AND subarea = ? LIMIT 1",
-                (issue, subarea),
-            ).fetchone()
-            is not None
-        )
-
-    def unread_required(self, week_start: dt.date) -> int:
-        """Required articles still unticked -- what the reading day waits on."""
-        return self.conn.execute(
-            "SELECT COUNT(*) FROM debate_reading "
-            "WHERE week_start = ? AND required = 1 AND read_on IS NULL",
-            (_iso(week_start),),
-        ).fetchone()[0]
-
-    def set_debate_position(
-        self, date: dt.date, position: str, confidence: int | None, *, after: bool
-    ) -> d.DebateSession:
-        """Record what you believe, before or after arguing.
-
-        Two columns rather than one row per statement. A position log with more
-        than two points per session would be a different feature -- what is
-        wanted is the pair, so that "did arguing it move me" is a subtraction.
-        """
-        column = "position_after" if after else "position"
-        confidence_column = "confidence_after" if after else "confidence"
-        row = self.conn.execute(
-            f"UPDATE debate_session SET {column} = ?, {confidence_column} = ? "
-            f"WHERE date = ? RETURNING *",
-            (position, confidence, _iso(date)),
-        ).fetchone()
-        if row is None:
-            raise LookupError(f"no debate session on {date}")
-        return self._session(row)
-
-    def brief_debate(self, date: dt.date) -> d.DebateSession:
-        """Mark the prompt as taken. This is what starts the lapse clock.
-
-        `WHERE status = 'prep'` rather than an unguarded update: re-copying the
-        prompt on the second day of a two-day debate must not push `briefed_on`
-        forward and quietly buy another grace period.
-        """
-        with transaction(self.conn):
-            row = self.conn.execute(
-                "UPDATE debate_session SET status = 'briefed', briefed_on = ? "
-                "WHERE date = ? AND status = 'prep' RETURNING *",
-                (_iso(date), _iso(date)),
-            ).fetchone()
-            if row is not None:
-                return self._session(row)
-            existing = self.debate_session(date)
-            if existing is None:
-                raise LookupError(f"no debate session on {date}")
-            return existing
-
-    def score_debate(
-        self, date: dt.date, card: d.Scorecard, score: float
-    ) -> tuple[d.DebateSession, d.RatingEvent]:
-        """Close the session on a pasted ballot and apply the elo. Atomic.
-
-        `WHERE status IN ('prep','briefed')` is the double-submit guard, the
-        same one `_close_math` uses: two tabs pasting the same ballot update
-        zero rows on the second and raise, rather than rating one debate twice.
-
-        `prep` is accepted as well as `briefed` because taking the prompt is a
-        button you can forget to press, and refusing a real ballot on that
-        ground would be the dashboard's bookkeeping outranking the debate that
-        actually happened.
-        """
-        with transaction(self.conn):
-            session = self.debate_session(date)
-            if session is None:
-                raise LookupError(f"no debate session on {date}")
-            if session.status in (DebateStatus.scored, DebateStatus.lapsed):
-                raise ValueError(f"the debate on {date} is already {session.status.value}")
-            row = self.conn.execute(
-                "UPDATE debate_session SET status = 'scored', scorecard = ?, score = ?, "
-                "briefed_on = COALESCE(briefed_on, ?) "
-                "WHERE date = ? AND status IN ('prep', 'briefed') RETURNING *",
-                (_json(card), score, _iso(date), _iso(date)),
-            ).fetchone()
-            if row is None:
-                raise ValueError(f"the debate on {date} was closed concurrently")
-            closed = self._session(row)
-            event = self._rate_debate(closed, score, Provenance.measured, area=None)
-            # The same result inside its issue, second and in the same
-            # transaction -- `_close_math`'s rule, for its reason: the pooled
-            # row is what the panel reads, so it must not be able to exist
-            # without its partner.
-            self._rate_debate(closed, score, Provenance.measured, area=closed.issue)
-            return closed, event
-
-    def _rate_debate(
-        self,
-        session: d.DebateSession,
-        score: float,
-        provenance: Provenance,
-        *,
-        area: str | None,
-    ) -> d.RatingEvent:
-        """One elo row against the session's frozen anchor. Caller holds the
-        transaction; `area=None` is the pooled debate rating."""
-        n = self.event_count(Track.debate, area)
-        before = self.current_rating(Track.debate, area)
-        k = scoring.k_factor(n)
-        after = scoring.elo_update(before, session.anchor, score, n)
-        row = self.conn.execute(
-            "INSERT INTO rating_event "
-            "(track, date, ref, opponent, score, k, rating_before, rating_after, "
-            "provenance, area) "
-            "VALUES ('debate', ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
-            (
-                _iso(session.date),
-                # The sub-area and angle, not the motion: the motion is a frame
-                # sharpened in the chat, so it is the same string every week,
-                # and `ref` is meant to identify the round.
-                f"{session.subarea} · {session.angle}",
-                session.anchor,
-                score,
-                k,
-                before,
-                after,
-                Provenance(provenance).value,
-                area,
-            ),
-        ).fetchone()
-        return d.RatingEvent(**dict(row))
-
-    def unbriefed_debate_dates(self, before: dt.date) -> list[dt.date]:
-        """Briefed sessions whose grace period is over and which never scored.
-
-        `before` is today minus the grace, computed by the caller: this module
-        does not know about config, and the grace is config. Strictly less than,
-        so the boundary day is still yours -- the same courtesy
-        `unmarked_math_dates` extends to today.
-
-        Sessions still in `prep` are deliberately absent. Reading the articles
-        and never taking the prompt promised nothing, so there is nothing to
-        charge for; only carrying the prompt off does.
-        """
-        rows = self.conn.execute(
-            "SELECT date FROM debate_session WHERE status = 'briefed' AND date < ? ORDER BY date",
-            (_iso(before),),
-        ).fetchall()
-        return [dt.date.fromisoformat(r[0]) for r in rows]
-
-    def lapse_debate(self, date: dt.date) -> tuple[d.DebateSession, d.RatingEvent]:
-        """Auto-score one abandoned session as a loss against its own anchor."""
-        with transaction(self.conn):
-            row = self.conn.execute(
-                "UPDATE debate_session SET status = 'lapsed', score = ? "
-                "WHERE date = ? AND status = 'briefed' RETURNING *",
-                (scoring.DEBATE_LAPSE_SCORE, _iso(date)),
-            ).fetchone()
-            if row is None:
-                raise ValueError(f"the debate on {date} is not an unscored briefed session")
-            session = self._session(row)
-            event = self._rate_debate(
-                session, scoring.DEBATE_LAPSE_SCORE, Provenance.lapsed, area=None
-            )
-            self._rate_debate(
-                session, scoring.DEBATE_LAPSE_SCORE, Provenance.lapsed, area=session.issue
-            )
-            return session, event
-
-    def reconcile_debate_lapses(self, today: dt.date, grace_days: int) -> list[d.RatingEvent]:
-        """Close out every abandoned session past its grace. Idempotent, since
-        a lapsed session is no longer `briefed`."""
-        cutoff = today - dt.timedelta(days=max(0, grace_days))
-        return [self.lapse_debate(date)[1] for date in self.unbriefed_debate_dates(cutoff)]
-
     def rating_delta(self, track: Track, on: dt.date) -> int | None:
         """Net rating change on one track on one day, or None if nothing moved.
 
@@ -1462,70 +1156,6 @@ class Repository:
             (Track(track).value, _iso(on)),
         ).fetchone()
         return row[0]
-
-    def debate_delta(self, on: dt.date) -> int | None:
-        """What that day's ballot did to the pooled debate rating, or None.
-
-        Read back off the event rather than recomputed from the score, exactly
-        as `theorem_delta` is: the row is what happened, and recomputing it here
-        would be a second place the number could be decided.
-        """
-        row = self.conn.execute(
-            "SELECT rating_after - rating_before FROM rating_event "
-            "WHERE track = 'debate' AND date = ? AND area IS NULL ORDER BY id DESC LIMIT 1",
-            (_iso(on),),
-        ).fetchone()
-        return row[0] if row else None
-
-    def debate_history(self, issue: str | None = None, limit: int = 120) -> list[d.DebateSession]:
-        """Past sessions, oldest first -- the order the dossier reads them in."""
-        sql = "SELECT * FROM debate_session"
-        params: tuple[object, ...] = ()
-        if issue is not None:
-            sql += " WHERE issue = ?"
-            params = (issue,)
-        sql += " ORDER BY date DESC LIMIT ?"
-        rows = self.conn.execute(sql, (*params, limit)).fetchall()
-        return [self._session(r) for r in reversed(rows)]
-
-    # -- the dossier --------------------------------------------------------
-
-    def add_fact(self, fact: d.DebateFact) -> d.DebateFact:
-        row = self.conn.execute(
-            "INSERT INTO debate_fact (issue, date, claim, source, stance) "
-            "VALUES (?, ?, ?, ?, ?) RETURNING *",
-            (fact.issue, _iso(fact.date), fact.claim, fact.source, fact.stance.value),
-        ).fetchone()
-        return d.DebateFact(**dict(row))
-
-    def delete_fact(self, fact_id: int) -> d.DebateFact:
-        """Remove one fact, returning it so the caller knows which dossier to
-        re-render. A typo you cannot take back is a box you stop using."""
-        row = self.conn.execute(
-            "DELETE FROM debate_fact WHERE id = ? RETURNING *", (fact_id,)
-        ).fetchone()
-        if row is None:
-            raise LookupError(f"no fact {fact_id}")
-        return d.DebateFact(**dict(row))
-
-    def facts(self, issue: str | None = None, on: dt.date | None = None) -> list[d.DebateFact]:
-        """Oldest first. Both filters optional and independent: the dossier
-        wants an issue's whole history, the panel wants today's."""
-        clauses, params = [], []
-        if issue is not None:
-            clauses.append("issue = ?")
-            params.append(issue)
-        if on is not None:
-            clauses.append("date = ?")
-            params.append(_iso(on))
-        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        rows = self.conn.execute(f"SELECT * FROM debate_fact{where} ORDER BY id", params).fetchall()
-        return [d.DebateFact(**dict(r)) for r in rows]
-
-    def fact_count(self, on: dt.date) -> int:
-        return self.conn.execute(
-            "SELECT COUNT(*) FROM debate_fact WHERE date = ?", (_iso(on),)
-        ).fetchone()[0]
 
     # -- investigations -----------------------------------------------------
 
@@ -1714,7 +1344,7 @@ class Repository:
 
             event = self._rate_investigation(date, topic.topic, anchor, score, area=None)
             # The same result inside its folder, second and in the same
-            # transaction -- `score_debate`'s rule, for its reason: the pooled
+            # transaction -- `_close_math`'s rule, for its reason: the pooled
             # row is what the panel reads, so it must never be able to exist
             # without its partner.
             self._rate_investigation(date, topic.topic, anchor, score, area=folder)
@@ -1738,15 +1368,22 @@ class Repository:
         ).fetchone()
         return d.RatingEvent(**dict(row))
 
-    def investigation_delta(self, date: dt.date) -> int | None:
-        """What that day's ballot did to the pooled rating."""
+    def last_investigation_ballot(self) -> d.InvestigationBallot | None:
+        """The most recent graded ballot, whenever it was.
+
+        Undated on purpose. The argument deck reads this for the reasoning
+        moves it offers to add, and an offer is worth making until it is taken
+        -- scoping it to today would mean a pattern named on Tuesday quietly
+        stops being offered on Wednesday morning, which is exactly when you
+        would have got round to adding it.
+        """
         row = self.conn.execute(
-            "SELECT rating_after - rating_before AS delta FROM rating_event "
-            "WHERE track = 'investigate' AND area IS NULL AND date = ? "
-            "ORDER BY id DESC LIMIT 1",
-            (_iso(date),),
+            "SELECT ballot FROM investigation_day WHERE ballot IS NOT NULL "
+            "ORDER BY date DESC LIMIT 1"
         ).fetchone()
-        return row["delta"] if row else None
+        if row is None:
+            return None
+        return d.InvestigationBallot(**json.loads(row["ballot"]))
 
     @staticmethod
     def _investigation_day(row: sqlite3.Row) -> d.InvestigationDay:
@@ -2067,12 +1704,12 @@ class Repository:
         number that is actually asking the related question: how well do you
         know this topic.
 
-        An argument-deck recall lands on the debate track and on
-        `ARGUMENT_AREA`, which is deliberately not one of the configured issues
+        An argument-deck recall lands on the investigate track and on
+        `ARGUMENT_AREA`, which is deliberately not one of the subject folders
         -- see that constant. Everything else about the write is identical,
         which is the whole point of the shared table.
         """
-        track = Track.debate if Deck(deck) is Deck.argument else Track.math
+        track = Track.investigate if Deck(deck) is Deck.argument else Track.math
         with transaction(self.conn):
             row = self.conn.execute(
                 "UPDATE theorem_draw SET recalled = ?, explanation = ?, application = ?, "
@@ -2128,7 +1765,7 @@ class Repository:
         is what happened, and a second calculation of it here would be a second
         place for the +/-3 to be decided.
         """
-        track = Track.debate if Deck(deck) is Deck.argument else Track.math
+        track = Track.investigate if Deck(deck) is Deck.argument else Track.math
         row = self.conn.execute(
             "SELECT rating_after - rating_before FROM rating_event "
             "WHERE track = ? AND date = ? AND provenance = ? "

@@ -15,11 +15,8 @@ from .common import (
     Base,
     BathroomKind,
     ChessStatus,
-    DebateSide,
-    DebateStatus,
     Deck,
     EntrySource,
-    FactStance,
     HealthMetric,
     MathStatus,
     MealSize,
@@ -498,154 +495,23 @@ class SpellingRound(Base):
     status: str = "open"
 
 
-# --- debate ----------------------------------------------------------------
-
-
-class Reading(Base):
-    """One article offered for the day's issue.
-
-    Frozen onto the session at open time rather than re-ranked on every render.
-    The headline pool turns over through the day, and a prep list that changed
-    while you were reading it would be a list you could not finish -- the same
-    argument that makes today's math problem a stored row rather than a query.
-    """
-
-    title: str
-    link: Url
-    """Proxied for a paywalled domain, exactly as `NewsItem.link` is."""
+# --- ballots ---------------------------------------------------------------
 
 
 class RubricItem(Base):
     """One line of the judge's ballot.
 
-    `score` is 0/1/2 against the anchored band descriptors in `debate.RUBRIC`,
-    not a free-running number: the whole reason the rubric is shaped this way
-    is that "7 out of 10 on rhetoric" means something different to every model
-    version, and a rating history has to survive its judge being upgraded.
+    `score` is 0/1/2 against the anchored band descriptors in
+    `investigate.RUBRIC`, not a free-running number: the whole reason the
+    rubric is shaped this way is that "7 out of 10 on rigour" means something
+    different to every model version, and a rating history has to survive its
+    judge being upgraded.
     """
 
     key: str
     score: int = Field(ge=0, le=2)
-    quote: str = ""
-    """Verbatim from what *you* wrote. An item claiming a point with no quote
-    is voided to zero server-side -- see `debate.apply_quote_rule`."""
 
     note: str = ""
-
-
-class Foul(Base):
-    """A hard foul: something that costs a point outright rather than scoring
-    a band. Named separately because these are events, not qualities."""
-
-    kind: str
-    quote: str = ""
-
-
-class Scorecard(Base):
-    """What the opponent returns at the end, pasted back as JSON.
-
-    Parsed and re-scored here rather than trusted: the model reports what it
-    observed, and `scoring.debate_score` decides what that is worth. A judge
-    that hands back its own total is a judge whose scale you have to trust
-    across model versions.
-    """
-
-    items: list[RubricItem] = Field(default_factory=list)
-    fouls: list[Foul] = Field(default_factory=list)
-    verdict: str = ""
-
-    patterns: list[str] = Field(default_factory=list, max_length=3)
-    """Argument patterns that showed up and are worth being able to name.
-
-    Free, since the judge is already writing a ballot, and the answer to the
-    real problem with a curated deck: you cannot add a card for a pattern you
-    did not know existed. This is the thing that noticed it. The panel offers
-    each one as a button; nothing is added without a press.
-    """
-
-    voided: list[str] = Field(default_factory=list)
-    """Item keys that claimed a point without a quote and were zeroed. Kept on
-    the card so the panel can say so -- a rule you cannot see enforced is one
-    you assume is not."""
-
-
-class DebateReading(Base):
-    """One item of the week's reading: a long-form article, or a book.
-
-    Both in one table because the panel lists them together and the only real
-    difference is which fields are populated -- an article has a publisher and
-    a date, a book has an author and a lean. A second table would be two
-    queries and one more join for a distinction the reader does not make.
-    """
-
-    id: int | None = None
-    week_start: dt.date
-    """The Sunday the week opens on. Not the day it is read."""
-
-    issue: str
-    subarea: str
-    kind: str = Field(pattern=r"^(article|book)$")
-
-    title: str
-    url: Url | None = None
-    author: str | None = None
-    publisher: str | None = None
-    published: dt.date | None = None
-    summary: str | None = None
-
-    lean: str | None = None
-    """`left` / `right` / `neither` for a book; None for an article."""
-
-    required: bool = True
-    """Books are never required -- see the CHECK in migration 11."""
-
-    read_on: dt.date | None = None
-
-
-class DebateSession(Base):
-    """The day's debate, from opening the issue to pasting the ballot."""
-
-    date: dt.date
-    issue: str
-    """The issue slug: the rating bucket, frozen here."""
-
-    subarea: str
-    angle: str
-    motion: str
-    motion_source: str | None = None
-    """`batch` when the 3am task resolved it against the news, `template` when
-    it is the frame the opponent sharpens itself. None predates the column."""
-
-    motion_note: str | None = None
-    """What makes it live right now. Only the batch produces one."""
-
-    motion_url: Url | None = None
-    format: str
-    side: DebateSide
-    anchor: Rating
-    contra: bool = False
-
-    position: str | None = None
-    confidence: int | None = Field(default=None, ge=0, le=100)
-    position_after: str | None = None
-    confidence_after: int | None = Field(default=None, ge=0, le=100)
-
-    readings: list[Reading] = Field(default_factory=list)
-    status: DebateStatus = DebateStatus.prep
-    briefed_on: dt.date | None = None
-    scorecard: Scorecard | None = None
-    score: Score | None = None
-
-
-class DebateFact(Base):
-    """One sourced claim in the dossier."""
-
-    id: int | None = None
-    issue: str
-    date: dt.date
-    claim: str = Field(min_length=3, max_length=600)
-    source: str = Field(min_length=4, max_length=500)
-    stance: FactStance = FactStance.context
 
 
 # --- papers ----------------------------------------------------------------
@@ -1013,7 +879,7 @@ class InvestigationBallot(Base):
 
     Parsed and re-scored rather than trusted -- the model reports what it
     observed and `investigate.score_ballot` decides what that is worth. Same
-    bargain the debate ballot made, and for the same reason: a judge that hands
+    bargain the math grader makes, and for the same reason: a judge that hands
     back its own total is a judge whose scale has to be trusted across model
     versions, and this rating is meant to outlive several.
     """
@@ -1073,9 +939,8 @@ class Investigation(Base):
     folder: str | None = None
     """The subject area it was filed under, set when it is graded.
 
-    Also the rating `area`, exactly as a debate issue slug was both a bucket
-    and a filename -- one string, so the folder on disk and the rating it moves
-    cannot drift apart. None until the day it is graded.
+    Also the rating `area` -- one string, so the folder on disk and the rating
+    it moves cannot drift apart. None until the day it is graded.
     """
 
     @computed_field  # type: ignore[prop-decorator]

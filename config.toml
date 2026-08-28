@@ -23,12 +23,9 @@ spelling = "spelling.json"  # the hand-curated word pool, read-only to the serve
 # What the day asks of you. Read-only to the server, hand-edited, and optional
 # -- no file means no camp is on. See dashboard/trainplan.py.
 training = "training.toml"
-# Rendered issue dossiers, one markdown file per issue. Written by the server,
-# never read by it -- the database is the record and these exist to be grepped.
-dossiers = "dossiers"
-# The write-ups, one markdown file per topic. The exact opposite of `dossiers`:
-# these are the source, they are opened in a real editor, and the server only
-# ever creates one that is missing -- it never rewrites one that exists.
+# The write-ups, one markdown file per topic. The one directory here that is a
+# source rather than an export: they are opened in a real editor, and the server
+# only ever creates one that is missing -- it never rewrites one that exists.
 investigations = "investigations"
 
 [llm]
@@ -244,7 +241,7 @@ impossible = 1750
 # Costs nothing per day if you let it. Three ways in, cheapest first: the
 # overnight file (`./batch.sh --trick-context` at 3am, unattended); the prompt
 # the panel hands you to paste into the Claude app, which runs on the
-# subscription rather than the API — the same split that makes the daily debate
+# subscription rather than the API — the same split that makes the investigation
 # free; and, last and only if you press it, a live generation at ~$0.02-0.04.
 # The optional challenge is graded by a much smaller call, and only if you
 # actually attempt it.
@@ -418,19 +415,18 @@ feeds = [
 ]
 
 # ---------------------------------------------------------------------------
-# The daily debate.
+# The investigation of the day.
 #
-# Same shape as [math], deliberately: an *issue* is a rating bucket (what
-# [math.areas] is), a *sub-area* is a week (what [math].rotation is), and the
-# week index advances every Sunday from `rotation_start`. Reusing the shape is
-# most of why this feature is small.
+# The politics class hands out things to look into. They go in a pool, one is
+# drawn a day, it is written up in a real editor, and the result is graded in
+# the Claude app and pasted back.
 #
-# The debate itself happens in the Claude app. Nothing here costs an API call:
-# the motion is assembled from templates, the readings come from RSS you are
-# already fetching, and the scorecard is JSON you paste back. Use a *dedicated
-# Claude Project* for the debates -- project memory is isolated from your
-# global chat memory and from other projects, so a month of arguing about
-# immigration does not leak into everything else you ask Claude.
+# Nothing here costs an API call except the one-line filing call below: the
+# prompt is assembled from a rubric and your own text, and the ballot is JSON
+# you paste back. Use a *dedicated Claude Project* for the grading -- project
+# memory is isolated from your global chat memory and from other projects, so a
+# semester of foreign-policy write-ups does not leak into everything else you
+# ask Claude.
 [investigate]
 # Editors to try, in order; the first one on PATH wins. A real terminal editor
 # runs on a real pty inside the panel -- this is not an emulation, so your own
@@ -495,120 +491,6 @@ folders = [
 # this should do unasked.
 split_at = 25
 
-[debate]
-# The Sunday the traversal starts from. Validated as a Sunday at startup, the
-# same as [math].rotation_start.
-rotation_start = 2026-08-02
-
-# How the (issue, sub-area) weeks are laid out. Both are in-order traversals
-# of `[[debate.issues]]` below -- neither is a random draw.
-#
-#   "interleave"  round-robin: one sub-area from each issue, then the next
-#                 from each, and so on. You never sit on one issue for four
-#                 straight weeks, and an issue with more sub-areas simply
-#                 comes round more often.
-#   "sequential"  straight down the list: every sub-area of the first issue,
-#                 then every sub-area of the second.
-#
-# Editing the issue list re-lays the whole traversal from `rotation_start`, so
-# the server logs this week's and next week's assignment at startup -- an edit
-# tells you what it did rather than being discovered a Sunday later.
-order = "interleave"
-
-# Sunday is for reading, not arguing: the week's sub-area opens, the readings
-# appear, and the day is done when you have logged `min_facts` facts.
-reading_day = "sunday"
-
-# Days the dashboard picks your side *against* your stated position. The rest
-# of the week you argue whichever side you like -- practising your own case is
-# half the point, and knowing the other side is the other half.
-contra_days = ["wednesday", "friday"]
-
-# What arguing the harder side is worth, added to the format anchor. Not a
-# score bonus: a higher opponent means the same performance rates better,
-# which is what "this was harder" means in elo.
-contra_bonus = 75
-
-# Facts (each with a source) required before the day counts, and before the
-# prompt can be taken. The prompt embeds them, so this is not busywork -- it
-# is the difference between debating from your prep and debating from vibes.
-min_facts = 2
-
-# How long after being briefed a session can still be scored. 1 means "the
-# rest of the next day", which covers a debate started at 11pm. Past that it
-# lapses to 0, exactly as an unmarked math problem does.
-grace_days = 1
-
-# Opponent rating per format. Fixed anchors, like [math.anchors]: the model
-# never picks a number, so the debate rating scale cannot drift.
-[debate.anchors]
-"cross-examination" = 1500
-"constructive" = 1450
-"socratic" = 1550
-
-# The six angles, one per debate day of the week (Mon..Sat in this order).
-# Sub-area x angle is what stops six debates on "unauthorized immigrants
-# already here" from being the same debate six times: the angle changes what
-# is actually being contested, not merely the wording.
-#
-# `format` picks the anchor above. `brief` goes into the prompt verbatim.
-[[debate.angles]]
-key = "empirical"
-label = "the empirical crux"
-format = "cross-examination"
-brief = """
-Contest the facts, not the values. Establish what the numbers actually say, \
-where they come from, and what evidence would change my mind. Press hardest \
-on any figure I cannot source."""
-
-[[debate.angles]]
-key = "proposal"
-label = "a named proposal"
-format = "constructive"
-brief = """
-Pick one real, named bill, rule, executive action or court case currently in \
-play on this sub-area and make me defend or attack that specific text -- not \
-the general direction. If I retreat to the general case, drag me back to the \
-provision."""
-
-[[debate.angles]]
-key = "values"
-label = "the values crux"
-format = "socratic"
-brief = """
-Grant me the facts entirely. The disagreement is about which principle \
-governs -- rights, aggregate welfare, rule of law, desert, sovereignty. Find \
-the principle I am actually using and test it against a case where it gives \
-an answer I will not accept."""
-
-[[debate.angles]]
-key = "second-order"
-label = "second-order effects"
-format = "cross-examination"
-brief = """
-Grant that the policy achieves its stated goal. Attack what it does next: the \
-incentives it creates, who reorganises around it, and what it looks like in \
-ten years once everyone has adapted."""
-
-[[debate.angles]]
-key = "steelman"
-label = "steelman the other side"
-format = "constructive"
-brief = """
-I argue the strongest version of the position I do NOT hold, and you attack \
-it from the position I do. Judge me on whether my case is one its actual \
-holders would recognise and endorse -- a caricature I can knock down scores \
-zero on content however fluent it is."""
-
-[[debate.angles]]
-key = "mechanics"
-label = "implementation and mechanics"
-format = "socratic"
-brief = """
-Skip whether it is right and ask whether it can be done: which agency, under \
-what authority, with what money and headcount, on what timeline, and what \
-breaks first. Vagueness about who does the work is the failure to hunt for."""
-
 # ---------------------------------------------------------------------------
 # The starter argument deck.
 #
@@ -627,184 +509,85 @@ breaks first. Vagueness about who does the work is the failure to hunt for."""
 # and not seeing it coming, which is why the ballot is asked to name the
 # patterns that showed up and the panel offers to add them.
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Principal-agent problem"
 topic = "incentives"
 statement = "Whenever one party acts on another's behalf, their interests diverge and the principal cannot fully observe the agent. Most 'why doesn't the agency just do X' arguments die here: the agency's incentives are not the public's."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Tragedy of the commons"
 topic = "incentives"
 statement = "A shared resource with private benefit and socialised cost gets over-consumed, even when every user knows it. The argument is about which of the three fixes applies — property rights, regulation, or community norms — not whether the problem is real."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Base-rate neglect"
 topic = "statistics"
 statement = "Judging how likely something is from how vivid or representative the evidence is, ignoring how common it is to begin with. The tell is a striking anecdote standing in for a rate."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Concentrated benefits, diffuse costs"
 topic = "incentives"
 statement = "A policy costing everyone a little and paying a few a lot will be defended far harder than it is opposed, regardless of whether it is good. Explains persistence, not merit — using it to argue a policy is *wrong* is the mistake."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Baptists and bootleggers"
 topic = "incentives"
 statement = "A restriction backed at once by those who think it moral and those who profit from it. The coalition tells you nothing about whether the restriction is right, and everything about why it is hard to remove."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Seen and unseen (opportunity cost)"
 topic = "economics"
 statement = "The visible effect of a policy is not its net effect: what the same money, time or attention would otherwise have done is invisible and usually uncounted. Every 'this created N jobs' claim owes an account of the unseen."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Chesterton's fence"
 topic = "reasoning"
 statement = "Do not remove a rule until you can state why it was put there. A burden-of-proof move, not a conservative one — it is discharged by giving the reason, and it fails when the reason is known and bad."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Motte and bailey"
 topic = "rhetoric"
 statement = "Arguing a strong, useful claim (the bailey) and retreating under fire to a weak, obvious one (the motte) as though they were the same claim. Caught by asking which version is being defended right now."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Isolated demand for rigor"
 topic = "rhetoric"
 statement = "Applying a standard of evidence to an opponent's claim that you do not apply to your own. Not a fallacy in the claim attacked — the attack may be correct — but a reason to check the symmetry."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Negative externality"
 topic = "economics"
 statement = "A cost of a transaction borne by someone outside it, so the price is wrong and too much of the thing gets produced. The argument is over the size of the cost and who should internalise it, rarely over whether it exists."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Regulatory capture"
 topic = "institutions"
 statement = "A regulator comes to serve the industry it regulates, because that industry supplies its information, its staff and its political cover. Predicts that a rule will be written to raise rivals' costs rather than to protect anyone."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Second-best, and the nirvana fallacy"
 topic = "reasoning"
 statement = "Comparing a real policy against a perfect alternative that is not on the table. The comparison that matters is against the other thing that could actually happen, including doing nothing."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Selection effect"
 topic = "statistics"
 statement = "The sample was not drawn at random from the population the claim is about — people selected into it, or out of it, for reasons related to the outcome. Ask how someone got into the data before asking what the data says."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Revealed versus stated preference"
 topic = "reasoning"
 statement = "What people say they want and what they choose under real constraints diverge. Powerful against survey evidence and easy to over-apply: a constrained choice reveals the constraint as much as the preference."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Rights as trumps"
 topic = "ethics"
 statement = "A rights claim refuses the trade-off rather than losing it — it says the aggregate calculation does not get to run. Recognising it is what stops a utilitarian and a deontologist arguing past each other for an hour."
 
-[[debate.patterns]]
+[[investigate.patterns]]
 name = "Slippery slope, valid and invalid"
 topic = "reasoning"
 statement = "Valid when a mechanism carries you down the slope — a precedent, an incentive, an institution. Invalid when the slope is asserted. Always ask for the step, not the destination."
-
-# ---------------------------------------------------------------------------
-# The issues. Each one is a rating bucket, and its sub-areas are weeks.
-#
-# Adding an issue is appending a table. Removing one is deleting it -- ratings
-# already earned under it stay in `rating_event` untouched, they simply stop
-# being shown. Prioritising is moving it up the list (round-robin visits in
-# declaration order) or giving it more sub-areas, which is also what makes it
-# come round more often.
-#
-# `keywords` rank the day's headlines for that issue. They match case-
-# insensitively at word boundaries, so short acronyms are safe -- `ICE` finds
-# "ICE raids" and not "gas prices" or "Spokane police", which is what
-# substring matching did on the first run. A headline scores by how many
-# distinct keywords it hits. `feeds` is optional: with none, readings are
-# ranked out of the [news] pool you are already fetching.
-
-[[debate.issues]]
-slug = "immigration"
-name = "immigration"
-keywords = ["immigration", "immigrant", "border", "asylum", "deportation", "visa",
-            "H-1B", "ICE", "refugee", "green card", "naturalization"]
-subareas = [
-    "unauthorized immigrants already in the US",
-    "H-1B and high-skilled immigration",
-    "asylum and the southern border",
-    "interior enforcement and sanctuary policy",
-]
-
-[[debate.issues]]
-slug = "ai-and-tech"
-name = "AI and tech regulation"
-keywords = ["artificial intelligence", "AI", "frontier model", "chatbot", "OpenAI",
-            "Anthropic", "section 230", "content moderation", "data center", "algorithm"]
-subareas = [
-    "frontier-model safety rules and liability",
-    "AI and labor displacement",
-    "platform liability and moderation (section 230)",
-    "data-center power demand and siting",
-]
-
-[[debate.issues]]
-slug = "energy-climate"
-name = "energy and climate"
-keywords = ["climate", "emissions", "nuclear", "renewable", "solar", "wind power",
-            "drilling", "pipeline", "electric vehicle", "carbon", "permitting"]
-subareas = [
-    "nuclear buildout and permitting reform",
-    "fossil production on federal land",
-    "EV mandates and transport policy",
-    "carbon pricing versus subsidy",
-]
-
-[[debate.issues]]
-slug = "trade-industry"
-name = "trade and industrial policy"
-keywords = ["tariff", "trade deficit", "export control", "semiconductor", "chip",
-            "supply chain", "manufacturing", "WTO", "industrial policy"]
-subareas = [
-    "tariffs and the trade deficit",
-    "semiconductor manufacturing policy",
-    "export controls on advanced chips",
-]
-
-[[debate.issues]]
-slug = "health-care"
-name = "health care"
-keywords = ["health care", "healthcare", "Medicare", "Medicaid", "drug pricing",
-            "insurer", "hospital", "ACA", "Affordable Care Act", "premium"]
-subareas = [
-    "drug pricing and Medicare negotiation",
-    "ACA subsidies and the individual market",
-    "PBMs, hospital consolidation, and prices",
-]
-
-[[debate.issues]]
-slug = "foreign-defense"
-name = "foreign policy and defense"
-keywords = ["Taiwan", "China", "Ukraine", "Russia", "Israel", "Gaza", "NATO",
-            "Pentagon", "defense budget", "deterrence", "sanctions"]
-subareas = [
-    "Taiwan and deterrence",
-    "Ukraine and the terms of US support",
-    "Israel/Palestine and US leverage",
-    "the defense budget and the industrial base",
-]
-
-[[debate.issues]]
-slug = "civil-liberties"
-name = "civil liberties and institutions"
-keywords = ["First Amendment", "free speech", "surveillance", "encryption",
-            "Fourth Amendment", "voting", "election", "Supreme Court", "injunction",
-            "administrative state", "academic freedom"]
-subareas = [
-    "campus speech and academic freedom",
-    "surveillance, encryption, and the Fourth Amendment",
-    "election administration and voting rules",
-    "nationwide injunctions and the administrative state",
-]
 
 [arxiv]
 cache_seconds = 3600

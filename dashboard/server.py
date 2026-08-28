@@ -48,7 +48,6 @@ from fastapi.staticfiles import StaticFiles
 from . import (
     calclass,
     content,
-    debate,
     feeds,
     garmin,
     interests,
@@ -69,7 +68,6 @@ from .config import Settings, load_env, settings
 from .content import ContentError
 from .db import Database, Repository
 from .db.repository import ARGUMENT_AREA
-from .debate import DebateError
 from .feeds import FeedError, Feeds
 from .llm import LlmError
 from .models import api
@@ -178,7 +176,7 @@ def _seed_patterns(cfg: Settings, repo: Repository, date: dt.date) -> None:
     Failure is logged and swallowed. A starter deck is a convenience, and a
     convenience that can take the boot payload down is not one.
     """
-    if not cfg.debate.patterns:
+    if not cfg.investigate.patterns:
         return
     cards = [
         dom.TheoremCard(
@@ -188,7 +186,7 @@ def _seed_patterns(cfg: Settings, repo: Repository, date: dt.date) -> None:
             added=date,
             deck=Deck.argument,
         )
-        for pattern in cfg.debate.patterns
+        for pattern in cfg.investigate.patterns
     ]
     try:
         added = repo.seed_cards(cards)
@@ -533,21 +531,11 @@ def _register_errors(app: FastAPI) -> None:
         log.exception("%s: unusable generated content", request.url.path)
         return JSONResponse({"error": str(exc)}, status_code=502)
 
-    @app.exception_handler(DebateError)
-    def _ballot(request: Request, exc: DebateError) -> JSONResponse:
+    @app.exception_handler(investigate.InvestigateError)
+    def _ballot(request: Request, exc: investigate.InvestigateError) -> JSONResponse:
         # 400, not 502: nothing upstream failed. A ballot that will not parse is
         # a paste that went wrong, and the message says which way -- so it is
         # logged at info without a traceback, like the other client mistakes.
-        log.info("%s: unusable ballot: %s", request.url.path, exc)
-        return JSONResponse({"error": str(exc)}, status_code=400)
-
-    @app.exception_handler(investigate.InvestigateError)
-    def _investigation_ballot(
-        request: Request, exc: investigate.InvestigateError
-    ) -> JSONResponse:
-        # Same reasoning as the debate ballot above: a result that will not
-        # parse is a paste that went wrong, not an upstream failure, and the
-        # message says which way.
         log.info("%s: unusable ballot: %s", request.url.path, exc)
         return JSONResponse({"error": str(exc)}, status_code=400)
 
@@ -659,7 +647,6 @@ def _register(app: FastAPI) -> None:
         # for a set of readings that change once a night, is soon enough.
         garmin.sync_in_background(cfg, request.app.state.db, date)
         lapses = repo.reconcile_math_lapses(date)
-        lapses += repo.reconcile_debate_lapses(date, cfg.debate.grace_days)
         for event in lapses:
             log.info(
                 "lapsed %s %s (%s): unmarked, %s -> %s",
@@ -1159,175 +1146,6 @@ def _register(app: FastAPI) -> None:
             archive=state.math_archive(cfg, repo, body.date),
         )
 
-    # -- debate ------------------------------------------------------------
-    #
-    # Every route here is free. The argument runs in the Claude app on a
-    # subscription; the server assembles a prompt and parses a ballot, and
-    # nothing in this section can reach `llm`.
-
-    @app.get("/api/debate")
-    def debate_today(cfg: Cfg, repo: Repo, date: Today) -> api.DebatePanel:
-        return state.debate_panel(cfg, repo, date)
-
-    @app.get("/api/debate/history")
-    def debate_trends(cfg: Cfg, repo: Repo) -> api.DebateHistory:
-        """Per-ballot-line trends, fouls, conviction, per-issue rating lines.
-
-        Undated, like `/api/history` and for the same reason: nothing in it is
-        relative to today, so asking the browser for a day it would not use
-        would be cargo-culting the invariant rather than honouring it.
-        """
-        return state.debate_history(cfg, repo)
-
-    @app.post("/api/debate/open")
-    def debate_open(cfg: Cfg, repo: Repo, fetch: Fetch, body: api.DebateOpenRequest):
-        """Open the day's session, freezing what it is about.
-
-        Idempotent: `open_debate` claims the day or hands back the session that
-        already has it, so a reload cannot reroll the angle or re-freeze a
-        different reading list.
-
-        Three things are picked up here, and all three degrade rather than
-        fail: the overnight motion, the week's reading list, and the day's
-        headlines. A night the 3am task did not run is a less current morning
-        -- the motion falls back to the frame the opponent sharpens itself --
-        and a feed outage means no headlines, not no session.
-        """
-        cfg_debate = cfg.debate
-        week = cfg_debate.week_for(body.date)
-        if week is None:
-            raise LookupError("no debate issues are configured")
-        slug, subarea = week
-        issue = cfg_debate.issue(slug)
-        assert issue is not None  # the rotation is built from the issue list
-        angle = cfg_debate.angle_for(body.date)
-        batches = cfg.path("batches")
-
-        # The week's reading, stored on first sight and then left alone --
-        # `upsert_readings` never clears `read_on`, so a re-run of the task
-        # cannot untick what you have already read.
-        start = debate.week_start(cfg_debate, body.date)
-        if not repo.readings(start):
-            listing = debate.readings_from_batch(batches, start, slug, subarea)
-            if listing is not None:
-                n = repo.upsert_readings(debate.to_readings(listing, start))
-                log.info("stored %d reading(s) for the week of %s (%s)", n, start, slug)
-
-        readings: list[dom.Reading] = []
-        try:
-            readings = debate.pick_readings(fetch.issue_news(issue).value, issue)
-        except (FeedError, *feeds.TRANSPORT_ERRORS):
-            log.warning("no headlines for %s; opening without them", slug, exc_info=True)
-
-        if angle is None:
-            # A reading day. There is no debate to open, so the session exists
-            # only to hold the headlines and give the facts somewhere to hang.
-            # It takes the first angle's format purely so the row's NOT NULLs
-            # are satisfiable; nothing rates, so the anchor is never used.
-            angle = cfg_debate.angles[0]
-
-        motion = debate.motion_from_batch(batches, body.date, slug, subarea)
-        side = debate.side_for(cfg_debate, body.date, angle)
-        contra = side is dom.DebateSide.con
-        repo.open_debate(
-            dom.DebateSession(
-                date=body.date,
-                issue=slug,
-                subarea=subarea,
-                angle=angle.key,
-                motion=motion.motion if motion else debate.motion_for(issue, subarea),
-                motion_source="batch" if motion else "template",
-                motion_note=motion.note if motion else None,
-                motion_url=motion.source_url if motion else None,
-                format=angle.format,
-                side=side,
-                anchor=cfg_debate.anchor_for(angle, contra=contra),
-                contra=contra,
-                readings=readings,
-            )
-        )
-        return state.debate_panel(cfg, repo, body.date)
-
-    @app.post("/api/debate/read")
-    def debate_read(cfg: Cfg, repo: Repo, body: api.DebateReadRequest) -> api.DebatePanel:
-        """Tick or untick one item of the week's reading.
-
-        The date is the browser's, and it is what gets stored -- "when did I
-        read this" is a fact about a day, and the only authority on which day
-        that is is the browser.
-        """
-        repo.mark_read(body.reading_id, body.date if body.read else None)
-        return state.debate_panel(cfg, repo, body.date)
-
-    @app.post("/api/debate/fact")
-    def debate_fact(cfg: Cfg, repo: Repo, body: api.DebateFactRequest) -> api.DebatePanel:
-        session = repo.debate_session(body.date)
-        if session is None:
-            raise LookupError(f"no debate session on {body.date}")
-        repo.add_fact(
-            dom.DebateFact(
-                issue=session.issue,
-                date=body.date,
-                claim=body.claim,
-                source=body.source,
-                stance=body.stance,
-            )
-        )
-        _render_dossier(cfg, repo, session.issue)
-        return state.debate_panel(cfg, repo, body.date)
-
-    @app.post("/api/debate/fact/delete")
-    def debate_fact_delete(
-        cfg: Cfg, repo: Repo, body: api.DebateFactDeleteRequest
-    ) -> api.DebatePanel:
-        removed = repo.delete_fact(body.fact_id)
-        _render_dossier(cfg, repo, removed.issue)
-        return state.debate_panel(cfg, repo, body.date)
-
-    @app.post("/api/debate/position")
-    def debate_position(cfg: Cfg, repo: Repo, body: api.DebatePositionRequest) -> api.DebatePanel:
-        session = repo.set_debate_position(
-            body.date, body.position, body.confidence, after=body.after
-        )
-        _render_dossier(cfg, repo, session.issue)
-        return state.debate_panel(cfg, repo, body.date)
-
-    @app.post("/api/debate/brief")
-    def debate_brief(cfg: Cfg, repo: Repo, body: api.DebateBriefRequest) -> api.DebatePanel:
-        """Mark the prompt as taken, which starts the grace period.
-
-        Separate from copying the text -- the prompt is already in the panel
-        payload, so this is not fetching anything. It is the point at which the
-        day starts owing a ballot, and that is worth being a deliberate press
-        rather than a side effect of the clipboard.
-        """
-        repo.brief_debate(body.date)
-        return state.debate_panel(cfg, repo, body.date)
-
-    @app.post("/api/debate/verdict")
-    def debate_verdict(cfg: Cfg, repo: Repo, body: api.DebateVerdictRequest) -> api.DebatePanel:
-        """Parse a pasted ballot, re-score it, and let it move the rating.
-
-        Three steps, in this order and none of them the judge's: parse what was
-        pasted, void every line that claimed a point without quoting for it,
-        then score what survives out of the *full* rubric. The judge reports
-        observations; what they are worth is decided here.
-        """
-        card = debate.apply_quote_rule(debate.parse_scorecard(body.text))
-        session, event = repo.score_debate(body.date, card, debate.score_card(card))
-        log.info(
-            "debate %s (%s · %s): scored %.3f, %s -> %s%s",
-            session.date,
-            session.issue,
-            session.angle,
-            session.score,
-            event.rating_before,
-            event.rating_after,
-            f", voided {card.voided}" if card.voided else "",
-        )
-        _render_dossier(cfg, repo, session.issue)
-        return state.debate_panel(cfg, repo, body.date)
-
     # -- investigations ----------------------------------------------------
 
     @app.get("/api/investigate")
@@ -1648,7 +1466,7 @@ def _register(app: FastAPI) -> None:
 
     # -- spelling ----------------------------------------------------------
     #
-    # Free, like the debate: five words come off a curated pool, and the only
+    # Free, like the investigation: five words come off a curated pool, and the only
     # work here is choosing them and comparing strings.
 
     @app.post("/api/spelling/new")
@@ -2203,25 +2021,6 @@ def _feed_meta(got: feeds.Cached[Any]) -> api.FeedMeta:
         fetched_at=dt.datetime.fromtimestamp(got.fetched_at, dt.UTC),
         ttl_seconds=got.ttl,
         stale=got.stale,
-    )
-
-
-def _render_dossier(cfg: Settings, repo: Repository, slug: str) -> None:
-    """Re-render one issue's markdown after anything that changed it.
-
-    Called from four write paths rather than on a timer, so `rg` over
-    `dossiers/` is never behind the database. An issue that has left the config
-    is skipped: its rows stay and its rating stays, but there is no longer a
-    name or a file for it, and inventing one would put a dossier on disk that
-    nothing will ever update again.
-    """
-    issue = cfg.debate.issue(slug)
-    if issue is None:
-        return
-    debate.write_dossier(
-        cfg.path("dossiers"),
-        issue,
-        debate.render_dossier(issue, repo.facts(issue=slug), repo.debate_history(issue=slug)),
     )
 
 

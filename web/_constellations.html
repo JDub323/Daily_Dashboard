@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sharpness — the six skies</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+/* Throwaway. The six tab backdrops at full brightness, which is the one thing
+   you cannot judge from the dashboard itself — there they sit at .12 on
+   purpose. The slider puts them back where they actually live. */
+body { padding: var(--s5) var(--s5) 80px; overflow: auto; }
+body::after { display: none; }
+h1 { font-size: var(--t-head); letter-spacing: .1em; text-transform: uppercase;
+     color: var(--gold-text); margin: 0 0 var(--s2); }
+.lede { color: var(--faint); font-size: var(--t-meta); letter-spacing: .1em; margin: 0 0 var(--s5); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: var(--s5); }
+figure { margin: 0; border: 1px solid var(--border); background: var(--bg); }
+.sky { aspect-ratio: 16/9; background-size: cover; background-position: center;
+       background-repeat: no-repeat; }
+/* The content column, marked: nothing bright is meant to land inside it. */
+.col { position: relative; }
+.col::after {
+  content: ""; position: absolute; inset: 0 32.5%; pointer-events: none;
+  border-left: 1px dashed rgba(92,207,230,.34); border-right: 1px dashed rgba(92,207,230,.34);
+  opacity: 0; transition: opacity .2s;
+}
+body.cols .col::after { opacity: 1; }
+figcaption { padding: var(--s3) var(--s4); border-top: 1px solid var(--border);
+  font-size: var(--t-meta); letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
+  display: flex; justify-content: space-between; gap: var(--s3); }
+figcaption b { color: var(--gold-text); font-weight: 400; }
+.bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  display: flex; align-items: center; gap: var(--s4);
+  padding: var(--s3) var(--s5); background: var(--panel2); border-top: 1px solid var(--border);
+  font-size: var(--t-meta); letter-spacing: .1em; color: var(--faint); }
+.bar input { flex: 1; max-width: 320px; accent-color: var(--gold); }
+.bar b { color: var(--gold-text); font-weight: 400; font-variant-numeric: tabular-nums; }
+kbd { color: var(--dim); border: 1px solid var(--border); border-radius: var(--r-sm);
+      padding: 1px 6px; font: inherit; }
+</style>
+</head><body class="cols">
+
+<h1>the six skies</h1>
+<p class="lede">one constellation per tab · dashed lines mark the content column, which stays empty</p>
+
+<div class="grid" id="grid"></div>
+
+<div class="bar">
+  <span>opacity</span>
+  <input type="range" id="op" min="4" max="100" value="100">
+  <b id="opv">1.00</b>
+  <span>· the dashboard shows these at <b>0.12</b></span>
+  <span style="margin-left:auto"><kbd>c</kbd> toggle column guides</span>
+</div>
+
+<script>
+const SKIES = [
+  ["home", "the plough, pointers, the little dipper"],
+  ["math", "a sigma, and a 3-4-5"],
+  ["politics", "a balance, and libra"],
+  ["dailies", "seven days, a die, a knight's move"],
+  ["markets", "taurus, and the pleiades"],
+  ["health", "orion, and a pulse"],
+];
+const grid = document.getElementById("grid");
+for (const [name, note] of SKIES) {
+  const fig = document.createElement("figure");
+  const col = document.createElement("div");
+  col.className = "col";
+  const sky = document.createElement("div");
+  sky.className = "sky";
+  sky.style.backgroundImage = `url("/assets/bg/${name}.svg")`;
+  col.appendChild(sky);
+  const cap = document.createElement("figcaption");
+  const b = document.createElement("b");
+  b.textContent = name;
+  const s = document.createElement("span");
+  s.textContent = note;
+  cap.append(b, s);
+  fig.append(col, cap);
+  grid.appendChild(fig);
+}
+
+const op = document.getElementById("op");
+const opv = document.getElementById("opv");
+function apply() {
+  const v = op.value / 100;
+  opv.textContent = v.toFixed(2);
+  for (const el of document.querySelectorAll(".sky")) el.style.opacity = v;
+}
+op.addEventListener("input", apply);
+apply();
+addEventListener("keydown", (e) => {
+  if (e.key === "c") document.body.classList.toggle("cols");
+});
+</script>
+</body></html>

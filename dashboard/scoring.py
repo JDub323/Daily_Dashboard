@@ -38,22 +38,12 @@ the level quickly at K=96 and then settle.
 """
 
 INVESTIGATE_SEED = 1400
-"""Below `[investigate].anchor`, on the debate seed's argument.
+"""Below `[investigate].anchor`, deliberately.
 
 Starting level with the anchor would make the first month read as "about as
 good as a competent write-up", which is a claim nothing has evidence for yet.
 A hundred below means the early ballots have somewhere to move from, and K=96
 finds the real level inside a fortnight either way.
-"""
-
-DEBATE_SEED = 1400
-"""Below every format anchor, deliberately.
-
-Starting level with the anchors would make the first month's results read as
-"about as good as expected", which is a claim nobody has evidence for. Starting
-under them means an early half-decent showing gains and a bad one costs
-little -- which, with K at 96, is the same high-variance-early philosophy the
-other two tracks run on, applied to a skill with no prior at all.
 """
 
 THEOREM_K = 6
@@ -306,56 +296,6 @@ _CHESS_SCORES = {
 def chess_score(outcome: ChessOutcome) -> float:
     """Self-reported, matching the three buttons that replaced the board."""
     return _CHESS_SCORES[ChessOutcome(outcome)]
-
-
-# --- the debate ballot -----------------------------------------------------
-
-BAND_MAX = 2
-"""Points per rubric item: 0 absent, 1 partial, 2 full.
-
-Three bands rather than a bit, because the real ballots this is built from are
-banded -- the AAC&U critical-thinking rubric runs Benchmark/Milestone/Capstone
-with a descriptor for each -- and rather than ten, because a scale is only as
-objective as its band descriptions and there are not ten distinguishable ones.
-Eight items at three bands gives seventeen reachable scores, which is finer
-than the math ladder's four and coarser than anything a judge would have to
-invent a difference to fill.
-"""
-
-FOUL_PENALTY = 1
-"""Points off per hard foul. A foul is an event, not a quality: fabricating a
-citation is not "scoring low on evidence", it is a thing that either happened
-or did not, so it is subtracted rather than banded."""
-
-
-def debate_score(points: Sequence[int], fouls: int = 0, items: int | None = None) -> float:
-    """Ballot -> a score in [0, 1].
-
-    `items` is the rubric's length rather than `len(points)`, so a judge that
-    returns six of the eight lines is scored out of eight. Silence on an item
-    is a zero, which is the only reading that cannot be gamed: the alternative
-    -- scoring out of what was answered -- pays a judge for omitting the lines
-    you did badly on.
-
-    Floored at zero rather than allowed negative. `score` has a 0..1 CHECK in
-    the schema, and more importantly a floor is the honest bound: a debate full
-    of fouls is a total loss, and there is nothing below a total loss.
-    """
-    total = items if items is not None else len(points)
-    if total <= 0:
-        return 0.0
-    earned = sum(max(0, min(BAND_MAX, p)) for p in points) - FOUL_PENALTY * max(0, fouls)
-    return round(max(0.0, earned) / (BAND_MAX * total), 4)
-
-
-DEBATE_LAPSE_SCORE = 0.0
-"""What a briefed-but-never-scored session costs.
-
-Zero against the day's anchor -- the same rule, and the same sentence, as
-`LAPSE_SCORE`: ghosting a debate has to cost exactly what pasting an honest
-losing ballot costs, never less. A session still in `prep` is not covered:
-reading the articles and never taking the prompt promised nothing.
-"""
 
 
 # --- the theorem draw ------------------------------------------------------

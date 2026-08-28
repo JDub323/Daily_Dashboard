@@ -19,7 +19,6 @@ from typing import NamedTuple
 
 from . import (
     content,
-    debate,
     garmin,
     health,
     investigate,
@@ -170,192 +169,6 @@ def chess_panel(repo: Repository, today: dt.date) -> api.ChessPanel:
         score=attempt.score,
     )
 
-
-def debate_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.DebatePanel:
-    """Today's debate, in whichever of its four states it is in.
-
-    Read-only, like everything here: this reports the session, it does not open
-    one. Opening freezes the angle, the side and the reading list, and a boot
-    that opened would mean the day's debate depended on whether you happened to
-    load the dashboard -- the same rule that keeps the theorem draw out of the
-    boot payload.
-
-    The week's issue comes from config rather than from the session when there
-    is no session yet, and from the *session* once there is one. That order
-    matters: the rotation is editable, and a session already opened must go on
-    saying what it was opened as.
-    """
-    summary = track_summary(repo, Track.debate)
-    cfg_debate = cfg.debate
-    base = {
-        "summary": summary,
-        "enabled": cfg_debate.enabled,
-        "min_facts": cfg_debate.min_facts,
-        "grace_days": cfg_debate.grace_days,
-        "reading_day": cfg_debate.is_reading_day(today),
-        "rubric": [api.RubricLine(key=c.key, label=c.label, asks=c.asks) for c in debate.RUBRIC],
-        "issues": sorted(
-            (
-                api.AreaRating(area=slug, rating=rating, events=n)
-                for slug, rating, n in repo.area_ratings(cfg_debate.issue_slugs, Track.debate)
-            ),
-            key=lambda x: -x.rating,
-        ),
-    }
-    if not cfg_debate.enabled:
-        return api.DebatePanel(**base)
-
-    session = repo.debate_session(today)
-    week = cfg_debate.week_for(today)
-    slug = session.issue if session else (week[0] if week else None)
-    subarea = session.subarea if session else (week[1] if week else None)
-    issue = cfg_debate.issue(slug) if slug else None
-    angle = cfg_debate.angle_for(today)
-
-    facts = repo.facts(issue=slug, on=today) if slug else []
-    # Carried on every day of the week, not only the reading day: the prompt
-    # quotes what you marked as read, and Thursday should be able to tick the
-    # piece it did not get to on Sunday.
-    week_start = debate.week_start(cfg_debate, today)
-    reading = repo.readings(week_start)
-
-    prompt = None
-    if session is not None and angle is not None and issue is not None:
-        # Every fact on this issue, not only today's: a week's dossier is what
-        # you argue from, and re-collecting Monday's numbers on Friday to get
-        # them into the prompt would be the tool making you do its filing.
-        prompt = debate.build_prompt(
-            session, angle, issue.name, repo.facts(issue=slug), week_reading=reading
-        )
-
-    return api.DebatePanel(
-        **base,
-        issue=slug,
-        issue_name=issue.name if issue else slug,
-        subarea=subarea,
-        angle=angle.key if angle else None,
-        angle_label=angle.label if angle else None,
-        angle_brief=" ".join(angle.brief.split()) if angle else None,
-        session=session,
-        prompt=prompt,
-        facts_today=facts,
-        facts_total=len(repo.facts(issue=slug)) if slug else 0,
-        reading=reading,
-        unread_required=repo.unread_required(week_start),
-        week_start=week_start,
-        delta=repo.debate_delta(today),
-    )
-
-
-RECENT_DEBATES = 10
-"""How many debates count as "lately" for the per-line trend.
-
-Ten, matching `success_rate`'s window, and for the same reason: it is roughly
-two weeks at this cadence, which is long enough to average out one bad evening
-and short enough that fixing a line shows up inside a fortnight.
-"""
-
-DEBATE_HISTORY_LIMIT = 160
-"""Sessions read for the trends. Six months at six debates a week, which is a
-full rotation of the issue list -- the span over which "am I improving" is a
-question with an answer."""
-
-
-def debate_history(cfg: Settings, repo: Repository) -> api.DebateHistory:
-    """Per-ballot-line trends, fouls, conviction, and the per-issue lines.
-
-    This is the answer to the thing the feature was asked for. The rating says
-    whether you are getting better; these say *at what*, and they exist only
-    because the ballot is eight fixed lines rather than a number -- there is no
-    way to compute "your evidence is weak and your weighing is worse" from a
-    score out of ten.
-
-    Undated, like `history`: nothing here is relative to today.
-    """
-    sessions = repo.debate_history(limit=DEBATE_HISTORY_LIMIT)
-    scored = [s for s in sessions if s.scorecard is not None and s.score is not None]
-
-    by_key: dict[str, list[int]] = {c.key: [] for c in debate.RUBRIC}
-    fouls: dict[str, int] = {}
-    voided = 0
-    for session in scored:
-        card = session.scorecard
-        assert card is not None
-        found = {item.key: item.score for item in card.items}
-        for key in by_key:
-            # A line the judge did not answer is a zero, matching how
-            # `debate_score` totals it. Skipping it here instead would make the
-            # chart disagree with the rating it is explaining.
-            by_key[key].append(found.get(key, 0))
-        for foul in card.fouls:
-            fouls[foul.kind] = fouls.get(foul.kind, 0) + 1
-        voided += len(card.voided)
-
-    lines = [
-        api.RubricTrend(
-            key=criterion.key,
-            label=criterion.label,
-            scores=by_key[criterion.key],
-            **_windows(by_key[criterion.key]),
-        )
-        for criterion in debate.RUBRIC
-    ]
-
-    issue_lines = repo.area_rating_history(Track.debate)
-    return api.DebateHistory(
-        debates=len(scored),
-        # Weakest recent first: the question this answers is "what do I keep
-        # getting wrong", so the answer belongs at the top rather than being
-        # found by scanning. The opposite order from `area_ratings`, which
-        # answers "where am I strong" — deliberately, since a list of eight
-        # is read from the top and a list of ratings is read for its floor.
-        lines=sorted(lines, key=lambda line: line.recent),
-        fouls=sorted(
-            (api.FoulCount(kind=kind, count=n) for kind, n in fouls.items()),
-            key=lambda f: -f.count,
-        ),
-        voided=voided,
-        issues=[
-            api.AreaSeries(area=slug, points=issue_lines[slug], events=len(issue_lines[slug]))
-            for slug in cfg.debate.issue_slugs
-            if issue_lines.get(slug)
-        ],
-        conviction=[
-            api.ConvictionPoint(
-                date=s.date,
-                issue=s.issue,
-                confidence=s.confidence,
-                position=s.position or "",
-                moved=bool(s.position_after and s.position_after != s.position),
-            )
-            for s in sessions
-            if s.confidence is not None
-        ],
-        scores=[(s.date, s.score) for s in scored if s.score is not None],
-    )
-
-
-def _windows(scores: list[int]) -> dict[str, float]:
-    """Overall mean, recent mean, and the gap between recent and everything before.
-
-    `trend` is deliberately zero until there is history on both sides of the
-    window. A trend computed from two debates is noise wearing a plus sign, and
-    the honest rendering of "not enough yet" is a flat line rather than a
-    confident one.
-    """
-    if not scores:
-        return {"average": 0.0, "recent": 0.0, "trend": 0.0}
-
-    def mean(values: list[int]) -> float:
-        return round(sum(values) / len(values), 3)
-
-    recent = scores[-RECENT_DEBATES:]
-    earlier = scores[:-RECENT_DEBATES]
-    return {
-        "average": mean(scores),
-        "recent": mean(recent),
-        "trend": round(mean(recent) - mean(earlier), 3) if earlier else 0.0,
-    }
 
 
 def spelling_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.SpellingPanel:
@@ -653,11 +466,9 @@ def patterns_panel(repo: Repository, today: dt.date) -> api.PatternsPanel:
     """
     view = deck_view(repo, today, Deck.argument)
     have = {entry.card.name.casefold() for entry in view.entries}
-    latest = repo.debate_history(limit=1)
+    latest = repo.last_investigation_ballot()
     suggested = [
-        name
-        for name in (latest[0].scorecard.patterns if latest and latest[0].scorecard else [])
-        if name.casefold() not in have
+        name for name in (latest.patterns if latest else []) if name.casefold() not in have
     ]
     return api.PatternsPanel(
         today=view.today,
@@ -666,7 +477,7 @@ def patterns_panel(repo: Repository, today: dt.date) -> api.PatternsPanel:
         delta=view.delta,
         deck=view.entries,
         deck_size=view.size,
-        rating=repo.current_rating(Track.debate, ARGUMENT_AREA),
+        rating=repo.current_rating(Track.investigate, ARGUMENT_AREA),
         events=repo.recall_total(Deck.argument),
         suggested=suggested,
     )
@@ -724,7 +535,7 @@ def investigate_panel(
             api.RubricLine(key=c.key, label=c.label, asks=c.asks) for c in investigate.RUBRIC
         ],
         summary=track_summary(repo, Track.investigate),
-        delta=repo.investigation_delta(today),
+        delta=repo.rating_delta(Track.investigate, today),
         folders=sorted(
             (
                 api.AreaRating(area=name, rating=rating, events=n)
@@ -959,7 +770,6 @@ def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.Dash
         date=today,
         math=math_panel(cfg, repo, today),
         chess=chess_panel(repo, today),
-        debate=debate_panel(cfg, repo, today),
         investigate=investigate_panel(
             repo,
             today,

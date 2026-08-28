@@ -39,12 +39,6 @@ class Track(StrEnum):
     math = "math"
     chess = "chess"
 
-    debate = "debate"
-    """The daily debate, rated per issue in `area` exactly as math is rated
-    per mathematical area. Its own track rather than a third area of math
-    because `n` -- and so K -- must be counted separately: a year of math
-    results should not make the debate rating confident."""
-
     spelling = "spelling"
     """The spelling bee. Five results a day, one per word, each against that
     word's tier anchor -- so K falls faster here than anywhere else, which is
@@ -53,9 +47,9 @@ class Track(StrEnum):
 
     investigate = "investigate"
     """The politics class's daily investigation, rated per subject folder in
-    `area`. Its own track rather than a second kind of debate: researching a
-    claim and arguing one are different jobs, and one number cannot mean both
-    -- which is exactly the mistake `debate` would have been reused for."""
+    `area`. Its own track rather than a third area of math because `n` -- and
+    so K -- must be counted separately: a year of math results should not make
+    the investigation rating confident."""
 
 
 class Provenance(StrEnum):
@@ -130,47 +124,7 @@ class Deck(StrEnum):
 
     argument = "argument"
     """Argument patterns and fallacies -- principal-agent, tragedy of the
-    commons, base-rate neglect. Rated into the debate track."""
-
-
-class DebateStatus(StrEnum):
-    """Where the day's session has got to.
-
-    Four states rather than the math panel's three, because taking the prompt
-    is a separate act from doing the reading -- and it is the act that starts
-    the clock. A day spent reading and logging facts owes nothing; a day whose
-    prompt you carried off to the Claude app does.
-    """
-
-    prep = "prep"
-    """Opened. Reading, logging facts, stating a position."""
-
-    briefed = "briefed"
-    """The prompt has been taken. This is the state a lapse fires from."""
-
-    scored = "scored"
-    lapsed = "lapsed"
-    """Briefed, and the grace period ran out with no scorecard. Scored 0.0
-    against the anchor -- exactly what an unmarked math problem costs, and for
-    the same reason: silence must never be cheaper than an honest bad result."""
-
-
-class DebateSide(StrEnum):
-    pro = "pro"
-    con = "con"
-
-
-class FactStance(StrEnum):
-    """Which way a fact cuts, as *you* filed it.
-
-    Recorded because a dossier of undifferentiated facts is a junk drawer, and
-    because "how many of the facts I collected cut against my own position" is
-    a number worth being able to look at.
-    """
-
-    for_ = "for"
-    against = "against"
-    context = "context"
+    commons, base-rate neglect. Rated into the investigate track."""
 
 
 class MathStatus(StrEnum):

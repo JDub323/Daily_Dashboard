@@ -130,7 +130,7 @@ function planTasks(s) {
 
 function tasks() {
   const s = store.state;
-  // Filtered at the end: an unconfigured debate has no chip at all, rather
+  // Filtered at the end: a day with nothing drawn has no chip at all, rather
   // than a chip that can never go gold. That was about the denominator — an
   // unfinishable required task put a perfect day out of reach — and it still
   // is for the required ones. For the rest it is about the points: a total
@@ -223,22 +223,18 @@ function tasks() {
       points: 1,
     },
     {
-      // What "done" means changes with the day, and it has to: what a day is
-      // worth should not depend on which half of the week it landed in. On a
-      // reading day the debt is the week's required articles plus the facts
-      // they produce; on a debate day it is the ballot.
+      // Done means graded, not merely written. The write-up is the work, but
+      // the grade is what checks it — and it is the one step that can tell you
+      // a claim you were pleased with is false, which is the whole point of
+      // the exercise.
       //
-      // `unread_required` is 0 when the overnight task left no list, so a
-      // night it did not run degrades the reading day to the facts alone
-      // rather than making it impossible.
-      //
-      // The heaviest thing on the list, and priced like it.
-      id: "debate",
-      label: s.debate.reading_day ? "issue reading" : "debate",
-      done: s.debate.reading_day
-        ? s.debate.unread_required === 0 && s.debate.facts_today.length >= s.debate.min_facts
-        : s.debate.session?.status === "scored",
-      panel: "debate",
+      // The heaviest thing on the list, and priced like it: an afternoon of
+      // reading and a page of prose is the biggest single thing a day here
+      // asks for.
+      id: "investigate",
+      label: "investigation",
+      done: Boolean(s.investigate.day?.ballot),
+      panel: "investigate",
       points: 3,
     },
     {
@@ -277,7 +273,9 @@ function tasks() {
     { id: "log", label: "day log", done: Boolean(s.daylog), panel: "log", points: 1 },
   ].filter(
     (task) =>
-      (task.id !== "debate" || s.debate.enabled)
+      // Nothing drawn means nothing owed: a day with an empty pool, or one
+      // where the button has not been pressed, is not a day you have failed.
+      (task.id !== "investigate" || Boolean(s.investigate.today))
       && (task.id !== "patterns" || s.patterns.deck_size > 0)
       && (task.id !== "spelling" || s.spelling.enabled)
       && (task.id !== "tricks" || s.tricks.enabled),
@@ -361,7 +359,7 @@ export async function renderChips() {
       : null,
   );
 
-  for (const id of ["math", "chess", "debate"]) {
+  for (const id of ["math", "chess", "investigate"]) {
     const task = list.find((entry) => entry.id === id);
     if (task) markDone(id, task.done);
   }

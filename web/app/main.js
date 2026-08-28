@@ -24,8 +24,6 @@ import calendar from "./panels/calendar.js";
 import checkin from "./panels/checkin.js";
 import chess from "./panels/chess.js";
 import daylog from "./panels/daylog.js";
-import debate from "./panels/debate.js";
-import debateStats, { invalidateDebateHistory } from "./panels/debatestats.js";
 import deck from "./panels/deck.js";
 import games from "./panels/games.js";
 import health from "./panels/health.js";
@@ -68,12 +66,9 @@ const WATCHES = {
   // Generating a problem is the one action in the app that spends real money,
   // and the spend strip lives in this panel.
   activity: ["math"],
-  // A scored ballot changes every line on the trends panel, and it is the one
-  // panel on the tab that does not read from the boot payload.
-  "debate-stats": ["debate"],
-  // …and it names the patterns the argument deck offers to add, so that panel
-  // has to redraw when a ballot lands too.
-  patterns: ["debate"],
+  // A graded ballot names the reasoning moves the argument deck offers to
+  // add, so that panel has to redraw when one lands.
+  patterns: ["investigate"],
   // The trick panel is the one that watches its *own* slice. The work happens
   // in a modal, so the write that changes the panel's progress line comes from
   // outside it — without this the sheet says 6/8 and the card behind it still
@@ -124,10 +119,10 @@ const PANELS = [
   // math — the problem is the hero; the trick and the deck are the two things
   // that make the next one easier.
   math, tricks, theorem, deck,
-  // politics — `investigate` is the class's daily assignment and is on its way
-  // to being the tab's hero; debate and its trends come off once it can carry
-  // the tab on its own.
-  debate, investigate, patterns, debateStats, politics,
+  // politics — the class's daily assignment is the hero, the deck of reasoning
+  // moves is the thing that makes the next one sharper, and the headlines are
+  // the frame both are read against.
+  investigate, patterns, politics,
   // dailies — no hero, in pairs: the day's line about itself at the top, then
   // the two vocabulary cells, the two games cells, the two hobbies, and the
   // day's article across the bottom.
@@ -213,7 +208,6 @@ async function rollOver() {
   // to arrive. This is also the retry for a gather that failed yesterday.
   gatherDailies();
   invalidateHistory();
-  invalidateDebateHistory();
   invalidateTrickArchive();
   resetCollapse();
   rerenderAll();
@@ -335,9 +329,6 @@ async function boot() {
     // The archive caches past sets for the session, and today's row is one of
     // them the moment the set is marked.
     if (keys.includes("tricks")) invalidateTrickArchive();
-    // Dropped before the WATCHES redraw below, so the trends panel re-fetches
-    // rather than redrawing the numbers it already had.
-    if (keys.includes("debate")) invalidateDebateHistory();
     for (const [id, watched] of Object.entries(WATCHES)) {
       if (keys.some((key) => watched.includes(key))) rerender(id);
     }

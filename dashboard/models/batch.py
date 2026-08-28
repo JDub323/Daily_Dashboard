@@ -68,15 +68,11 @@ class DailyBatch(Base):
     problems: list[BatchProblem] = Field(min_length=1, max_length=5)
 
 
-# --- the debate ------------------------------------------------------------
+# --- the trick -------------------------------------------------------------
 #
-# Two more files from the same 3am task, and they are here rather than in
-# `debate.py` for the reason above: `debate` reads them when serving and
-# `batch` writes and validates them, and neither may import the other.
-#
-# Both are optimisations. The dashboard works without either -- the motion
-# falls back to the template frame and the readings to RSS ranked by keyword --
-# so a night the task did not run is a less current morning, not a broken one.
+# The other file the 3am task writes, here rather than in `tricks.py` for the
+# reason above: `tricks` reads it when serving and `batch` writes and validates
+# it, and neither may import the other.
 
 
 class BatchTrickProblem(Base):
@@ -123,82 +119,3 @@ class TrickSet(Base):
     generated_at: dt.datetime | None = None
 
 
-class DebateMotion(Base):
-    """Tonight's resolution, sharpened against the news.
-
-    Phase 1 stored a *frame* ("US policy on X") and told the opponent to find
-    the live instance itself in the first thirty seconds of the conversation.
-    That works and costs nothing, but it spends the opening of every debate on
-    research, and it means the motion is different every time you argue the
-    same sub-area -- which is exactly the comparison the per-issue rating is
-    trying to make.
-    """
-
-    date: dt.date
-    issue: str
-    subarea: str
-    angle: str
-    """All three echoed back so `--validate-debate` can check the generator
-    answered the question it was asked rather than a different day's."""
-
-    motion: str = Field(min_length=15, max_length=400)
-    """One sentence, specific enough to be false."""
-
-    note: str = Field(default="", max_length=400)
-    """What makes this live right now -- the bill number, the ruling, the
-    date. Shown under the motion, so the panel says why today is today."""
-
-    source_url: Url | None = None
-    """Where the generator confirmed it is live. Optional in the type so a
-    motion is still usable without one, required in the prompt so its absence
-    is visible -- the same arrangement `BatchProblem.verified_url` has."""
-
-    generated_at: dt.datetime | None = None
-
-
-class ReadingBook(Base):
-    """A book, offered once when a sub-area first comes round.
-
-    `lean` is left/right rather than pro/con because a book is not on a side of
-    tonight's motion -- it is on a side of the argument, and the request was
-    for the most-read book from each. `neither` exists so a standard reference
-    does not have to be filed as partisan to be listed.
-    """
-
-    title: str = Field(min_length=2, max_length=300)
-    author: str = Field(default="", max_length=200)
-    lean: str = Field(pattern=r"^(left|right|neither)$")
-    why: str = Field(default="", max_length=400)
-    url: Url | None = None
-
-
-class ReadingArticle(Base):
-    """A long-form piece that lays out how the sub-area got here.
-
-    `required` is the default because the whole point of the reading day is
-    that the week's facts come from somewhere. An optional article is a
-    suggestion; the required ones are what the day is done at.
-    """
-
-    title: str = Field(min_length=5, max_length=300)
-    url: Url
-    publisher: str = Field(default="", max_length=120)
-    published: dt.date | None = None
-    summary: str = Field(default="", max_length=1200)
-    required: bool = True
-
-
-class ReadingList(Base):
-    """One week's reading, generated the night before the reading day.
-
-    Keyed by `week_start` -- the Sunday the week opens on -- because it is a
-    property of the week rather than of the day it is read on, and because
-    that is what makes regenerating it idempotent.
-    """
-
-    week_start: dt.date
-    issue: str
-    subarea: str
-    books: list[ReadingBook] = Field(default_factory=list, max_length=6)
-    articles: list[ReadingArticle] = Field(min_length=1, max_length=6)
-    generated_at: dt.datetime | None = None

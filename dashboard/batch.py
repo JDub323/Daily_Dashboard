@@ -42,7 +42,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from . import content, debate, llm, logs, tricks
+from . import content, llm, logs, tricks
 from .config import Settings, load_settings
 from .db import Repository
 from .models.batch import DailyBatch
@@ -161,7 +161,7 @@ def batch_path(settings: Settings, date: dt.date) -> Path:
 # --- the trick of the day --------------------------------------------------
 #
 # The batch matters more here than anywhere else in this file. The math problem
-# has a curated pool behind it and the debate costs nothing to begin with; the
+# has a curated pool behind it; the
 # trick has neither, and there is no longer anything behind it at all -- no
 # paste box, no paid generation. A night this does not run is a morning with no
 # trick, which is the trade, and it is why the CLI rejects a set the serving
@@ -182,7 +182,7 @@ TRICK_SCHEMA = (
 """The batch file's shape: the set, plus `date`, `topic` and `callback`.
 
 Those three are echoed back so `--validate-trick` can check the generator
-answered the day it was asked about -- the same job `DebateMotion` does with its
+answered the day it was asked about -- so the file names the day it is for and
 issue and angle, and worth more here than there, because a trick set for the
 wrong week is not visibly wrong at 8am.
 """
@@ -196,7 +196,7 @@ def trick_context(settings: Settings, repo: Repository | None, date: dt.date) ->
     to precede the generation. `content.next_trick` resolves it back by name on
     import, so the set and the card it reaches back to cannot disagree.
 
-    `repo` is optional and degrades the way `debate_context` does: without it
+    `repo` is optional and degrades gracefully: without it
     there is no do-not-repeat list and no callback, so the night produces a
     trick that might duplicate one you have had -- caught on import by the
     UNIQUE index, at the cost of the morning.
@@ -294,194 +294,6 @@ def _report_trick(settings: Settings, path: Path, date: dt.date) -> int:
     for problem in parsed.problems:
         print(f"  {problem.band:>10}  {problem.prompt[:70]}  ->  {problem.answer[:24]}")
     return 0
-
-
-# --- the debate ------------------------------------------------------------
-#
-# Two jobs on one context payload, and how many are due tonight depends on the
-# calendar: every night has a motion, and the night before the reading day also
-# has next week's reading list. Reported as two nullable keys rather than as
-# two subcommands, for the reason the whole CLI exists: the scheduled task's
-# prompt is static, so anything that depends on the date has to come back from
-# here rather than being written into the prompt.
-
-
-def debate_context(settings: Settings, repo: Repository | None, date: dt.date) -> dict[str, Any]:
-    """What the generator needs for the debate, as one JSON object.
-
-    `repo` is optional and only supplies the dossier summary -- what has
-    already been collected on this issue, so the motion does not land on
-    ground already covered. Everything load-bearing is config, so a database
-    outage degrades this rather than stopping it.
-    """
-    cfg = settings.debate
-    if not cfg.enabled:
-        return {"date": date.isoformat(), "enabled": False}
-
-    week = cfg.week_for(date)
-    assert week is not None  # enabled implies a rotation
-    slug, subarea = week
-    issue = cfg.issue(slug)
-    assert issue is not None
-    angle = cfg.angle_for(date)
-
-    directory = settings.path("batches")
-    motion: dict[str, Any] | None = None
-    if angle is not None:
-        motion = {
-            "output_path": str(debate.motion_path(directory, date)),
-            "already_generated": debate.motion_path(directory, date).exists(),
-            "angle": angle.key,
-            "angle_label": angle.label,
-            # The brief is what makes one day's motion different from the
-            # next's on the same sub-area, so the generator gets it verbatim
-            # rather than being asked to work out what "the values crux" means.
-            "angle_brief": " ".join(angle.brief.split()),
-            "format": angle.format,
-        }
-
-    # The reading list is generated the night *before* the reading day, so it
-    # is on screen the morning the week opens rather than a day late.
-    tomorrow = date + dt.timedelta(days=1)
-    reading: dict[str, Any] | None = None
-    if cfg.is_reading_day(tomorrow):
-        next_week = cfg.week_for(tomorrow)
-        assert next_week is not None
-        next_slug, next_subarea = next_week
-        next_issue = cfg.issue(next_slug)
-        assert next_issue is not None
-        path = debate.reading_path(directory, tomorrow)
-        reading = {
-            "output_path": str(path),
-            "already_generated": path.exists(),
-            "week_start": tomorrow.isoformat(),
-            "issue": next_slug,
-            "issue_name": next_issue.name,
-            "subarea": next_subarea,
-            # Books only the first time a sub-area comes round. Over a
-            # 26-week cycle the alternative is 100-odd recommendations, which
-            # is the part of this most likely to go unread.
-            "books_wanted": repo is None or not repo.readings_exist(next_slug, next_subarea),
-        }
-
-    return {
-        "date": date.isoformat(),
-        "weekday": date.strftime("%A"),
-        "enabled": True,
-        "issue": slug,
-        "issue_name": issue.name,
-        "subarea": subarea,
-        "reading_day": cfg.is_reading_day(date),
-        "motion": motion,
-        "reading_list": reading,
-        "dossier": _dossier_summary(repo, slug),
-    }
-
-
-def _dossier_summary(repo: Repository | None, slug: str) -> dict[str, Any]:
-    """A thumbnail of what is already on file for this issue.
-
-    Sent so tonight's motion can avoid ground already argued, and capped hard:
-    this is a prompt payload, and a dossier six months into a cycle has
-    hundreds of rows.
-    """
-    if repo is None:
-        return {"facts": 0, "recent_claims": [], "past_motions": []}
-    facts = repo.facts(issue=slug)
-    sessions = repo.debate_history(issue=slug, limit=12)
-    return {
-        "facts": len(facts),
-        "recent_claims": [f.claim for f in facts[-10:]],
-        "past_motions": [s.motion for s in sessions if s.motion_source == "batch"][-8:],
-    }
-
-
-def validate_debate(settings: Settings, raw: str) -> tuple[Any | None, list[str]]:
-    """Parse and check a generated motion *or* reading list.
-
-    One function for both shapes, keyed off which fields are present, because
-    the scheduled task writes whichever files were due and should not have to
-    remember which validator each one wants.
-    """
-    from .models.batch import DebateMotion, ReadingList
-
-    try:
-        parsed = llm.extract_json(raw)
-    except json.JSONDecodeError as e:
-        return None, [f"not JSON: {e}"]
-    if not isinstance(parsed, dict):
-        return None, ["expected a JSON object"]
-
-    cfg = settings.debate
-    if "articles" in parsed or "week_start" in parsed:
-        return _validate_reading(cfg, parsed, ReadingList)
-    return _validate_motion(cfg, parsed, DebateMotion)
-
-
-def _validate_motion(cfg: Any, parsed: dict[str, Any], model: Any) -> tuple[Any | None, list[str]]:
-    try:
-        motion = model(**parsed)
-    except Exception as e:
-        return None, [f"does not match the motion schema: {e}"]
-
-    errors: list[str] = []
-    week = cfg.week_for(motion.date)
-    if week is None:
-        errors.append("the debate rotation is empty; nothing to check the motion against")
-    else:
-        slug, subarea = week
-        if motion.issue != slug:
-            errors.append(f"issue {motion.issue!r}: {motion.date} is a {slug!r} week")
-        if motion.subarea != subarea:
-            errors.append(f"subarea {motion.subarea!r}: that week is {subarea!r}")
-    angle = cfg.angle_for(motion.date)
-    if angle is None:
-        errors.append(f"{motion.date} is a reading day — it has no debate and needs no motion")
-    elif motion.angle != angle.key:
-        errors.append(f"angle {motion.angle!r}: {motion.date} is the {angle.key!r} angle")
-    if not motion.source_url:
-        errors.append("no source_url — was the motion actually checked against anything?")
-    # The one substantive check on the text: a resolution that is not a
-    # sentence is a frame, and the frame is what this exists to replace.
-    if not motion.motion.rstrip().endswith((".", "?", "!")):
-        errors.append("the motion is not a sentence; it should be specific enough to be false")
-    return motion, errors
-
-
-def _validate_reading(cfg: Any, parsed: dict[str, Any], model: Any) -> tuple[Any | None, list[str]]:
-    try:
-        listing = model(**parsed)
-    except Exception as e:
-        return None, [f"does not match the reading-list schema: {e}"]
-
-    errors: list[str] = []
-    if not cfg.is_reading_day(listing.week_start):
-        errors.append(
-            f"week_start {listing.week_start} is a "
-            f"{listing.week_start:%A}, not the configured reading day ({cfg.reading_day})"
-        )
-    week = cfg.week_for(listing.week_start)
-    if week is not None:
-        slug, subarea = week
-        if listing.issue != slug:
-            errors.append(f"issue {listing.issue!r}: that week is {slug!r}")
-        if listing.subarea != subarea:
-            errors.append(f"subarea {listing.subarea!r}: that week is {subarea!r}")
-
-    if not any(a.required for a in listing.articles):
-        errors.append("no required articles — the reading day would be done before it started")
-    urls = [str(a.url) for a in listing.articles]
-    if len(set(urls)) != len(urls):
-        errors.append("the same article is listed twice")
-    titles = [b.title for b in listing.books]
-    if len(set(titles)) != len(titles):
-        errors.append("the same book is listed twice")
-    leans = {b.lean for b in listing.books}
-    if listing.books and not {"left", "right"} <= leans:
-        # The whole request was a book from each side. One side's shelf twice
-        # is a reading list that confirms whatever you already thought.
-        errors.append(f"books are all {sorted(leans)} — one from each side was the point")
-    return listing, errors
 
 
 @contextmanager
@@ -587,53 +399,14 @@ def validate(settings: Settings, raw: str) -> tuple[DailyBatch | None, list[str]
 # --- cli -------------------------------------------------------------------
 
 
-def _report_debate(settings: Settings, path: Path) -> int:
-    """`--validate-debate`, printed. Same contract as the math report below:
-    non-zero and a list of reasons, or a one-line summary of what landed."""
-    if not path.exists():
-        print(f"no such file: {path}", file=sys.stderr)
-        return 2
-
-    parsed, errors = validate_debate(settings, path.read_text(encoding="utf-8"))
-    if parsed is None or errors:
-        print(f"REJECTED {path}", file=sys.stderr)
-        for e in errors:
-            print(f"  - {e}", file=sys.stderr)
-        return 1
-
-    if hasattr(parsed, "articles"):
-        required = sum(1 for a in parsed.articles if a.required)
-        print(
-            f"OK {path}: week of {parsed.week_start} — {parsed.issue}/{parsed.subarea}, "
-            f"{required} required article(s), {len(parsed.articles) - required} optional, "
-            f"{len(parsed.books)} book(s)"
-        )
-        for article in parsed.articles:
-            print(f"  {'required' if article.required else 'optional':>8}  {article.title}")
-        for book in parsed.books:
-            print(f"  {book.lean:>8}  {book.title} — {book.author}")
-    else:
-        print(f"OK {path}: {parsed.date} ({parsed.angle}) — {parsed.motion}")
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="batch.sh",
-        description="Overnight hand-off: the math ladder, the trick of the day, "
-        "and the debate's motion and reading list. See dashboard/batch.py.",
+        description="Overnight hand-off: the math ladder and the trick of the day. "
+        "See dashboard/batch.py.",
     )
     ap.add_argument("--context", action="store_true", help="print what the generator needs")
     ap.add_argument("--validate", metavar="FILE", type=Path, help="check a generated batch")
-    ap.add_argument(
-        "--debate-context", action="store_true", help="print what tonight's debate jobs need"
-    )
-    ap.add_argument(
-        "--validate-debate",
-        metavar="FILE",
-        type=Path,
-        help="check a generated motion or reading list",
-    )
     ap.add_argument(
         "--trick-context", action="store_true", help="print what tonight's trick set needs"
     )
@@ -646,15 +419,13 @@ def main(argv: list[str] | None = None) -> int:
     wanted = [
         args.context,
         args.validate,
-        args.debate_context,
-        args.validate_debate,
         args.trick_context,
         args.validate_trick,
     ]
     if not any(wanted):
         ap.error(
-            "one of --context, --validate, --debate-context, --validate-debate, "
-            "--trick-context or --validate-trick is required"
+            "one of --context, --validate, --trick-context or --validate-trick "
+            "is required"
         )
 
     settings = load_settings()
@@ -676,21 +447,6 @@ def main(argv: list[str] | None = None) -> int:
             log.exception("could not read %s", settings.path("db"))
             print(json.dumps(context_without_db(settings, date, str(e)), indent=2))
             return 0
-        return 0
-
-    if args.debate_context:
-        try:
-            with snapshot(settings.path("db")) as repo:
-                payload = debate_context(settings, repo, date)
-        except (OSError, sqlite3.Error) as e:
-            # Degraded the same way `--context` is, and less badly: the issue,
-            # sub-area and angle are all config, so only the dossier thumbnail
-            # is lost. A motion written without knowing what has already been
-            # argued is a slightly repetitive motion, not a broken one.
-            log.exception("could not read %s", settings.path("db"))
-            payload = debate_context(settings, None, date)
-            payload["degraded"] = f"could not read the database ({e}); dossier unavailable"
-        print(json.dumps(payload, indent=2))
         return 0
 
     if args.trick_context:
@@ -715,9 +471,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.validate_trick:
         return _report_trick(settings, args.validate_trick, date)
-
-    if args.validate_debate:
-        return _report_debate(settings, args.validate_debate)
 
     path: Path = args.validate
     if not path.exists():

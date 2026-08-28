@@ -111,7 +111,7 @@ def test_never_seen_cards_drain_in_the_order_added(settings, repo):
 # --- rating -----------------------------------------------------------------
 
 
-def test_an_argument_recall_rates_on_the_debate_track(repo):
+def test_an_argument_recall_rates_on_the_investigate_track(repo):
     """Not the math track. A pattern recall moving a math area rating is the
     single most damaging way the shared table could go wrong."""
     drawn = repo.add_card(card("Principal-agent problem"))
@@ -124,7 +124,7 @@ def test_an_argument_recall_rates_on_the_debate_track(repo):
         area=ARGUMENT_AREA,
         deck=Deck.argument,
     )
-    assert event.track is Track.debate
+    assert event.track is Track.investigate
     assert event.area == ARGUMENT_AREA
     assert event.provenance is Provenance.theorem
 
@@ -157,18 +157,18 @@ def test_both_halves_right_is_plus_three_and_neither_is_minus_three(repo):
         assert event.rating_after - event.rating_before == expected
 
 
-def test_the_pattern_bucket_is_not_one_of_the_issues(settings):
-    """It is read in one place. Being outside the issue list is what keeps it
-    out of the panel strip and the trends chart, both of which iterate
-    `issue_slugs`."""
-    assert ARGUMENT_AREA not in settings.debate.issue_slugs
+def test_the_pattern_bucket_is_not_one_of_the_folders(settings):
+    """It is read in one place. Being outside the folder list is what keeps it
+    out of the investigation panel's rating strip, which iterates the folders
+    that actually hold a write-up."""
+    assert ARGUMENT_AREA not in settings.investigate.folders
 
 
-def test_pattern_recalls_do_not_move_the_pooled_debate_rating(repo):
+def test_pattern_recalls_do_not_move_the_pooled_investigation_rating(repo):
     """The theorem deck's rule, for its reason: the opponent is your own
     rating, so nothing pulls a run of good recalls back, and applying that walk
     to the headline figure would corrupt what it means."""
-    before = repo.current_rating(Track.debate)
+    before = repo.current_rating(Track.investigate)
     drawn = repo.add_card(card("Selection effect"))
     repo.record_draw(TODAY, drawn.id, Deck.argument)
     repo.record_recall(
@@ -179,13 +179,13 @@ def test_pattern_recalls_do_not_move_the_pooled_debate_rating(repo):
         area=ARGUMENT_AREA,
         deck=Deck.argument,
     )
-    assert repo.current_rating(Track.debate) == before
-    assert repo.current_rating(Track.debate, ARGUMENT_AREA) == before + 3
+    assert repo.current_rating(Track.investigate) == before
+    assert repo.current_rating(Track.investigate, ARGUMENT_AREA) == before + 3
 
 
-def test_a_recall_does_not_make_the_debate_rating_more_confident(repo):
+def test_a_recall_does_not_make_the_investigation_rating_more_confident(repo):
     """`theorem` is in NOT_ATTEMPTS, so it stays out of `n` — one card a day
-    would otherwise drive K to its floor and stop debates moving the rating."""
+    would otherwise drive K to its floor and stop write-ups moving the rating."""
     drawn = repo.add_card(card("Regulatory capture"))
     repo.record_draw(TODAY, drawn.id, Deck.argument)
     repo.record_recall(
@@ -196,7 +196,7 @@ def test_a_recall_does_not_make_the_debate_rating_more_confident(repo):
         area=ARGUMENT_AREA,
         deck=Deck.argument,
     )
-    assert repo.event_count(Track.debate) == 0
+    assert repo.event_count(Track.investigate) == 0
 
 
 def test_a_double_submit_is_refused(repo):
@@ -228,7 +228,7 @@ def test_grading_with_nothing_drawn_raises(repo):
 def test_the_starter_deck_seeds_once(settings, repo):
     _seed_patterns(settings, repo, TODAY)
     first = repo.deck_size(Deck.argument)
-    assert first == len(settings.debate.patterns)
+    assert first == len(settings.investigate.patterns)
 
     _seed_patterns(settings, repo, TODAY)
     assert repo.deck_size(Deck.argument) == first
@@ -239,15 +239,15 @@ def test_seeding_does_not_rewrite_a_card_you_have_been_graded_on(settings, repo)
     says you recalled — you would be shown recalling something you were never
     asked."""
     _seed_patterns(settings, repo, TODAY)
-    name = settings.debate.patterns[0].name
+    name = settings.investigate.patterns[0].name
     original = repo.card_named(name, Deck.argument)
 
     edited = settings.model_copy(
         update={
-            "debate": settings.debate.model_copy(
+            "investigate": settings.investigate.model_copy(
                 update={
                     "patterns": [
-                        settings.debate.patterns[0].model_copy(
+                        settings.investigate.patterns[0].model_copy(
                             update={"statement": "Something else entirely, at length."}
                         )
                     ]
@@ -261,7 +261,7 @@ def test_seeding_does_not_rewrite_a_card_you_have_been_graded_on(settings, repo)
 
 def test_seeding_leaves_a_retired_card_retired(settings, repo):
     _seed_patterns(settings, repo, TODAY)
-    name = settings.debate.patterns[0].name
+    name = settings.investigate.patterns[0].name
     repo.set_archived(repo.card_named(name, Deck.argument).id, True)
     _seed_patterns(settings, repo, TODAY)
     assert repo.card_named(name, Deck.argument).archived is True
@@ -282,7 +282,7 @@ def test_card_named_matches_case_insensitively(repo):
 def test_the_shipped_starter_deck_is_usable(settings):
     """A card too short to be a statement is a card that teaches nothing, and
     the deck is hand-written so nothing else checks it."""
-    patterns = settings.debate.patterns
+    patterns = settings.investigate.patterns
     assert len(patterns) >= 10
     assert all(len(p.statement) >= 60 for p in patterns)
     assert len({p.name for p in patterns}) == len(patterns)
@@ -325,32 +325,43 @@ def test_the_panel_reports_the_pattern_bucket_not_the_pooled_rating(repo):
         deck=Deck.argument,
     )
     panel = state.patterns_panel(repo, TODAY)
-    assert panel.rating == repo.current_rating(Track.debate, ARGUMENT_AREA)
+    assert panel.rating == repo.current_rating(Track.investigate, ARGUMENT_AREA)
     assert panel.events == 1
     assert panel.delta == 3
 
 
+def graded_investigation(repo, patterns: list[str], on=TODAY) -> None:
+    """Carry one topic all the way to a ballot naming `patterns`."""
+    (item,) = repo.add_investigations(["Hormuz shipping insurance rates"], on)
+    repo.draw_investigation(on)
+    repo.record_write_up(on, "# Hormuz\n\nSomething I wrote.\n")
+    repo.score_investigation(
+        on,
+        d.InvestigationBallot(
+            items=[d.RubricItem(key="sourcing", score=1)],
+            patterns=patterns,
+        ),
+        0.5,
+        1500,
+        "trade and the global economy",
+    )
+    assert repo.investigation(item.id).used_on == on
+
+
 def test_the_panel_suggests_ballot_patterns_not_already_in_the_deck(repo):
+    """The deck's one growth path, and it used to come from the debate. The
+    investigation's ballot names reasoning moves too, so nothing was lost."""
     repo.add_card(card("Motte and bailey"))
-    repo.open_debate(
-        d.DebateSession(
-            date=TODAY,
-            issue="immigration",
-            subarea="a1",
-            angle="values",
-            motion="US policy on a1",
-            format="socratic",
-            side="pro",
-            anchor=1500,
-        )
-    )
-    ballot = d.Scorecard(
-        items=[d.RubricItem(key="framing", score=1, quote="a long enough quotation")],
-        patterns=["motte and bailey", "Base-rate neglect"],
-    )
-    repo.score_debate(TODAY, ballot, 0.5)
+    graded_investigation(repo, ["motte and bailey", "Base-rate neglect"])
 
     # Already held, case-insensitively, so only the new one is offered.
+    assert state.patterns_panel(repo, TODAY).suggested == ["Base-rate neglect"]
+
+
+def test_a_suggestion_outlives_the_day_that_made_it(repo):
+    """Undated on purpose: an offer is worth making until it is taken, and
+    scoping it to today would retire it overnight."""
+    graded_investigation(repo, ["Base-rate neglect"], on=dt.date(2026, 8, 1))
     assert state.patterns_panel(repo, TODAY).suggested == ["Base-rate neglect"]
 
 
