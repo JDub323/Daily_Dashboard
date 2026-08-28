@@ -400,13 +400,39 @@ function watch(panel) {
   );
 }
 
+/**
+ * How many logged days it takes before this is a chart.
+ *
+ * Below it, it is not a sparse chart -- it is two cyan rectangles standing in
+ * an empty box with no axis under them and nothing beside them to be read
+ * against, which is close enough to a pair of stray scrollbars that that is
+ * what they were reported as. The gaps only become the interesting part once
+ * there is enough filled in for them to be gaps *in* something.
+ *
+ * The panel already draws this distinction for its verdicts, which say nothing
+ * at all until a fortnight of history will support a sentence. Same rule and
+ * the same reason: silence beats a graph of two points.
+ */
+const MIN_LOGGED_DAYS = 4;
+
 /** Daily load, as bars. The gaps are rest days and are the interesting part. */
 function loadBars(loads, { w = 300, h = 60 } = {}) {
   if (!loads?.length) return null;
   const values = loads.map(([, v]) => v);
+  if (values.filter((v) => v > 0).length < MIN_LOGGED_DAYS) return null;
   const max = Math.max(...values, 1);
   const slot = w / values.length;
   return svg("svg.load-bars", { viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none" },
+    // The baseline, first and always. Bars drawn against nothing float; drawn
+    // against a rule they sit on a week, and a rest day reads as a gap in it
+    // rather than as the absence of anything.
+    svg("line", {
+      x1: 0, y1: h - 0.5, x2: w, y2: h - 0.5,
+      stroke: "var(--border)", "stroke-width": 1,
+      // The chart is stretched horizontally to fill the card, so a plain
+      // stroke would be scaled with it and come out heavier than a 1px rule.
+      "vector-effect": "non-scaling-stroke",
+    }),
     ...values.map((v, i) =>
       svg("rect", {
         x: (i * slot + slot * 0.15).toFixed(1),
@@ -481,7 +507,10 @@ export default {
               ? el("span.value", { text: `monotony ${d.monotony.toFixed(1)}` })
               : null,
           ),
-          loadBars(panel.loads),
+          loadBars(panel.loads)
+            ?? el("div.faint.small", {
+              text: `${MIN_LOGGED_DAYS} logged days before this says anything`,
+            }),
         ),
         el("div.chart-block", null,
           el("div.chart-title", null,

@@ -1601,6 +1601,12 @@ class TodoPanel(Base):
     default_calendar: str = "Homework"
     todo_calendars: list[str] = Field(default_factory=list)
 
+    recur_weeks: int = 12
+    """How far an unbounded "every tuesday" runs. Sent so the help modal can
+    print the real horizon rather than a 12 that someone has since changed in
+    config.toml -- the one number in there that is configuration and not
+    grammar."""
+
 
 class TodoWriteRequest(Base):
     text: str = Field(min_length=1, max_length=8000)

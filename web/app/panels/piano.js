@@ -6,91 +6,16 @@
 
 import { today } from "../api.js";
 import { el, link, svg } from "../dom.js";
+// The voice lives in its own module: it is fifty lines of panel and two
+// hundred of acoustics, and the two have nothing to say to each other past
+// "play these semitones".
+import { play } from "../piano.js";
 
 let data = null;
 
 async function load() {
   data ??= await fetch("/data/piano.json").then((r) => r.json());
   return data;
-}
-
-// --- sound -----------------------------------------------------------------
-//
-// Synthesised, not sampled. A set of note samples is a few hundred KB of audio
-// files to serve, cache and keep in the repo, for a panel whose entire job is
-// to tell you which seven keys are lit — and an oscillator is exact, which
-// samples pitched by playback rate are not.
-//
-// The context is created on the first click rather than at module load: an
-// AudioContext constructed without a user gesture starts suspended in every
-// browser, and one built at import time would be permanently silent.
-
-const MIDDLE_C = 261.63;
-let ctx = null;
-
-function audio() {
-  ctx ??= new (window.AudioContext ?? window.webkitAudioContext)();
-  // Resumed every time, not once: the context is suspended again whenever the
-  // tab goes to the background, and a panel that plays until you switch away
-  // and then never again is the harder bug to notice.
-  if (ctx.state === "suspended") ctx.resume();
-  return ctx;
-}
-
-/** Semitones above middle C -> Hz. Equal temperament, so intervals above an
- *  octave (add9's 14, the 13 chord's 21) need no special case. */
-const hz = (semitones) => MIDDLE_C * 2 ** (semitones / 12);
-
-/**
- * One note, with an envelope.
- *
- * Triangle rather than sine: a sine is so pure that a stack of four is hard to
- * hear as separate notes, which defeats the point of playing a chord. The
- * 10ms attack is there to stop the click a hard gain step makes, and the decay
- * is exponential because a linear one sounds like a note being switched off.
- */
-function tone(at, semitones, duration, peak) {
-  const c = audio();
-  const osc = c.createOscillator();
-  const env = c.createGain();
-  osc.type = "triangle";
-  osc.frequency.value = hz(semitones);
-  env.gain.setValueAtTime(0.0001, at);
-  env.gain.linearRampToValueAtTime(peak, at + 0.01);
-  env.gain.exponentialRampToValueAtTime(0.0001, at + duration);
-  osc.connect(env).connect(c.destination);
-  osc.start(at);
-  osc.stop(at + duration + 0.02);
-}
-
-const STEP = 0.17;   // seconds between notes of a scale
-const ROLL = 0.035;  // between notes of a chord — a roll, not an arpeggio
-
-/**
- * Play a scale up and back down, or a chord as a rolled block.
- *
- * The scale gets its octave on top and then descends, because the octave is
- * what makes it land as a scale rather than as seven notes that stop. The
- * chord is rolled rather than struck flat for the same reason a pianist rolls
- * one: it is how you hear which notes are in it.
- *
- * Peak gain is divided across the voices so a six-note chord is not twice as
- * loud as a triad — summed oscillators clip, and clipping is what "the piano
- * button sounds bad" turns out to mean.
- */
-function play(rootIndex, intervals, kind) {
-  const c = audio();
-  const start = c.currentTime + 0.05;
-
-  if (kind === "chord") {
-    const peak = Math.min(0.22, 0.5 / intervals.length);
-    intervals.forEach((iv, i) => tone(start + i * ROLL, rootIndex + iv, 1.6, peak));
-    return;
-  }
-
-  const up = [...intervals, 12];
-  const notes = [...up, ...up.slice(0, -1).reverse()];
-  notes.forEach((iv, i) => tone(start + i * STEP, rootIndex + iv, STEP * 1.8, 0.2));
 }
 
 const KEY_W = 20;

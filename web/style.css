@@ -684,11 +684,20 @@ kbd { font: inherit; font-size: var(--t-meta); border: 1px solid var(--border); 
                  display: flex; align-items: flex-start; justify-content: center;
                  padding: 7vh var(--s4); z-index: 50; backdrop-filter: blur(2px); }
 #modal-overlay[hidden] { display: none; }   /* ID specificity must beat the display:flex above */
+/* The padding lives on the two children rather than here, and that is the
+   whole of it: #modal is the scroll container, so its own padding is *inside*
+   the scrollport. A sticky head parked at top:0 therefore stopped one --s4
+   below the top edge and spanned only the content box, leaving a lit gutter
+   above it and down both sides for the sheet to scroll through -- which read
+   as half a text box floating over the title. A head that is full-bleed and
+   carries its own padding has nothing to show through. */
 #modal { background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-md);
-         width: min(680px, 100%); max-height: 84vh; overflow-y: auto; padding: var(--s4) var(--s5); }
+         width: min(680px, 100%); max-height: 84vh; overflow-y: auto; padding: 0; }
 #modal-head { display: flex; justify-content: space-between; align-items: center;
-              border-bottom: 1px solid var(--border-soft); padding: var(--s1) 0 var(--s2); margin-bottom: var(--s3);
+              border-bottom: 1px solid var(--border-soft);
+              padding: var(--s3) var(--s5) var(--s2); margin-bottom: var(--s3);
               position: sticky; top: 0; background: var(--raised); z-index: 1; }
+#modal-body { padding: 0 var(--s5) var(--s4); }
 #modal-title { color: var(--fg); font-weight: 700; letter-spacing: .8px; }
 #modal-close { border: 1px solid var(--border); font-size: var(--t-lede); line-height: 1; padding: var(--s1) var(--s2); }
 #modal-close:hover { border-color: var(--bad); color: var(--bad); }
@@ -1105,6 +1114,30 @@ textarea.cal-input.bad:focus { outline-color: var(--bad); }
 }
 .cal-aliases-list dt { color: var(--gold-text); }
 .cal-aliases-list dd { color: var(--dim); margin: 0; }
+
+/* ---- the box's help sheet ----
+   Two shapes, because it answers two kinds of question. The grammar is a
+   lookup — a typed line beside what it does, scanned rather than read — so it
+   is a two-column grid with the line set in the mono face it will be typed
+   in. The rules underneath are prose and stack. */
+.calhelp-grammar {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--s2) var(--s3);
+  align-items: baseline;
+  margin: var(--s3) 0 var(--s4);
+}
+.calhelp-line { color: var(--gold-text); font-size: var(--t-meta); white-space: nowrap; }
+.calhelp-rules { display: flex; flex-direction: column; gap: var(--s3);
+                 border-top: 1px solid var(--border-soft); padding-top: var(--s3); }
+.calhelp-rule > .value { margin-bottom: 2px; }
+
+/* Under a narrow modal the typed line and its gloss stop fitting side by
+   side, and a wrapped `every other tue: seminar` is worse than a stacked one. */
+@media (max-width: 560px) {
+  .calhelp-grammar { grid-template-columns: 1fr; gap: var(--s1) 0; }
+  .calhelp-line { white-space: normal; }
+}
 
 button.cal-help {
   flex: 0 0 auto;

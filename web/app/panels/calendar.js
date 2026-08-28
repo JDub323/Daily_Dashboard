@@ -20,6 +20,7 @@
 import * as api from "../api.js";
 import { el, mount } from "../dom.js";
 import { feedStamp, refreshAfter } from "../freshness.js";
+import { openCalendarHelp } from "../modals/calhelp.js";
 import { rerender } from "../panel.js";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -30,7 +31,20 @@ const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
 // in, which is exactly the space the events needed.
 const DEFAULT_OPEN = 8 * 60;
 const DEFAULT_CLOSE = 21 * 60;
-const PX_PER_MIN = 0.9;
+
+// The grid's whole height is this times the drawn window, so it is the one
+// number that decides whether home fits on a screen. At 0.9 a default
+// 8am–9pm week was 700px before the legend and the box below it, which put
+// the year-so-far heatmap under the fold on every laptop. Two thirds of that
+// still leaves an hour taller than a line of text, which is the floor: below
+// it the ruler stops being readable as hours and becomes a texture.
+const PX_PER_MIN = 0.62;
+
+// The height at which an event has room for a second line. Derived from the
+// scale rather than fixed in minutes, because the question is how many pixels
+// the block has and a minutes threshold silently means something different
+// every time PX_PER_MIN moves.
+const TWO_LINE_PX = 34;
 
 // Twelve hues, none of them gold — gold means "done" everywhere else in this
 // app and has one job, so a calendar that happened to sort seventh must not
@@ -298,6 +312,16 @@ function header(panel, node, days) {
   return el("div.cal-head", null,
     el("div.cal-span", { text: `${span}, ${first.getFullYear()}` }),
     el("div.row", null,
+      // Beside the week's own controls rather than beside the box: the question
+      // it answers ("how does typing into this thing work") is asked about the
+      // panel, and the `?` down by the box already means something narrower —
+      // it is the alias table.
+      el("button.ghost", {
+        text: "?",
+        title: "how the box works — events, todos and aliases",
+        "aria-label": "how the box works",
+        onclick: openCalendarHelp,
+      }),
       el("button.ghost", { text: "‹", title: "previous week", onclick: () => go(-1) }),
       el("button.ghost", {
         text: "today",
@@ -335,7 +359,7 @@ function column(bucket, date, open, hues) {
   const today = isoOf(date) === api.today();
   const blocks = pack(bucket.timed).map((event) => {
     const width = 100 / event.of;
-    const short = event.to - event.from <= 45;
+    const short = (event.to - event.from) * PX_PER_MIN < TWO_LINE_PX;
     return el(`div.cal-event${short ? ".is-short" : ""}`, {
       style: [
         `top:${(event.from - open) * PX_PER_MIN}px`,
@@ -520,8 +544,11 @@ function quickAdd(panel, node) {
     title: "which calendar to add to — Tab cycles",
     "aria-label": "target calendar",
   });
+  // Was a second `?`, which stopped being legible the moment the header grew
+  // one of its own: two identical buttons on one card asking you to guess
+  // which is the smaller question. This one is named after its table.
   const help = el("button.ghost.cal-help", {
-    text: "?",
+    text: "aliases",
     title: "what the aliases expand to",
     "aria-label": "alias list",
   });

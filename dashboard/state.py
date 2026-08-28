@@ -868,6 +868,7 @@ def todo_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.TodoPanel
         ],
         default_calendar=cfg.todo.default_calendar,
         todo_calendars=cfg.todo.todo_calendars,
+        recur_weeks=cfg.todo.recur_weeks,
     )
 
 
