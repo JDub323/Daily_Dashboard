@@ -140,8 +140,7 @@ function pointsLine(rows, today) {
   return el("div.faint.small", {
     text: `+${week} pts this week · ${total} all time`,
     title: "points come from the optional half of the day — the games, the "
-      + "word, the ballot, the paper. The ring above counts only the four "
-      + "required ones.",
+      + "word, the ballot, the paper. The ring above counts the required half.",
   });
 }
 
@@ -267,7 +266,7 @@ export const activity = {
       el("div.row.gap", null,
         el("span.faint.small", { text: "less" }),
         ...[0, 1, 2, 3, 4].map((n) => el(`div.hm-cell.hm-${n}`)),
-        el("span.faint.small", { text: "more · full square = the required four" }),
+        el("span.faint.small", { text: "more · full square = everything required" }),
       ),
     );
 

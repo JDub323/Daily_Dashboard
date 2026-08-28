@@ -78,8 +78,12 @@ web/                  the front end — native ES modules, no build step
     nav.js      the focus ring — what h/j/k/l actually move
     capture.js  a panel borrowing the keyboard while you fill it in
     keys.js     the bindings, as data; the cheatsheet is generated from them
+    carousel.js the four logging panels taking turns in one card
+    nudges.js   what the day is still waiting on, said out loud
+    piano.js    the piano voice — inharmonic partials, hammer, two strings
     panels/     one file per panel
-    modals/     theorems, math, tricks, day logs (the archives) + trickset
+    modals/     theorems, math, tricks, day logs (the archives) + trickset,
+                and the sheet on how the calendar box reads a line
   data/         piano.json — scale/chord content, out of the logic file
   vendor/katex  see PROVENANCE.txt
 
@@ -92,11 +96,13 @@ does the whole job, and a build step would only add a thing that can break
 between you and the page.
 
 UI: six tabs, each a subject with one **hero** panel saying what the tab is for
-and supporting panels under it — home (completion heatmap, LLM spend, calendar,
-what is due, day log) · math · politics · dailies · markets · health. `dailies` is the one
-tab with no hero, deliberately: it holds the word, the bee, the two games and
-their streaks, the chess puzzle, the piano scale and the day's arXiv article,
-and on a page of equal small obligations nothing is the point. The content
+and supporting panels under it — home (calendar, what is due, completion
+heatmap, LLM spend) · health · math · politics · dailies · markets. Health sits
+at 2 because it is the one section answered more than once a day. `dailies` is
+the one tab with no hero, deliberately: it holds the day log, the word, the
+bee, the two games and their streaks, the chess puzzle, the piano scale and the
+day's arXiv article, and on a page of equal small obligations nothing is the
+point. The content
 column is capped at 1040px and centred, so the margins stay empty on a wide
 screen.
 
@@ -104,7 +110,10 @@ Keyboard-first, and the mouse still works. `Tab`/`Shift-Tab` cycle sections,
 `1`–`6` jump to one, `h`/`j`/`k`/`l` move a focus ring between panels — and,
 after `Enter` descends into a panel, between the links and controls inside it.
 `Enter` opens the focused thing, `Esc` backs out a level, `gg`/`G` go to the
-first/last panel, `n` opens the next unfinished task, `?` lists the lot. The
+first/last panel, `n` opens the next unfinished task, `?` lists the lot. `f`
+letters every link in the panel and then opens the one you name — and carries
+four letters of its own, `c`/`l`/`m`/`p`, which reach the check-in, the session
+log, the meals and the in-and-out from any section. The
 bindings are data in `keys.js`; the cheatsheet is generated from the same list
 that dispatches them.
 
@@ -119,23 +128,57 @@ the minutes box, `Enter` goes to the note and `Enter` there logs it. While a
 capture is up the digits belong to the panel; `Esc` — or any key the panel does
 not use — gives them back to the tabs.
 
-Two logs are quicker still, because they are answered four to eight times a day
-and a log that costs fifteen seconds is a log kept for nine days. **`m` logs a
-meal and `b` logs a bathroom visit, from any tab** — one press switches
-section, lands on the panel and starts its ladder, and every question after
-that is one key:
+**A key the focused panel would have taken after an `Enter` takes it without
+one.** `b` on the session log starts it *on boxing*; `s` on the meal log starts
+it *on small*. Keys that take you somewhere else — `hjkl`, the section digits —
+are never claimed this way, which is why the check-in's `1`–`5` still needs its
+Enter first. A finished log lets go of the keyboard on its own, so the `Esc`
+that used to follow every entry is one the entry no longer needs.
+
+The meal log is quicker still, because it is answered three times a day and a
+log that costs fifteen seconds is a log kept for nine days. **`m` logs a meal
+from any tab** — one press switches section, lands on the panel and starts its
+ladder, and every question after that is one key:
 
 ```
 m l 4          a large, fairly unprocessed meal, now
-b s 2 m        a soft stool, medium, now
-b u 4 l        dark urine, large volume, now
 m - - m 3      the lunch you forgot to log, an hour and a bit ago
+f p  s 2 m     a soft stool, medium, now
+f p  u 4 l     dark urine, large volume, now
 ```
+
+There used to be a global `b` for the in-and-out log, and it is gone: `b` is
+also the first letter of boxing, so on the session card it was genuinely
+ambiguous which of the two you meant — and that ambiguity was the thing
+standing in the way of the one-key rule above.
 
 Each entry carries the hour it happened, rounded down, starting at now; `-` and
 `+` walk it. Both panels are built from a list of steps in `quicklog.js` — the
 bathroom one branches on its first answer (a stool is asked for solidity, urine
 for colour) and nothing else about them differs.
+
+**The four logging panels take turns.** Under the training hero the health tab
+is two halves: the plan on the left, which is what you read, and on the right
+one card that cycles through the check-in, the session log, the meals and the
+in-and-out every five seconds — the shape of the Windows news strip, and for
+its reason. Hovering pauses it, selecting it with the focus ring holds it, and
+a ladder running on it freezes it outright, so nothing rotates through a
+half-typed meal. The arrows turn it by hand once the ring is on it, and
+`f c`/`f l`/`f m`/`f p` stop it on one from anywhere. Nothing is rebuilt on the
+turn — only `hidden` moves — because these panels hold captures, half-typed
+inputs and a cursor into a ladder, and tearing them down would drop all three
+every five seconds.
+
+**Nudges** (`nudges.js`) are the one thing here that arrives rather than
+waiting to be looked at: the morning check-in still not done at eleven, a meal
+not logged by lunchtime, the required half of the day still open at eight in
+the evening, what is due today and what is overdue. Each has a clock on it and
+a repeat interval measured in hours, because a notification you learn to
+dismiss is worse than none; each is computed from the same `chipTasks()` that
+defines a day, so the two cannot disagree about whether the maths is finished;
+and each is a door — clicking one crosses to the section, stops the carousel on
+the right card and lands the ring there. Cooldowns live in `localStorage` keyed
+by the day, so a reload does not start the morning over.
 
 ## Key mechanics
 
@@ -150,7 +193,7 @@ for colour) and nothing else about them differs.
 - **The day's cells gather themselves.** The word, the bee, the theorem card, the chess puzzle and the trick set are fetched at boot and again on rollover — `daily.js` — rather than each waiting behind a button whose only question was "yes, today's one, please". `needed` in that table is the guard that makes a second gather safe: `/api/chess/new` upserts the day's attempt, so an unguarded refetch would swap a half-finished puzzle for another one. The buttons survive as the fallback for a gather that failed, built from the same table so the two paths cannot diverge. A day you never open the page still draws nothing — the deck does not age and no word is paid for.
 - **Feeds** (markets/calendar/news/paper) are cached server-side and serve stale data when the *source* is unreachable. A bug in our own parsing propagates instead — a stale panel and a broken parser used to look identical. The fallback now *says so*: every feed response carries `fetched_at`, `ttl_seconds` and `stale`, so the panel prints `as of 09:14` and turns it red when the source stopped answering. A stale panel and a live one used to look identical too.
 - **Live panels** (markets/calendar/news) re-render themselves, scheduling the next fetch from the server's own `cache_seconds` — so the interval lives in `config.toml` alone, and a panel mounted late in a TTL window refreshes sooner rather than a full window later. Polling stops while the tab is hidden and resumes on the way back.
-- **The day has two layers.** *Required* is the math tab minus the deck — the problem, the trick, the theorem recall — plus the morning check-in. Those four are the ring, `perfect ✦`, and the only thing the streak is counted off; a floor you can hold every day is worth more than a ceiling you reach twice a month. Everything else — chess, the word, the bee, the ballot or the issue reading, the argument pattern, the paper, Wordle, Pokedoku, the day log — is *optional* and worth **points** instead, 1–3 each by minutes-and-attention. The statusline reads `4/4 perfect ✦ · +6 of 14 pts`, and the total is stored in `day_completion.bonus` rather than recomputed, because a month from now the weights may have changed and what a given day earned would be unrecoverable. `n` still walks the required four first and only then starts offering points.
+- **The day has two layers.** *Required* is the math tab minus the deck — the problem, the trick, the theorem recall — plus the morning check-in and three logged meals. Those five are the ring, `perfect ✦`, and the only thing the streak is counted off; a floor you can hold every day is worth more than a ceiling you reach twice a month. Everything else — chess, the word, the bee, the ballot or the issue reading, the argument pattern, the paper, Wordle, Pokedoku, the day log — is *optional* and worth **points** instead, 1–3 each by minutes-and-attention. The statusline reads `5/5 perfect ✦ · +6 of 14 pts`, and the total is stored in `day_completion.bonus` rather than recomputed, because a month from now the weights may have changed and what a given day earned would be unrecoverable. `n` still walks the required ones first and only then starts offering points. Three meals earns its place in the required layer by being the one item there that is a *report* rather than a task — he eats three times a day whatever the dashboard says, so a day with two rows in it is a day with a row missing, and estimated intake against measured expenditure is not an honest comparison on a series with holes in it.
 - **The health tab answers three questions and then shuts up**: am I recovering, am I training hard enough, which way is my weight going. Load is session-RPE (`rpe × minutes`) rather than anything heart-rate derived, because wrist HR under wraps and a glove is the least trustworthy number the watch produces. Every derived figure returns `None` until it has the history to mean something, and `None` renders as *nothing* — not a dash, not a zero, not "collecting data" — so a quiet tab in week one is the correct tab. The in-and-out logs follow the same rule one step further: each of them first asks whether the log was being *kept*, because a day with no stool row means you forgot, and a panel that cannot tell that from constipation is a panel that warns you about your Sundays.
 - **Food is buckets, and says so.** A meal is `small`/`medium`/`large` plus how processed it was, 1–5. Self-reported calorie counts are out by about a quarter in the direction that flatters you; three buckets is the same guess with its error bars showing. `health.MEAL_KCAL` is the one place they become numbers again, and the estimate is only ever printed *as a clause on the measured weight trend* — when the two disagree by more than a pound a week the panel says the estimate is wrong, because the scale is a measurement and this is arithmetic over three words.
 - **The Garmin sync is optional, best-effort, and never blocking.** `pip install -e '.[garmin]'`, then `$PY -m dashboard.garmin login` once to mint a token store (that command is the only thing here that ever sees the password; the server logs in from tokens). After that, opening the dashboard kicks a background sync of sleep, HRV, resting HR, Body Battery, calories out and hydration — there is no 3am job, because the machine is asleep at 3am. **A hand entry is never overwritten by a sync**, enforced in the `WHERE` of one `UPSERT` in `Repository.log_health`, and that single rule is what makes correcting a bad reading worth doing at all. Activities are deliberately *not* imported: load is `rpe × minutes` and an RPE nobody answered is half a number. Every failure — missing library, stale token, an endpoint that changed shape overnight — degrades to a metric arriving absent, so the hero prints when the last sync worked and what went wrong if it did not.

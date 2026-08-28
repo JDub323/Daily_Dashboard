@@ -25,11 +25,11 @@
 // So the day is layered now:
 //
 //   required   the math tab minus the deck — the problem, the trick, the
-//              theorem — plus the morning check-in. Four things. This is the
-//              ring, this is what `perfect ✦` means, and this is the only thing
-//              the streak is counted off. Small on purpose: a floor you can
-//              hold every day is worth more than a ceiling you reach twice a
-//              month.
+//              theorem — plus the morning check-in and three logged meals.
+//              Five things. This is the ring, this is what `perfect ✦` means,
+//              and this is the only thing the streak is counted off. Small on
+//              purpose: a floor you can hold every day is worth more than a
+//              ceiling you reach twice a month.
 //
 //   optional   everything else, worth `points`. Still tracked, still turns its
 //              panel gold, still walked by `n` once the core is clear — what it
@@ -38,14 +38,17 @@
 //              `day_completion.bonus`, so a heavy day is still legible a month
 //              later rather than evaporating at midnight.
 //
-// Why those four. The three math cells are the only ones on the list that
+// Why those five. The three math cells are the only ones on the list that
 // compound — the problem moves an elo, and the trick and the theorem are the
 // deck that makes the next problem cheaper — so doing them on the days you do
 // not feel like it is the whole point of the app. The check-in is here for the
 // opposite reason: it is thirty seconds of typing whose value is *entirely* in
 // being unbroken, because everything derived from it is a windowed mean, and a
 // series answered four mornings a week produces baselines that drift for
-// reasons that have nothing to do with training.
+// reasons that have nothing to do with training. The meals are here on a
+// third argument again, spelled out at the chip: they are the one required
+// thing that is a *report* rather than a task, and a report you can always
+// file is the safest thing there is to require.
 //
 // The weights are a judgement call and meant to be edited. The rule they follow
 // is minutes-and-attention, not importance: the ballot is an evening, the chess
@@ -56,6 +59,17 @@ import { el, mount } from "./dom.js";
 import { focusPanel, markDone } from "./panel.js";
 import { weightToday } from "./panels/checkin.js";
 import { completionWrite, store } from "./store.js";
+
+/**
+ * How many meals a day the log expects.
+ *
+ * Three, and it is a claim about the eater rather than a target: he eats
+ * three times a day, so a day with two rows in it is a day with a row
+ * missing. Named here rather than left as a literal because both the chip
+ * and the nudge that chases it have to mean the same number.
+ */
+export const MEALS_A_DAY = 3;
+
 
 /**
  * What the training plan puts on the day.
@@ -118,7 +132,7 @@ function tasks() {
   // Filtered at the end: an unconfigured debate has no chip at all, rather
   // than a chip that can never go gold. That was about the denominator — an
   // unfinishable required task put a perfect day out of reach — and it still
-  // is for the four that remain. For the rest it is about the points: a total
+  // is for the required ones. For the rest it is about the points: a total
   // whose maximum you cannot reach is a score against a moving target.
   return [
     { id: "math", label: "math problem", done: s.math.status !== "open", panel: "math" },
@@ -157,6 +171,29 @@ function tasks() {
       label: "morning check-in",
       done: weightToday(s) !== null && Boolean(s.health.readiness_today),
       panel: "checkin",
+    },
+    {
+      // Three meals, and required rather than worth points.
+      //
+      // Every other candidate for the required layer had to argue that it was
+      // something you would do anyway; this one is the reverse. Three meals a
+      // day is not a habit being built, it is a fact about the day that is
+      // going to be true whether or not anybody writes it down -- so the task
+      // is not "eat three times", it is "say so", and a task you can always
+      // finish is exactly what the required layer is for. Nothing here can put
+      // a perfect day out of reach on a bad week the way a prescribed lift
+      // could.
+      //
+      // It earns the place because of what the log is *for*. The panel's whole
+      // argument is estimated intake against the watch's measured expenditure,
+      // and the honest version of that comparison is impossible on a series
+      // with holes in it: two meals logged on a four-meal day does not read as
+      // a missing row, it reads as a light day, and `implied_lb_per_week` will
+      // quietly believe it.
+      id: "meals",
+      label: `meals (${Math.min(s.health.meals_today.length, MEALS_A_DAY)}/${MEALS_A_DAY})`,
+      done: s.health.meals_today.length >= MEALS_A_DAY,
+      panel: "meals",
     },
 
     // The training plan's own tasks. Placed here rather than in the list below
@@ -252,7 +289,7 @@ export function chipTasks() {
 }
 
 /**
- * The ones a perfect day is counted from — the four with no `points`.
+ * The ones a perfect day is counted from — the ones with no `points`.
  *
  * A task is required exactly when it is worth no points, which keeps the
  * distinction in one place: there is no second `optional` flag that can fall
@@ -285,7 +322,7 @@ export function score(list) {
  * Jump to the next thing you have not done. The ritual key, `n`.
  *
  * Required first, and optional only once nothing is owed — so `n` walks the
- * four you actually owe and only then starts offering points, rather than
+ * ones you actually owe and only then starts offering points, rather than
  * parking you on Wordle while the math problem is still open.
  *
  * False when there is nothing left at all, so the caller can say so rather
@@ -303,7 +340,7 @@ export function openNextUnfinished() {
 
 export async function renderChips() {
   const list = tasks();
-  // The ring counts the required four and nothing else. Rows already in
+  // The ring counts the required ones and nothing else. Rows already in
   // `day_completion` keep the total they were written with, so the heatmap and
   // the streak stay true about the days they describe: a day recorded as 8/11
   // is still shown as 8/11, it is simply not the shape today is measured in.

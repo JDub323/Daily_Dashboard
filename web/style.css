@@ -705,6 +705,51 @@ kbd { font: inherit; font-size: var(--t-meta); border: 1px solid var(--border); 
 #modal-close { border: 1px solid var(--border); font-size: var(--t-lede); line-height: 1; padding: var(--s1) var(--s2); }
 #modal-close:hover { border-color: var(--bad); color: var(--bad); }
 
+/* ---- nudges ----
+   The stack of things the day is still waiting on. Bottom right, above the
+   statusline, and stacked upward so the newest is nearest the corner your eye
+   is already in when you look down at the ring. */
+.nudges {
+  position: fixed; right: var(--s4); bottom: var(--s7);
+  z-index: 55; display: flex; flex-direction: column-reverse; gap: var(--s2);
+  width: min(360px, calc(100vw - var(--s6)));
+  /* The stack itself is not a target — only the cards in it are — or an empty
+     shelf would swallow clicks on whatever is under the corner of the page. */
+  pointer-events: none;
+}
+.nudge {
+  pointer-events: auto;
+  display: flex; align-items: stretch;
+  background: var(--raised); border: 1px solid var(--accent-dim);
+  border-left-width: 3px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  animation: nudge-in .2s ease-out;
+}
+.nudge.out { opacity: 0; transform: translateX(12px); transition: opacity .18s, transform .18s; }
+
+/* The whole card is the door, so the text is a button rather than a div with a
+   handler: it is reachable by Tab, it announces itself, and it takes Enter. */
+.nudge-body {
+  flex: 1; text-align: left; border: none; border-radius: 0;
+  padding: var(--s2) var(--s3); font-size: var(--t-meta); line-height: 1.45;
+  color: var(--fg); cursor: pointer;
+}
+.nudge-body:hover { color: var(--accent); border: none; }
+.nudge-x {
+  border: none; border-left: 1px solid var(--border-soft); border-radius: 0;
+  padding: 0 var(--s2); color: var(--faint); font-size: var(--t-meta);
+}
+.nudge-x:hover { color: var(--bad); border: none; border-left: 1px solid var(--border-soft); }
+
+@keyframes nudge-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nudge { animation: none; }
+  .nudge.out { transition: none; }
+}
+
 /* ---- toast ---- */
 #toast { position: fixed; bottom: var(--s7); left: 50%; transform: translateX(-50%);
          background: var(--raised); border: 1px solid var(--bad); color: var(--fg);

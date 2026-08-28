@@ -17,6 +17,7 @@ import { initKeys } from "./keys.js";
 import { invalidateHistory } from "./modals/daylogs.js";
 import { invalidateTrickArchive } from "./modals/tricks.js";
 import { initNav, resetToTab } from "./nav.js";
+import { checkNudges, clearNudges, initNudges } from "./nudges.js";
 import { mountAll, refreshLive, register, rerender, rerenderAll, resetCollapse } from "./panel.js";
 import bathroom from "./panels/bathroom.js";
 import calendar from "./panels/calendar.js";
@@ -213,12 +214,19 @@ async function rollOver() {
   invalidateTrickArchive();
   resetCollapse();
   rerenderAll();
+  // The old day's reminders are about a day that is over. The store behind
+  // them keys on the date and has already rolled itself, so this is only the
+  // ones still on screen.
+  clearNudges();
   await renderChips();
   await loadTopic();
   // A new day is the one rollover worth announcing. The screen is already up
   // if this was triggered by waking from sleep, and showSplash is a no-op then.
   showSplash("day");
   paintSplash(store.state?.health?.plan ?? {});
+  // After the redraw, so the rules read the new day rather than the one that
+  // has just ended.
+  checkNudges();
 }
 
 /** Start a rollover if the day turned. True if one is now in flight. */
@@ -320,6 +328,7 @@ async function boot() {
   await renderChips();
   watchForNewDay();
   initKeys();
+  initNudges();
 
   loadTopic();
 }
