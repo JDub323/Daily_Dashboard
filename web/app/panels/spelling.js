@@ -4,7 +4,7 @@
 // to spell. This is the instrument that stops hiding it: the word is spoken,
 // the hint disambiguates the homophone, and you type it cold. Five results a
 // day on their own elo track, each against its own tier anchor — so the
-// `brutal` word is cheap to miss and the `everyday` word is not.
+// `impossible` word is cheap to miss and the `easy` word is not.
 //
 // [Not an invariant, deliberately] The words are in the payload before the
 // round is marked, unlike the math answer or the theorem statement. They have
@@ -152,7 +152,7 @@ function open(body, panel) {
     // Printed rather than left in the cheatsheet, for the reason the tab
     // digits are: a shortcut you have to look up is one you never learn.
     speakable
-      ? el("div.faint.small", { text: "shift-enter says that box's word again" })
+      ? null
       : el("div.err.small", { text: "this browser has no speech synthesis — the words cannot be spoken" }),
     ...rows,
     el("div.row.divider", null, submit, message),

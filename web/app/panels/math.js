@@ -158,7 +158,7 @@ export default {
             });
           },
         }),
-        el("div.faint", { text: `topic: ${store.config.topic} · from the overnight batch` }),
+        el("div.faint", { text: `topic: ${store.config.topic}` }),
         archiveLink(),
       );
       return;

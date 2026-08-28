@@ -118,15 +118,16 @@ const PANELS = [
   // `todo` sits directly under the week because it is the week's other half:
   // the grid says when things happen, this says what is owed and lets it be
   // ticked off. Both are filled from the same box.
-  calendar, todo, activity, daylog,
+  calendar, todo, activity,
   // math — the problem is the hero; the trick and the deck are the two things
   // that make the next one easier.
   math, tricks, theorem, deck,
   // politics
   debate, patterns, debateStats, politics,
-  // dailies — no hero, in pairs: the two vocabulary cells, the two games cells,
-  // the two hobbies, and then the day's article across the bottom.
-  word, spelling, games, metrics, chess, piano, reading,
+  // dailies — no hero, in pairs: the day's line about itself at the top, then
+  // the two vocabulary cells, the two games cells, the two hobbies, and the
+  // day's article across the bottom.
+  daylog, word, spelling, games, metrics, chess, piano, reading,
   // markets — the portfolio is the hero; the movements list is the frame it
   // is read against.
   portfolio, markets, finance,
@@ -149,6 +150,10 @@ async function loadConfig() {
   // Dated: the topic rotates weekly, and the browser decides which week it is.
   store.config = await api.get("/api/config", { date: api.today() });
   $("#hdr-date").textContent = new Date().toDateString();
+  // Empty rather than "phase: " when there is no camp configured — a header
+  // segment with nothing after the colon reads as a value that failed to load.
+  const phase = store.config.phase ?? "";
+  $("#hdr-phase").textContent = phase ? `phase: ${phase}` : "";
   $("#hdr-topic").textContent = `topic: ${store.config.topic}`;
 }
 

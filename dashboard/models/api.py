@@ -1199,6 +1199,10 @@ class DashboardState(Base):
 
 class ConfigResponse(Base):
     topic: str
+    #: The training phase, or "" when there is no camp configured. The header
+    #: prints it ahead of the topic and omits the segment entirely when empty,
+    #: so a fresh clone with no training.toml is not headed by a stray colon.
+    phase: str = ""
     tickers: list[str]
 
 

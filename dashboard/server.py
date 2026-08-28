@@ -56,6 +56,7 @@ from . import (
     spend,
     state,
     todo,
+    trainplan,
     tricks,
     webauthn,
 )
@@ -605,7 +606,15 @@ def _register(app: FastAPI) -> None:
         # Dated because the topic rotates weekly and the browser owns the
         # calendar: the topic must turn over at the user's midnight, not at
         # whatever midnight the server's timezone believes in.
-        return api.ConfigResponse(topic=cfg.math.topic_for(date), tickers=cfg.markets.tickers)
+        # The phase comes off the same cached read of training.toml the plan
+        # panel uses, so editing that file and refreshing moves both. A clone
+        # with no camp configured gets "", and the header drops the segment.
+        program = trainplan.program(cfg.path("training"))
+        return api.ConfigResponse(
+            topic=cfg.math.topic_for(date),
+            phase=program.phase if program else "",
+            tickers=cfg.markets.tickers,
+        )
 
     @app.get("/api/state")
     def dashboard_state(

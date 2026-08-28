@@ -79,9 +79,6 @@ function latexBox(rows, value, placeholder, onInput) {
   return { box, preview };
 }
 
-/** What both boxes say about notation. Once, because they say the same thing. */
-const LATEX_HINT = "LaTeX renders — $x^2$ inline, $$…$$ on its own line";
-
 /**
  * What you have typed but not submitted, kept across re-renders.
  *
@@ -186,13 +183,10 @@ function question(body, theorems) {
   return el("div", null,
     el("div.big.value", { text: card.name }),
     el("div.faint", { text: `${card.topic}${seen}` }),
-    el("div.row.spread.gap", null,
-      el("span.faint", { text: "1 · the theorem, in your own words" }),
-      el("span.faint.small", { text: LATEX_HINT }),
-    ),
+    el("div.faint.gap", { text: "the theorem" }),
     explanation.box,
     explanation.preview,
-    el("div.faint.gap", { text: "2 · somewhere you needed it" }),
+    el("div.faint.gap", { text: "the problem" }),
     application.box,
     application.preview,
     el("div.row", null, submit, message),

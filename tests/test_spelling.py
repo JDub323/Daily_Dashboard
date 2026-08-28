@@ -96,7 +96,7 @@ def test_the_draw_follows_the_ladder_and_ramps(settings):
 
 
 def test_a_word_is_never_drawn_twice_in_one_day(settings):
-    """The two `tricky` rungs must not both take the same word."""
+    """The two `medium` rungs must not both take the same word."""
     words = spelling.draw(
         spelling.load_pool(settings.path("spelling")), {}, settings.spelling, TODAY
     )
@@ -194,7 +194,7 @@ def test_the_allowance_goes_to_the_word_you_have_missed_most(settings):
 
 
 def test_two_rungs_of_a_tier_do_not_both_spend_it(settings):
-    """The real ladder has two `tricky` rungs. They make the same claim, and
+    """The real ladder has two `medium` rungs. They make the same claim, and
     only the first can win it."""
     words = pool(("alpha", "easy"), ("alef", "easy"), ("aleph", "easy"))
     history = seen(alpha=(TODAY - dt.timedelta(days=10), 2))
@@ -333,7 +333,7 @@ def test_a_hard_word_is_worth_more_than_an_easy_one(repo):
     _, easy_events = repo.finish_spelling(TODAY, ["alpha"], [True])
     easy_gain = easy_events[0].rating_after - easy_events[0].rating_before
 
-    hard = words_for(repo, ("beta", "brutal", 1750))
+    hard = words_for(repo, ("beta", "impossible", 1750))
     repo.open_spelling_round(TODAY + dt.timedelta(days=1), hard)
     _, hard_events = repo.finish_spelling(TODAY + dt.timedelta(days=1), ["beta"], [True])
     hard_gain = hard_events[0].rating_after - hard_events[0].rating_before

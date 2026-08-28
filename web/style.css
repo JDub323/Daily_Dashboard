@@ -393,6 +393,12 @@ a[data-navkey]::before {
 .row.inline { display: inline-flex; gap: var(--s1); margin: 0; }
 .row > input:not([type="number"]) { flex: 1; min-width: 120px; }
 
+/* A labelled box: the unit sits above the input, never beside it. Beside it
+   the unit wraps under the number on a narrow card and reads as a caption
+   for the next field down. */
+.field { display: flex; flex-direction: column; align-items: flex-start;
+         gap: var(--s1); margin: var(--s2) 0; }
+
 button { background: transparent; border: 1px solid var(--border); color: var(--fg);
          font: inherit; font-size: var(--t-body); padding: var(--s1) var(--s3); border-radius: var(--r-sm); cursor: pointer; }
 button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }

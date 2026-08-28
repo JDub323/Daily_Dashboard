@@ -108,17 +108,13 @@ function summaryCard(panel) {
             : `· challenge ${panel.challenge_ok ? "solved" : "missed"}`,
         }),
       )
-    : el("div.faint", { text: `${panel.problems.length} problems, and one challenge` });
+    : null;
 
   return el("div", null,
     el("div.row.spread", null,
       el("span.big.value", { text: panel.trick.name }),
       el("span.tag", { text: panel.trick.kind }),
     ),
-    el("div.faint", { text: panel.trick.topic }),
-    panel.callback_of
-      ? el("div.faint.small", { text: `one problem calls back to ${panel.callback_of}` })
-      : null,
     progress,
     el("div.row", null, openButton),
   );

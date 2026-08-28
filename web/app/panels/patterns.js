@@ -120,7 +120,7 @@ function question(body, patterns) {
   return el("div", null,
     el("div.big.value", { text: card.name }),
     el("div.faint", { text: `${card.topic}${seen}` }),
-    el("div.faint.gap", { text: "1 · the pattern, in your own words" }),
+    el("div.faint.gap", { text: "1 · the pattern" }),
     explanation,
     el("div.faint.gap", { text: "2 · where it decided an argument" }),
     application,

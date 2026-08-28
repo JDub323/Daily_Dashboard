@@ -41,6 +41,10 @@
 [program]
 name = "tournament prep"
 
+# What the current blocks are chasing. Printed in the header beside the maths
+# topic; edit it when the emphasis of the camp changes.
+phase = "Explosiveness"
+
 # Week 0. A Sunday, and checked at startup that it is one -- the sheet's grid
 # runs Sunday to Saturday and an off-by-one here would silently shift the whole
 # camp by a day.

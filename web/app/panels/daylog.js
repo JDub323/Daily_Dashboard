@@ -22,7 +22,10 @@ const ECHOES = [
 export default {
   id: "log",
   title: "day log",
-  tab: "home",
+  // Heads the dailies rather than sitting on home: it is the one cell on that
+  // page you write *about* the day rather than doing, and the day is easier to
+  // say in a line before you have worked down the list than after.
+  tab: "dailies",
   slot: "grid",
   span: 3,
 

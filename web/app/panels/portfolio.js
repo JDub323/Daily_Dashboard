@@ -313,8 +313,7 @@ export default {
       wrong,
       el("div.faint", {
         text: status.present
-          ? "Locked. Windows Hello will accept your fingerprint — or your PIN, which it " +
-            "decides, not this page."
+          ? "Locked. Windows Hello will accept your fingerprint."
           : "Locked, and there is no positions file yet — drop the export at the path in " +
             "[paths].positions and it will appear here.",
       }),

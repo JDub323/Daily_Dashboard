@@ -196,6 +196,15 @@ class Recurring(Base):
 
 class Program(Base):
     name: str = Field(min_length=1)
+    #: What this stretch of the camp is *for*, in one word -- the training
+    #: quality the blocks below are currently chasing. It rides in the header
+    #: next to the maths topic because those two are the day's two headings:
+    #: what the body is working on and what the mind is.
+    #:
+    #: Free text and deliberately not derived from the blocks. The blocks say
+    #: what to do on Tuesday; this says why, and no arrangement of tokens adds
+    #: up to a word like "explosiveness" on its own.
+    phase: str = ""
     start: dt.date
     weeks: int = Field(gt=0, le=200)
     fight: dt.date | None = None

@@ -99,9 +99,7 @@ function problemBlock(problem, label, ...under) {
     el("div.paper-num", null,
       el("span.paper-n", { text: String(label) }),
       el("span.tag", { text: problem.band }),
-      problem.callback_of
-        ? el("span.faint.small", { text: `↩ ${problem.callback_of}` })
-        : el("span.faint.small", { text: BAND_NOTE[problem.band] ?? "" }),
+      el("span.faint.small", { text: BAND_NOTE[problem.band] ?? "" }),
     ),
     el("div.paper-prompt", { text: problem.prompt }),
     ...under,

@@ -196,9 +196,9 @@ amc = 10
 words_per_day = 5
 
 # The ladder, easiest first. One entry per word, each naming a tier below.
-# Two `tricky` slots because that is where most commonly-misspelled words
+# Two `medium` slots because that is where most commonly-misspelled words
 # actually live; the ends are the stretch in each direction.
-ladder = ["everyday", "tricky", "tricky", "nasty", "brutal"]
+ladder = ["easy", "medium", "medium", "difficult", "impossible"]
 
 # How long after missing a word before it can come back. Missed words are
 # *preferred* once eligible — the point of this is to stop misspelling the
@@ -224,10 +224,10 @@ max_repeats = 1
 # tier name in spelling.json, never a number, so the scale cannot drift when
 # the pool is edited.
 [spelling.anchors]
-everyday = 1150
-tricky = 1350
-nasty = 1550
-brutal = 1750
+easy = 1150
+medium = 1350
+difficult = 1550
+impossible = 1750
 
 # ---------------------------------------------------------------------------
 # The trick of the day. One identity, shortcut or technique from the week's

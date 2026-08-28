@@ -28,7 +28,7 @@ MATH_SEED = 1500
 CHESS_SEED = 1400
 
 SPELLING_SEED = 1300
-"""Between the `everyday` and `tricky` anchors.
+"""Between the `easy` and `medium` anchors.
 
 The premise of the feature is a competent speller who has been letting
 autocorrect do it -- so starting level with the easy tier would assert the

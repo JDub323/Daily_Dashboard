@@ -30,11 +30,14 @@ import { $, el } from "./dom.js";
  */
 export const TABS = [
   { id: "home", label: "home", blurb: "everything, counted" },
+  // Health sits at 2 because it is the tab the day is answered on — the
+  // check-in in the morning, the session in the evening, and the meals in
+  // between are the only cells that are asked for more than once a day.
+  { id: "health", label: "health", blurb: "the block, and whether you're recovering from it" },
   { id: "math", label: "math", blurb: "problem of the day, and the theorem deck" },
   { id: "politics", label: "politics", blurb: "the week's issue, the prep, and the argument" },
   { id: "dailies", label: "dailies", blurb: "the word, the bee, the games, the puzzle, the paper" },
   { id: "markets", label: "markets", blurb: "quotes and the money pages" },
-  { id: "health", label: "health", blurb: "the block, and whether you're recovering from it" },
 ];
 
 const byId = new Map(TABS.map((tab) => [tab.id, tab]));

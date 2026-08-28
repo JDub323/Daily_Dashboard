@@ -31,7 +31,7 @@ const GAMES = {
   },
 };
 
-const PLACEHOLDER = "Wordle 1,496 4/6\n⬛🟨⬛⬛⬛\n⬛🟩🟨⬛⬛\n🟩🟩🟩🟩🟩\n\n…or a PokéDoku share. Either one.";
+const PLACEHOLDER = "";
 
 /**
  * Emoji tile -> the cell class that draws it.
@@ -105,7 +105,7 @@ function draw(body) {
       gameBlock("wordle", games.wordle_today),
       gameBlock("pokedoku", games.pokedoku_today),
     ),
-    el("div.faint.divider", { text: "paste your share text (it works out which game):" }),
+    el("div.faint.divider", { text: "paste your share text:" }),
     paste,
     el("div.row", null, log, message),
   );

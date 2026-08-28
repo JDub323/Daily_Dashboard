@@ -329,10 +329,17 @@ export default {
     });
 
     mount(node,
-      el("div.row", null, weight, el("span.faint", { text: "lb" })),
-      el("div.row", null,
+      // Unit above the box rather than beside it. Beside it, the two units
+      // were the first thing on the line *after* the number, so at any width
+      // narrow enough to wrap they read as captions belonging to the row
+      // below — which is the row that asks about sleep.
+      el("div.field", null,
+        el("span.faint.small", { text: "lb" }),
+        weight,
+      ),
+      el("div.field", null,
+        el("span.faint.small", { text: synced ? "h · from the watch" : "h" }),
         sleep,
-        el("span.faint", { text: synced ? "h · from the watch" : "h" }),
       ),
       el("div.divider"),
       ...rows,

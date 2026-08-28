@@ -1369,6 +1369,38 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX todo_series ON todo (series) WHERE series IS NOT NULL;
         """,
     ),
+    (
+        22,
+        """
+        -- The spelling tiers were renamed: everyday/tricky/nasty/brutal became
+        -- easy/medium/difficult/impossible. The names were always arbitrary
+        -- labels on four fixed anchors, so nothing about the scale moves --
+        -- but the old names are written into two places that outlive
+        -- config.toml, and both have to follow or the draw quietly breaks.
+        --
+        -- `spelling_seen.tier` is the one that would break it. The draw fills
+        -- each rung from `[w for w in pool if w.tier == rung]` and then reads
+        -- this table for cooldowns; a pool relabelled `easy` against a history
+        -- still saying `everyday` is not an error, it is every word looking
+        -- never-seen, which would re-ask the whole pool from the top.
+        UPDATE spelling_seen SET tier = 'easy'       WHERE tier = 'everyday';
+        UPDATE spelling_seen SET tier = 'medium'     WHERE tier = 'tricky';
+        UPDATE spelling_seen SET tier = 'difficult'  WHERE tier = 'nasty';
+        UPDATE spelling_seen SET tier = 'impossible' WHERE tier = 'brutal';
+
+        -- `spelling_round.words` is the drawn list frozen as JSON, and it is
+        -- frozen precisely so a round goes on being scored as it was drawn.
+        -- The anchor travels in that JSON beside the tier, so the rewrite here
+        -- is cosmetic -- it keeps a finished round from displaying a tier name
+        -- that no longer exists anywhere else.
+        UPDATE spelling_round SET words =
+            replace(replace(replace(replace(words,
+                '"everyday"', '"easy"'),
+                '"tricky"',   '"medium"'),
+                '"nasty"',    '"difficult"'),
+                '"brutal"',   '"impossible"');
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

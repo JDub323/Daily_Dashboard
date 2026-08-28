@@ -148,7 +148,7 @@ function drawEditor(body, word) {
   mount(body,
     wordHead(word),
     el("div.dim", { text: word.definition }),
-    el("div.faint.gap", { text: `write ${SENTENCES} semantically distinct sentences:` }),
+    el("div.faint.gap", { text: `write ${SENTENCES} unique sentences:` }),
     ...inputs,
     el("div.row", null, check, message),
   );

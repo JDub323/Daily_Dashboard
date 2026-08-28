@@ -832,8 +832,8 @@ class Repository:
         """Close the round and rate every word, atomically.
 
         One rating event *per word*, each against that word's own anchor, which
-        is what makes the ladder mean anything: missing the `brutal` word costs
-        little and getting it right pays, and the `everyday` word is the other
+        is what makes the ladder mean anything: missing the `impossible` word costs
+        little and getting it right pays, and the `easy` word is the other
         way round. A single event against a mean anchor would score a day that
         got the hard one and missed the easy one identically to its reverse.
 
