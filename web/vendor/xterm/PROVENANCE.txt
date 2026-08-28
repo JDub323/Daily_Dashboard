@@ -1,0 +1,20 @@
+@xterm/xterm 5.5.0 — https://registry.npmjs.org/@xterm/xterm/-/xterm-5.5.0.tgz
+tarball sha256 bd954fa721872170188cc5d7e83e88db3c83c9a18a4e8d24c2783d26491f59d2
+Vendored: lib/xterm.js, css/xterm.css, LICENSE.
+
+@xterm/addon-fit 0.10.0 — https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.10.0.tgz
+tarball sha256 917ac44972453d5eed52edc1e50260c76398ce48cf2290c2e60671102bba0b33
+Vendored: lib/addon-fit.js (as addon-fit.js).
+
+Both MIT, both from the xtermjs org; the one LICENSE file above covers each --
+they are byte-identical apart from the year, and a second copy of the same
+text would only invite the two to drift.
+
+The .js.map files are deliberately not vendored. They are larger than the
+code, are only read when devtools is open on minified xterm internals, and
+nothing in this app debugs into the terminal emulator.
+
+Both are UMD bundles loaded with `defer`, so they hang off the global rather
+than importing: `window.Terminal` and `window.FitAddon.FitAddon`. That matches
+how KaTeX is loaded here and, more to the point, is the only shape these
+packages ship in that does not need a bundler.

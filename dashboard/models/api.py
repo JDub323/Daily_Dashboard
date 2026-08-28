@@ -49,6 +49,7 @@ from .domain import (
     DebateReading,
     DebateSession,
     Investigation,
+    InvestigationDay,
     MathProblem,
     MealLog,
     Paper,
@@ -212,6 +213,19 @@ class InvestigateDrawRequest(DateBody):
 
 class InvestigateClearRequest(DateBody):
     investigation_id: int
+
+
+class InvestigateOpenRequest(DateBody):
+    """No body beyond the date.
+
+    Which file is opened is worked out from the day's draw. A client that could
+    name a path would be naming the argument to an editor, which is the one
+    thing this feature must never accept -- see `dashboard/term.py`.
+    """
+
+
+class InvestigateReadRequest(DateBody):
+    """Take the file in as today's submission. No body beyond the date."""
 
 
 class TheoremNewRequest(DateBody):
@@ -967,6 +981,30 @@ class InvestigatePanel(Base):
     drawn_on: dt.date | None = None
     """The date `today` was drawn for. Echoed back so the panel can tell "drawn
     this morning" from a stale payload it is about to replace."""
+
+    day: InvestigationDay | None = None
+    """The draw row, carrying the submitted snapshot if there is one."""
+
+    scrollback: int = 1000
+    """Lines the embedded terminal keeps. Carried on the panel rather than in
+    `/api/config` because this panel is its only reader, and a global config
+    field with one consumer is a field nobody can safely change."""
+
+    file_body: str = ""
+    """What is in the file right now, minus the scaffolded heading.
+
+    Read from disk on every render rather than cached. The file is deliberately
+    openable from a terminal the app knows nothing about, so a stored "written"
+    flag would go on claiming a write-up that had since been emptied.
+    """
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def written(self) -> bool:
+        """Whether there is anything to submit. The file, not the snapshot --
+        a day is written when you have typed something, not when the panel
+        last noticed."""
+        return bool(self.file_body)
 
     pool: list[Investigation] = Field(default_factory=list)
     """Everything still open, oldest first -- the order they were handed out,

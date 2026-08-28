@@ -14,8 +14,11 @@ text a human is going to read back verbatim.
 
 from __future__ import annotations
 
+import datetime as dt
 import re
+import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 
 MIN_TOPIC = 3
 MAX_TOPIC = 300
@@ -80,3 +83,114 @@ def parse_topics(text: str) -> list[ParsedTopic]:
         out.append(ParsedTopic(raw=line, topic=topic))
 
     return out
+
+
+# --- the file --------------------------------------------------------------
+#
+# One markdown file per topic, opened in a real editor. The database holds a
+# snapshot of what was submitted; the file is what you typed and stays yours.
+
+#: Everything a filename may keep. Anything else becomes a hyphen -- and the
+#: result is only ever a *component*, never a path: it cannot contain a
+#: separator, cannot be `..`, and cannot start with a dot.
+_UNSAFE = re.compile(r"[^a-z0-9]+")
+
+MAX_SLUG = 60
+
+
+def slug(topic: str) -> str:
+    """A filename for a topic.
+
+    Deliberately lossy and deliberately not unique. Collisions are resolved by
+    the caller against what is already on disk, because two topics that slug
+    the same are two topics that a human would also confuse, and the answer to
+    that is a visible `-2` rather than a hash nobody can read.
+
+    Accents are folded rather than stripped, so "Côte d'Ivoire sanctions"
+    becomes `cote-d-ivoire-sanctions` and not `c-te-d-ivoire-sanctions`.
+    """
+    folded = unicodedata.normalize("NFKD", topic).encode("ascii", "ignore").decode()
+    cleaned = _UNSAFE.sub("-", folded.lower()).strip("-")
+    if len(cleaned) > MAX_SLUG:
+        # Cut at a hyphen so the name ends on a whole word rather than mid-one.
+        cleaned = cleaned[:MAX_SLUG].rsplit("-", 1)[0] or cleaned[:MAX_SLUG]
+    return cleaned or "untitled"
+
+
+def scaffold(topic: str, drawn_on: dt.date) -> str:
+    """What a new file starts as: the topic, and nothing else.
+
+    Two lines rather than a template with headings to fill in. A scaffold with
+    prompts in it is a scaffold you end up editing around, and `body()` below
+    would then have to know which parts were yours.
+    """
+    return f"# {topic}\n\n<!-- drawn {drawn_on.isoformat()} -->\n\n"
+
+
+#: The scaffold, as something to recognise: an H1, and the drawn-on comment.
+_SCAFFOLD = re.compile(r"\A\s*#[^\n]*\n|\A\s*<!--[^>]*-->\n", re.MULTILINE)
+
+
+def body(text: str) -> str:
+    """What you actually wrote -- the file minus the scaffold.
+
+    Used for one decision only: whether the day has been written up. A file
+    holding nothing but the heading the server put there is not a write-up,
+    and a panel that called it one would let an empty buffer take the prompt.
+
+    The scaffold is *stripped for this test only*. What gets submitted, quoted
+    and graded is the whole file, heading included -- it is a markdown document
+    and its title is part of it.
+    """
+    stripped = text
+    while True:
+        cut = _SCAFFOLD.sub("", stripped, count=1)
+        if cut == stripped:
+            return stripped.strip()
+        stripped = cut
+
+
+def file_for(root: Path, topic: str, existing: str | None) -> Path:
+    """The file for a topic, resolved under `root`.
+
+    `existing` is the path already recorded for this topic, and it wins
+    outright -- renaming a file out from under a topic that has been written up
+    would orphan the work. Only a topic that has never had one gets a name
+    chosen here, and only then does the collision suffix apply.
+    """
+    if existing:
+        return root / existing
+
+    stem = slug(topic)
+    candidate = root / f"{stem}.md"
+    n = 2
+    while candidate.exists():
+        candidate = root / f"{stem}-{n}.md"
+        n += 1
+    return candidate
+
+
+def ensure_file(path: Path, topic: str, drawn_on: dt.date) -> Path:
+    """Create the file if it is missing. Never touch one that exists.
+
+    [Invariant] The server does not write to a file it did not create. These
+    hold hours of typing and there is no undo outside the editor, so "create if
+    absent" is the entire write path -- there is no branch here that opens an
+    existing file for writing, by design rather than by omission.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(scaffold(topic, drawn_on), encoding="utf-8")
+    return path
+
+
+def read_file(path: Path) -> str:
+    """The file's text, or empty if it is not there.
+
+    A missing file is not an error: it means the topic was drawn and the editor
+    never opened, which is exactly the state the panel is drawing.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""

@@ -1909,3 +1909,31 @@ input:focus, textarea:focus {
    here as a note rather than a rule — nothing above targets it, and nothing
    should. The scanline is the real question for this panel, and the answer is
    that --crt-scan is a token at the top of this file for exactly that reason. */
+
+/* --- the investigation editor ---------------------------------------------
+
+   xterm.js draws into `.term`; everything here is the frame around it. The
+   height is fixed rather than fluid on purpose: a terminal that grows with its
+   content reflows the page under your cursor every time nvim opens a split or
+   prints a message, and the fit addon needs a stable box to compute rows
+   against anyway. 24 rows at this size, which is a screenful of prose. */
+.term {
+  height: 420px; margin: var(--s2) 0;
+  padding: var(--s3);
+  background: var(--panel); border: 1px solid var(--border-soft); border-radius: var(--r-sm);
+}
+/* The panel's focus ring would otherwise draw *over* the terminal's own
+   cursor, which is how you tell insert mode from normal mode. */
+.term .xterm { height: 100%; }
+.term .xterm-viewport { background: transparent !important; }
+
+/* What is in the file, shown under the panel once there is something in it.
+   Same treatment as `.prompt` — a block of your own prose, read rather than
+   edited here — but capped shorter, because this one sits above the pool and
+   a long write-up should not push the list off the card. */
+.write-up {
+  margin: var(--s2) 0 var(--s1); padding: var(--s3); max-height: 220px; overflow: auto;
+  background: var(--bg); border: 1px solid var(--border-soft); border-radius: var(--r-sm);
+  font: inherit; font-size: var(--t-meta); color: var(--dim);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}

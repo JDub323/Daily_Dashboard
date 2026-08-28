@@ -14,9 +14,20 @@ while the client compared against its own, so any skew silently broke every
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 from typing import NamedTuple
 
-from . import content, debate, garmin, health, scoring, spelling, trainplan, tricks
+from . import (
+    content,
+    debate,
+    garmin,
+    health,
+    investigate,
+    scoring,
+    spelling,
+    trainplan,
+    tricks,
+)
 from .config import Settings
 from .db.repository import ARGUMENT_AREA, TRICK_AREA, Repository
 from .models import api
@@ -661,7 +672,9 @@ def patterns_panel(repo: Repository, today: dt.date) -> api.PatternsPanel:
     )
 
 
-def investigate_panel(repo: Repository, today: dt.date) -> api.InvestigatePanel:
+def investigate_panel(
+    repo: Repository, today: dt.date, root: Path, scrollback: int = 1000
+) -> api.InvestigatePanel:
     """Today's topic, if one has been drawn, and the pool behind it.
 
     Read-only, like everything in this module: it reports the draw, it does not
@@ -676,9 +689,23 @@ def investigate_panel(repo: Repository, today: dt.date) -> api.InvestigatePanel:
     """
     day = repo.investigation_day(today)
     pool = repo.pool()
+    topic = repo.investigation(day.investigation_id) if day else None
+
+    # The file, read on every render. It is a few KB and the alternative is a
+    # panel that believes a `written` flag while the buffer behind it has been
+    # emptied in a terminal the app knows nothing about -- which is a state
+    # this feature invites, because the file is deliberately openable from
+    # outside it.
+    on_disk = ""
+    if topic and topic.path:
+        on_disk = investigate.read_file(root / topic.path)
+
     return api.InvestigatePanel(
-        today=repo.investigation(day.investigation_id) if day else None,
+        today=topic,
         drawn_on=day.date if day else None,
+        day=day,
+        scrollback=scrollback,
+        file_body=investigate.body(on_disk),
         pool=pool,
         pool_size=len(pool),
         investigated=repo.investigated_count(),
@@ -905,7 +932,9 @@ def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.Dash
         math=math_panel(cfg, repo, today),
         chess=chess_panel(repo, today),
         debate=debate_panel(cfg, repo, today),
-        investigate=investigate_panel(repo, today),
+        investigate=investigate_panel(
+            repo, today, cfg.path("investigations"), cfg.investigate.scrollback
+        ),
         patterns=patterns_panel(repo, today),
         spelling=spelling_panel(cfg, repo, today),
         tricks=tricks_panel(cfg, repo, today),

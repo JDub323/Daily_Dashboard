@@ -39,6 +39,10 @@ def settings(tmp_path) -> Settings:
                     "metrics": str(tmp_path / "metrics.jsonl"),
                     "problems": str(tmp_path / "problems.json"),
                     "batches": str(tmp_path / "batches"),
+                    # Redirected for the same reason as `db`: the app writes
+                    # here, and these hold hours of typing. A suite run must
+                    # not be able to touch the real write-ups.
+                    "investigations": str(tmp_path / "investigations"),
                     # Absent by default, like the real one may be. A test that
                     # wants a profile writes it here -- pointing at the real
                     # path let a test create interests.md in the project root.

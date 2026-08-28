@@ -26,6 +26,10 @@ training = "training.toml"
 # Rendered issue dossiers, one markdown file per issue. Written by the server,
 # never read by it -- the database is the record and these exist to be grepped.
 dossiers = "dossiers"
+# The write-ups, one markdown file per topic. The exact opposite of `dossiers`:
+# these are the source, they are opened in a real editor, and the server only
+# ever creates one that is missing -- it never rewrites one that exists.
+investigations = "investigations"
 
 [llm]
 model = "claude-sonnet-5"
@@ -423,6 +427,28 @@ feeds = [
 # Claude Project* for the debates -- project memory is isolated from your
 # global chat memory and from other projects, so a month of arguing about
 # immigration does not leak into everything else you ask Claude.
+[investigate]
+# Editors to try, in order; the first one on PATH wins. A real terminal editor
+# runs on a real pty inside the panel -- this is not an emulation, so your own
+# config, plugins and muscle memory all come with it.
+editor = ["nvim", "vim"]
+
+# Ex commands run with -c, and therefore *after* your own config.
+#
+# The default exists because of the browser, not because of taste. Chrome
+# reserves Ctrl-R and will not give it to a page, so vim's redo cannot be
+# reached inside the panel however this is wired; `U` is the nearest free key.
+# Ctrl-W is reserved the same way and window commands are simply unavailable
+# in a browser tab -- which is why the file is a real file you can also open
+# from a terminal, where none of this applies.
+#
+# Empty the list for vim exactly as you configured it.
+editor_commands = ["nnoremap U <C-r>"]
+
+# Lines of terminal scrollback. Only ever reached by `:!` output; a buffer
+# scrolls inside the editor, not into the terminal's history.
+scrollback = 1000
+
 [debate]
 # The Sunday the traversal starts from. Validated as a Sunday at startup, the
 # same as [math].rotation_start.

@@ -1458,6 +1458,30 @@ MIGRATIONS: list[tuple[int, str]] = [
         ) STRICT;
         """,
     ),
+    (
+        24,
+        """
+        -- Where the write-up for a topic lives, relative to [paths].
+        -- investigations.
+        --
+        -- On the topic, not on the day, and that is the whole point. A topic
+        -- drawn on Tuesday and left unwritten goes back in the pool; when it
+        -- comes round again a fortnight later the paragraphs started on
+        -- Tuesday are still in the file and the editor opens on them. Keying
+        -- the file by date would have made that a new empty buffer.
+        ALTER TABLE investigation ADD COLUMN path TEXT;
+
+        -- What was submitted that day, and when.
+        --
+        -- A snapshot, deliberately duplicating the file. The file goes on
+        -- being editable forever -- it is a file -- and a grade has to stay
+        -- attached to the text that earned it, so this column is what the
+        -- prompt quotes and what the ballot answers. The file is the source;
+        -- this is the submission.
+        ALTER TABLE investigation_day ADD COLUMN write_up TEXT;
+        ALTER TABLE investigation_day ADD COLUMN written_at TEXT;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

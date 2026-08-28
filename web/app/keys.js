@@ -50,6 +50,30 @@ function isTyping(target) {
   return Boolean(target) && (EDITABLE.has(target.tagName) || target.isContentEditable);
 }
 
+/**
+ * Is the focus inside the embedded editor?
+ *
+ * The two gates below that survive a text box — Esc and Tab — are exactly the
+ * two keys a modal editor cannot do without. Esc is how you leave insert mode
+ * and Tab is a real character in it, so a terminal that did not get them back
+ * would be an editor you can type into and never escape from.
+ *
+ * xterm.js takes its input through a hidden textarea, so `isTyping` already
+ * hands it the whole alphabet — h, j, k, l, i, f, n, gg and the digits are all
+ * yielded before this. This is only about the two exceptions to that rule.
+ *
+ * Alt-hjkl is deliberately *not* exempted. It stays the way out of anywhere,
+ * including out of a buffer left in a mode you did not mean to enter, and vim
+ * binds nothing to it — so the app keeps it and loses nothing.
+ */
+export function inEditor(target) {
+  // Optional-chained twice on purpose. `e.target` is not always an Element —
+  // it is `document` for some synthetic events and `window` for others, and
+  // neither has `closest`. A TypeError thrown from here would take Esc down
+  // for the whole app, which is the one binding that must never fail.
+  return Boolean(target?.closest?.(".term"));
+}
+
 const modalOpen = () => !$("#modal-overlay").hidden;
 
 /** `gg` is the only two-key sequence, so the pending state is one flag. */
@@ -184,9 +208,21 @@ const BINDINGS = [
   },
   {
     keys: ["esc"],
-    hint: "back to the highlighted panel, in one press · also closes a modal",
+    hint: "back to the highlighted panel, in one press · also closes a modal "
+      + "· inside the editor it belongs to vim",
     match: (e) => e.key === "Escape",
     run: () => nav.escape(),
+  },
+  {
+    keys: ["alt", "+", "hjkl"],
+    hint: "the way out of the editor — esc and tab are vim's in there, so this "
+      + "is what leaves it · ctrl-w and ctrl-r stay the browser's, and redo is "
+      + "remapped to U",
+    // Handled with the other Alt-hjkl, ahead of every gate. Listed separately
+    // because the editor is the one place where "how do I get out" has a
+    // different answer, and the sheet is the map.
+    match: () => false,
+    run: () => {},
   },
 ];
 
@@ -257,7 +293,13 @@ export function initKeys() {
 
     // Esc next, and ahead of both remaining gates: it is the way out of the
     // text box, and ui.js owns it while a modal is up.
+    //
+    // The editor is the one place Esc is not ours. It is the key vim is built
+    // on, and taking it would blur the terminal on every mode change — the
+    // whole editor, lost to the one binding this app documents as always
+    // working. Alt-hjkl is still the way out, and still works from in there.
     if (e.key === "Escape") {
+      if (inEditor(e.target)) return;
       if (modalOpen()) return;
       // One press, one layer, outermost first — the capture, then the mode.
       // Esc out of the ladder should leave the ring on the card you were
@@ -271,7 +313,12 @@ export function initKeys() {
 
     // Inside a text box the keyboard belongs to the box, with one exception:
     // Tab walks that panel's other boxes. See nav.cycleField.
+    //
+    // …and the exception has its own exception. In the editor Tab is a
+    // character you are typing, so walking to the next form field would
+    // indent nothing and lose your place.
     if (isTyping(e.target)) {
+      if (inEditor(e.target)) return;
       if (e.key === "Tab" && nav.cycleField(e.shiftKey ? -1 : 1)) e.preventDefault();
       return;
     }

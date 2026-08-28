@@ -77,6 +77,16 @@ class PathSettings(Base):
     a file ends up churning on every commit while claiming to be editable.
     """
 
+    investigations: str = "investigations"
+    """Where the write-ups live, one markdown file per topic.
+
+    The opposite of `dossiers` in every way that matters. These are the
+    *source*: they are opened in a real editor, they are what you typed, and
+    the database holds a snapshot of one taken when it was submitted rather
+    than the other way round. Nothing here is ever regenerated, so nothing here
+    may be overwritten by the server -- see `investigate.ensure_file`.
+    """
+
     spelling: str = "spelling.json"
     """The hand-curated spelling pool. Read-only to the server, and tracked in
     git -- unlike `problems.json`, nothing ever appends to this, so it stays
@@ -493,6 +503,36 @@ class TheoremSettings(Base):
     recency_exponent: float = Field(default=2.0, ge=0.0, le=6.0)
     """How sharply the odds favour a long-unseen theorem. 0 is a uniform
     draw over everything off cooldown; 2 is the default steep curve."""
+
+
+class InvestigateSettings(Base):
+    """The write-up: which editor opens it, and how it is told to behave."""
+
+    editor: list[str] = Field(default_factory=lambda: ["nvim", "vim"])
+    """Editors to try, in order. The first one on PATH wins.
+
+    A list rather than a string because the fallback is the whole point: this
+    spawns a real terminal editor and a machine without `nvim` should get
+    `vim` and a working panel, not a stack trace about a missing binary.
+    """
+
+    editor_commands: list[str] = Field(default_factory=lambda: ["nnoremap U <C-r>"])
+    """Ex commands passed as `-c`, so they run *after* your own config.
+
+    The default one is here because of a browser, not a preference. Chrome
+    reserves Ctrl-R and will not let a page have it, so vim's redo is
+    unreachable inside the panel however the terminal is wired -- `U` is the
+    nearest free key (its own "undo line" is the least-missed command in vim).
+    Ctrl-W is reserved the same way and window commands cannot be recovered at
+    all; that is the cost of an editor in a browser tab, and the reason the
+    file stays openable from a real terminal.
+
+    Emptying this list turns the whole thing off and gives you vim untouched.
+    """
+
+    scrollback: int = Field(default=1000, ge=0, le=100_000)
+    """Lines the terminal keeps. Only reached with `:!` output -- a buffer
+    scrolls inside the editor, not into the terminal's own history."""
 
 
 class DebateIssue(Base):
@@ -963,6 +1003,7 @@ class Settings(Base):
     llm: LlmSettings
     math: MathSettings
     debate: DebateSettings = Field(default_factory=DebateSettings)
+    investigate: InvestigateSettings = Field(default_factory=InvestigateSettings)
     spelling: SpellingSettings = Field(default_factory=SpellingSettings)
     tricks: TrickSettings = Field(default_factory=TrickSettings)
     theorems: TheoremSettings = Field(default_factory=TheoremSettings)

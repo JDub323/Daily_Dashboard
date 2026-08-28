@@ -1610,6 +1610,42 @@ class Repository:
             raise LookupError(f"no investigation {investigation_id}")
         return row
 
+    def set_investigation_path(self, investigation_id: int, path: str) -> d.Investigation:
+        """Record where a topic's write-up lives, once.
+
+        `WHERE path IS NULL` because the path is the handle on hours of typing:
+        a second call is either a race between two tabs opening the editor or a
+        bug, and in both cases the file that already exists is the right
+        answer. The caller re-reads rather than trusting its own argument.
+        """
+        with transaction(self.conn):
+            self.conn.execute(
+                "UPDATE investigation SET path = ? WHERE id = ? AND path IS NULL",
+                (path, investigation_id),
+            )
+            row = self.investigation(investigation_id)
+        if row is None:
+            raise LookupError(f"no investigation {investigation_id}")
+        return row
+
+    def record_write_up(self, date: dt.date, text: str) -> d.InvestigationDay:
+        """Snapshot what the file said, as the day's submission.
+
+        Overwrites a previous snapshot on purpose: reading the file back again
+        after another half hour of editing is the ordinary way this is reached,
+        and the last read before the ballot is what the ballot answers.
+        """
+        with transaction(self.conn):
+            self.conn.execute(
+                "UPDATE investigation_day SET write_up = ?, "
+                "written_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE date = ?",
+                (text, _iso(date)),
+            )
+            row = self.investigation_day(date)
+        if row is None:
+            raise LookupError(f"nothing was drawn on {date}")
+        return row
+
     def investigation_day(self, date: dt.date) -> d.InvestigationDay | None:
         row = self.conn.execute(
             "SELECT * FROM investigation_day WHERE date = ?", (_iso(date),)

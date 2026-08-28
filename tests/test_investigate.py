@@ -21,6 +21,13 @@ TODAY = dt.date(2026, 8, 28)
 TOMORROW = dt.date(2026, 8, 29)
 
 
+@pytest.fixture
+def files(tmp_path):
+    """Where the write-ups go. Never the real `investigations/` directory --
+    these tests create and read files, and the real one holds work."""
+    return tmp_path / "investigations"
+
+
 def add(repo, *topics, on=TODAY):
     return repo.add_investigations(list(topics), on)
 
@@ -191,28 +198,28 @@ def test_an_investigated_topic_leaves_the_pool(repo):
 # --- the panel -------------------------------------------------------------
 
 
-def test_the_panel_reports_nothing_drawn_before_the_button(repo):
+def test_the_panel_reports_nothing_drawn_before_the_button(repo, files):
     add(repo, "Hormuz", "Sahel")
-    panel = state.investigate_panel(repo, TODAY)
+    panel = state.investigate_panel(repo, TODAY, files)
 
     assert panel.today is None
     assert panel.drawn_on is None
     assert panel.pool_size == 2
 
 
-def test_the_panel_never_draws(repo):
+def test_the_panel_never_draws(repo, files):
     """Rendering the tab must not spend a topic -- the rule the theorem draw
     and the debate session both hold."""
     add(repo, "Hormuz")
-    state.investigate_panel(repo, TODAY)
+    state.investigate_panel(repo, TODAY, files)
     assert repo.investigation_day(TODAY) is None
 
 
-def test_the_panel_carries_the_drawn_topic(repo):
+def test_the_panel_carries_the_drawn_topic(repo, files):
     add(repo, "Taiwan strait transit rights")
     repo.draw_investigation(TODAY)
 
-    panel = state.investigate_panel(repo, TODAY)
+    panel = state.investigate_panel(repo, TODAY, files)
     assert panel.today.topic == "Taiwan strait transit rights"
     assert panel.drawn_on == TODAY
     # Still in the pool, and the panel says both things at once without
@@ -220,7 +227,7 @@ def test_the_panel_carries_the_drawn_topic(repo):
     assert panel.pool_size == 1
 
 
-def test_a_topic_struck_off_after_being_drawn_is_still_the_days_topic(repo):
+def test_a_topic_struck_off_after_being_drawn_is_still_the_days_topic(repo, files):
     """Drawn in the morning, struck off in the evening. The day did draw it,
     and rewriting that after the fact would make the panel disagree with its
     own history."""
@@ -228,7 +235,7 @@ def test_a_topic_struck_off_after_being_drawn_is_still_the_days_topic(repo):
     repo.draw_investigation(TODAY)
     repo.clear_investigation(item.id, TODAY)
 
-    panel = state.investigate_panel(repo, TODAY)
+    panel = state.investigate_panel(repo, TODAY, files)
     assert panel.today.topic == "Hormuz"
     assert panel.pool_size == 0
 
@@ -278,3 +285,150 @@ def test_the_boot_payload_carries_the_panel(client):
 
     assert got["investigate"]["pool_size"] == 1
     assert got["investigate"]["today"] is None
+
+
+# --- the file --------------------------------------------------------------
+
+
+def test_the_slug_is_a_filename_and_never_a_path():
+    """The one property that matters. A topic is typed by a human and becomes
+    a filename, so it has to be incapable of naming a directory."""
+    for topic in ["../../etc/passwd", "a/b/c", "..", ".hidden", r"C:\windows"]:
+        made = investigate.slug(topic)
+        assert "/" not in made and "\\" not in made
+        assert not made.startswith(".")
+        assert made not in ("", ".", "..")
+
+
+def test_the_slug_folds_accents_rather_than_dropping_them():
+    assert investigate.slug("Côte d'Ivoire sanctions") == "cote-d-ivoire-sanctions"
+
+
+def test_a_long_topic_is_cut_at_a_word():
+    made = investigate.slug("the " * 60)
+    assert len(made) <= investigate.MAX_SLUG
+    assert not made.endswith("-")
+
+
+def test_a_topic_of_pure_punctuation_still_gets_a_name():
+    assert investigate.slug("!!! ???") == "untitled"
+
+
+def test_the_scaffold_is_not_a_write_up():
+    text = investigate.scaffold("Hormuz", TODAY)
+    assert investigate.body(text) == ""
+
+
+def test_the_body_is_what_you_typed_under_the_scaffold():
+    text = investigate.scaffold("Hormuz", TODAY) + "Iran has never actually closed it.\n"
+    assert investigate.body(text) == "Iran has never actually closed it."
+
+
+def test_a_second_topic_with_the_same_slug_gets_its_own_file(files):
+    files.mkdir(parents=True)
+    (files / "hormuz.md").write_text("first")
+
+    got = investigate.file_for(files, "Hormuz!", existing=None)
+    assert got.name == "hormuz-2.md"
+
+
+def test_the_recorded_path_beats_the_slug(files):
+    """A topic that has been written up keeps its file even if the slug
+    would now produce a different name -- otherwise a rename orphans work."""
+    got = investigate.file_for(files, "Hormuz", existing="something-else.md")
+    assert got == files / "something-else.md"
+
+
+def test_an_existing_file_is_never_overwritten(files):
+    path = files / "hormuz.md"
+    investigate.ensure_file(path, "Hormuz", TODAY)
+    path.write_text("# Hormuz\n\nHours of typing.\n")
+
+    investigate.ensure_file(path, "Hormuz", TOMORROW)
+    assert "Hours of typing." in path.read_text()
+
+
+def test_a_missing_file_reads_as_empty_rather_than_raising(files):
+    assert investigate.read_file(files / "nothing.md") == ""
+
+
+# --- the file, through the API ---------------------------------------------
+
+
+def drawn(client, topic="Hormuz shipping insurance rates"):
+    client.post("/api/investigate/add", json={"date": TODAY.isoformat(), "text": topic})
+    return client.post("/api/investigate/draw", json={"date": TODAY.isoformat()}).json()
+
+
+def test_opening_creates_the_file_and_records_it(client, settings):
+    drawn(client)
+    panel = client.post("/api/investigate/open", json={"date": TODAY.isoformat()}).json()
+
+    path = settings.path("investigations") / panel["today"]["path"]
+    assert path.exists()
+    assert panel["written"] is False
+
+
+def test_opening_twice_keeps_the_same_file(client):
+    drawn(client)
+    first = client.post("/api/investigate/open", json={"date": TODAY.isoformat()}).json()
+    second = client.post("/api/investigate/open", json={"date": TODAY.isoformat()}).json()
+
+    assert first["today"]["path"] == second["today"]["path"]
+
+
+def test_reading_back_an_empty_file_is_refused(client):
+    drawn(client)
+    client.post("/api/investigate/open", json={"date": TODAY.isoformat()})
+    got = client.post("/api/investigate/read", json={"date": TODAY.isoformat()})
+
+    assert got.status_code == 409  # the app's mapping for a refused ValueError
+    assert "empty" in got.json()["error"]
+
+
+def test_reading_back_takes_the_file_as_the_submission(client, settings):
+    drawn(client)
+    panel = client.post("/api/investigate/open", json={"date": TODAY.isoformat()}).json()
+    path = settings.path("investigations") / panel["today"]["path"]
+    path.write_text(path.read_text() + "Lloyd's rates tripled after the first drone strike.\n")
+
+    got = client.post("/api/investigate/read", json={"date": TODAY.isoformat()}).json()
+    assert got["written"] is True
+    assert "Lloyd's rates tripled" in got["day"]["write_up"]
+
+
+def test_the_panel_reads_the_file_rather_than_trusting_the_snapshot(client, settings):
+    """The file is openable from a terminal this app knows nothing about, so
+    a snapshot taken an hour ago is not evidence about what is on disk now."""
+    drawn(client)
+    panel = client.post("/api/investigate/open", json={"date": TODAY.isoformat()}).json()
+    path = settings.path("investigations") / panel["today"]["path"]
+    path.write_text(path.read_text() + "Something.\n")
+    client.post("/api/investigate/read", json={"date": TODAY.isoformat()})
+
+    # Emptied behind the app's back.
+    path.write_text("# Hormuz shipping insurance rates\n\n")
+    after = client.get("/api/investigate", params={"date": TODAY.isoformat()}).json()
+
+    assert after["written"] is False
+    assert after["day"]["write_up"] is not None  # the submission still stands
+
+
+def test_the_same_topic_drawn_again_opens_the_work_already_done(client, settings):
+    """The reason the path is on the topic and not on the day."""
+    drawn(client)
+    panel = client.post("/api/investigate/open", json={"date": TODAY.isoformat()}).json()
+    path = settings.path("investigations") / panel["today"]["path"]
+    path.write_text(path.read_text() + "Half a paragraph.\n")
+
+    # Never read back, so the topic is still open and tomorrow draws it again.
+    client.post("/api/investigate/draw", json={"date": TOMORROW.isoformat()})
+    again = client.post("/api/investigate/open", json={"date": TOMORROW.isoformat()}).json()
+
+    assert again["today"]["path"] == panel["today"]["path"]
+    assert "Half a paragraph." in again["file_body"]
+
+
+def test_opening_with_nothing_drawn_is_a_clean_error(client):
+    got = client.post("/api/investigate/open", json={"date": TODAY.isoformat()})
+    assert got.status_code == 404

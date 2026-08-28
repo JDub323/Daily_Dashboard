@@ -17,7 +17,22 @@
 import * as api from "../api.js";
 import { el, mount } from "../dom.js";
 import { put, store } from "../store.js";
+import { openEditor, ready as termReady } from "../term.js";
 import { toast } from "../ui.js";
+
+/**
+ * The live editor, if one is open. At most one, ever.
+ *
+ * Module-level rather than per-render because the panel is rebuilt by any
+ * store change and a terminal rebuilt underneath you is a lost buffer. The
+ * node is kept and re-attached; only an explicit close disposes it.
+ */
+let editor = null;
+
+function closeEditor() {
+  editor?.dispose();
+  editor = null;
+}
 
 /**
  * What is half-typed in the box, kept across re-renders.
@@ -149,14 +164,106 @@ function undrawn(panel, redraw) {
   );
 }
 
-/** Drawn: what today is about. */
-function drawn(panel) {
+/** Drawn: what today is about, and the editor it is written in. */
+function drawn(panel, redraw) {
   return el("div", null,
     el("div.big.value", { text: panel.today.topic }),
     el("div.faint", {
-      text: "drawn today · it stays in the pool until the write-up is graded",
+      text: panel.written
+        ? `written · ${panel.today.path ?? "on disk"}`
+        : "drawn today · it stays in the pool until the write-up is graded",
+    }),
+    writeUp(panel, redraw),
+  );
+}
+
+/**
+ * The write-up: the editor, or the way into it, plus what is on disk.
+ *
+ * The file is the source of truth and this panel is a window onto it — which
+ * is why "read it back" exists beside the editor rather than only after it.
+ * The same file is openable from a real terminal, and that is a supported way
+ * to use this, not a workaround.
+ */
+function writeUp(panel, redraw) {
+  if (editor) return editorBlock(panel, redraw);
+
+  const open = el("button.primary", {
+    text: panel.written ? "back to the editor" : "write it in nvim",
+    onclick: async () => {
+      open.disabled = true;
+      try {
+        // The file first, over HTTP, so a missing editor still leaves
+        // something on disk with a path recorded against the topic.
+        put("investigate", await api.post("/api/investigate/open"));
+        if (!termReady()) {
+          toast("the terminal did not load — the file is on disk, open it yourself");
+          redraw();
+          return;
+        }
+        editor = openEditor({ date: api.today(), scrollback: panel.scrollback });
+        // The editor exiting is the cue to re-read the file: `:wq` is how you
+        // finish, and the panel should show the paragraphs without being asked.
+        editor.closed.then(async () => {
+          closeEditor();
+          try {
+            put("investigate", await api.get("/api/investigate", { date: api.today() }));
+          } finally {
+            redraw();
+          }
+        });
+        redraw();
+      } catch (error) {
+        open.disabled = false;
+        toast(error.message);
+      }
+    },
+  });
+
+  return el("div.gap", null,
+    el("div.row", null, open, panel.written ? readBack(redraw) : null),
+    panel.file_body ? el("pre.write-up", { text: panel.file_body }) : null,
+  );
+}
+
+/** The terminal, and the two ways out of it. */
+function editorBlock(panel, redraw) {
+  const done = el("button", {
+    text: "done — close the editor",
+    onclick: () => {
+      closeEditor();
+      redraw();
+    },
+  });
+
+  return el("div.gap", null,
+    editor.node,
+    el("div.row", null, done, readBack(redraw)),
+    el("div.faint", {
+      text: "esc and tab are vim's in here · alt-hjkl leaves · ctrl-w and ctrl-r "
+        + "stay the browser's, so redo is U",
     }),
   );
+}
+
+/** Hand the file in as today's submission. */
+function readBack(redraw) {
+  const button = el("button", {
+    text: "read it back",
+    title: "take what is in the file as today's write-up",
+    onclick: async () => {
+      button.disabled = true;
+      try {
+        put("investigate", await api.post("/api/investigate/read"));
+        toast("read back ✓", "info");
+        redraw();
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message);
+      }
+    },
+  });
+  return button;
 }
 
 export default {
@@ -169,7 +276,7 @@ export default {
 
   summary() {
     const panel = store.state.investigate;
-    if (panel.today) return panel.today.topic;
+    if (panel.today) return `${panel.written ? "✓ " : ""}${panel.today.topic}`;
     return panel.pool_size ? `${panel.pool_size} waiting` : "pool empty";
   },
 
@@ -178,9 +285,13 @@ export default {
     const redraw = () => this.render(node);
 
     mount(node,
-      panel.today ? drawn(panel) : undrawn(panel, redraw),
-      pool(panel, redraw),
-      box(redraw),
+      panel.today ? drawn(panel, redraw) : undrawn(panel, redraw),
+      // Hidden while the editor is up. The pool is a list of things you are
+      // *not* doing today, and it has no business under a buffer you are
+      // typing into — nor should a store change be able to reflow the page
+      // beneath a cursor.
+      editor ? null : pool(panel, redraw),
+      editor ? null : box(redraw),
     );
   },
 };

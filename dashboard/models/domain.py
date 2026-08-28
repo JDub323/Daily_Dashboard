@@ -1012,6 +1012,14 @@ class Investigation(Base):
     used_on: dt.date | None = None
     cleared_on: dt.date | None = None
 
+    path: str | None = None
+    """The write-up's file, relative to `[paths].investigations`.
+
+    On the topic rather than on the day, so a topic drawn twice opens the same
+    file the second time -- with whatever was written the first time still in
+    it. That is what makes an unfinished day cost nothing.
+    """
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def open(self) -> bool:
@@ -1030,3 +1038,13 @@ class InvestigationDay(Base):
     date: dt.date
     investigation_id: int
     drawn_at: dt.datetime | None = None
+
+    write_up: str | None = None
+    """What the file said when it was submitted.
+
+    A snapshot, and duplicating the file on purpose. The file goes on being
+    editable -- it is a file -- and a grade has to stay attached to the text
+    that earned it. None means the day was drawn and never handed in.
+    """
+
+    written_at: dt.datetime | None = None

@@ -23,6 +23,8 @@ pretending otherwise on an async handler would stall the event loop.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import datetime as dt
 import hashlib
 import json
@@ -35,10 +37,11 @@ import time
 import uuid
 import webbrowser
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any
 
 import pydantic
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -56,6 +59,7 @@ from . import (
     spelling,
     spend,
     state,
+    term,
     todo,
     trainplan,
     tricks,
@@ -1317,11 +1321,15 @@ def _register(app: FastAPI) -> None:
     # -- investigations ----------------------------------------------------
 
     @app.get("/api/investigate")
-    def investigate_today(repo: Repo, date: Today) -> api.InvestigatePanel:
-        return state.investigate_panel(repo, date)
+    def investigate_today(cfg: Cfg, repo: Repo, date: Today) -> api.InvestigatePanel:
+        return state.investigate_panel(
+            repo, date, cfg.path("investigations"), cfg.investigate.scrollback
+        )
 
     @app.post("/api/investigate/add")
-    def investigate_add(repo: Repo, body: api.InvestigateAddRequest) -> api.InvestigateAddResponse:
+    def investigate_add(
+        cfg: Cfg, repo: Repo, body: api.InvestigateAddRequest
+    ) -> api.InvestigateAddResponse:
         """Read the whole box and add whatever is new in it.
 
         Never raises on a bad line. The box is the day's handout and a paste of
@@ -1346,11 +1354,15 @@ def _register(app: FastAPI) -> None:
                 lines.append(api.InvestigateLine(raw=item.raw, topic=item.topic))
 
         return api.InvestigateAddResponse(
-            panel=state.investigate_panel(repo, body.date), lines=lines
+            panel=state.investigate_panel(
+            repo, body.date, cfg.path("investigations"), cfg.investigate.scrollback
+        ), lines=lines
         )
 
     @app.post("/api/investigate/draw")
-    def investigate_draw(repo: Repo, body: api.InvestigateDrawRequest) -> api.InvestigatePanel:
+    def investigate_draw(
+        cfg: Cfg, repo: Repo, body: api.InvestigateDrawRequest
+    ) -> api.InvestigatePanel:
         """Claim the day for one topic.
 
         A POST and a button, never a GET on render: drawing spends a topic, and
@@ -1363,13 +1375,163 @@ def _register(app: FastAPI) -> None:
         drawn, and the panel says so and offers the box.
         """
         repo.draw_investigation(body.date)
-        return state.investigate_panel(repo, body.date)
+        return state.investigate_panel(
+            repo, body.date, cfg.path("investigations"), cfg.investigate.scrollback
+        )
 
     @app.post("/api/investigate/clear")
-    def investigate_clear(repo: Repo, body: api.InvestigateClearRequest) -> api.InvestigatePanel:
+    def investigate_clear(
+        cfg: Cfg, repo: Repo, body: api.InvestigateClearRequest
+    ) -> api.InvestigatePanel:
         """Strike a topic off without spending a day on it."""
         repo.clear_investigation(body.investigation_id, body.date)
-        return state.investigate_panel(repo, body.date)
+        return state.investigate_panel(
+            repo, body.date, cfg.path("investigations"), cfg.investigate.scrollback
+        )
+
+    def _investigation_file(cfg: Settings, repo: Repository, date: dt.date) -> Path:
+        """Today's write-up file, created if it is not there yet.
+
+        The single place a path is derived, and it is derived from the day's
+        draw rather than from anything a client sent -- both the editor and the
+        read-back go through here so there is one answer to "which file", not
+        two that could disagree.
+        """
+        day = repo.investigation_day(date)
+        if day is None:
+            raise LookupError(f"nothing was drawn on {date}")
+        topic = repo.investigation(day.investigation_id)
+        if topic is None:
+            raise LookupError(f"investigation {day.investigation_id} is missing")
+
+        root = cfg.path("investigations")
+        path = investigate.file_for(root, topic.topic, topic.path)
+        investigate.ensure_file(path, topic.topic, day.date)
+        if topic.path is None:
+            # Stored relative, so moving the whole directory -- or filing the
+            # file under a topic folder later -- is a config edit and a row
+            # update rather than a rewrite of every absolute path on record.
+            repo.set_investigation_path(topic.id, path.relative_to(root).as_posix())
+        return path
+
+    @app.post("/api/investigate/open")
+    def investigate_open(
+        cfg: Cfg, repo: Repo, body: api.InvestigateOpenRequest
+    ) -> api.InvestigatePanel:
+        """Make sure today's file exists, before the terminal attaches to it.
+
+        Separate from the websocket so the file is on disk -- and its path is
+        on the row -- even when the editor cannot start. A missing `nvim` then
+        costs you the panel's terminal and nothing else: the file is there, and
+        `$EDITOR` in a real terminal still works.
+        """
+        _investigation_file(cfg, repo, body.date)
+        return state.investigate_panel(
+            repo, body.date, cfg.path("investigations"), cfg.investigate.scrollback
+        )
+
+    @app.post("/api/investigate/read")
+    def investigate_read(
+        cfg: Cfg, repo: Repo, body: api.InvestigateReadRequest
+    ) -> api.InvestigatePanel:
+        """Take the file in as today's submission.
+
+        Explicit rather than automatic on every save. What is submitted has to
+        be something you decided to hand in -- the editor writes on `:w` as a
+        matter of course, and an autosaved half-sentence becoming "the day's
+        work" would make the snapshot meaningless.
+        """
+        path = _investigation_file(cfg, repo, body.date)
+        text = investigate.read_file(path)
+        if not investigate.body(text):
+            raise ValueError("the file is still empty — write something first")
+        repo.record_write_up(body.date, text)
+        return state.investigate_panel(
+            repo, body.date, cfg.path("investigations"), cfg.investigate.scrollback
+        )
+
+    @app.websocket("/api/investigate/term")
+    async def investigate_term(ws: WebSocket) -> None:
+        """A real editor, on a real pty, in the panel.
+
+        The protocol is deliberately tiny and one-directional in each shape:
+        the client sends JSON (`in` for keystrokes, `resize` for a window
+        size), and the server sends raw bytes straight off the pty. Nothing the
+        client sends is ever interpreted as a path, an argument or a command.
+
+        Refused from anywhere but loopback. The rest of this app is equally
+        unauthenticated but exposes readings and ratings; an editor is a shell,
+        and `[server].host` is a line somebody could widen without thinking
+        about what is behind this one.
+        """
+        client = ws.client.host if ws.client else None
+        if client not in webauthn.LOOPBACK and client != "testclient":
+            await ws.close(code=1008, reason="the editor is loopback-only")
+            return
+
+        cfg: Settings = ws.app.state.settings
+        repo = Repository(ws.app.state.db.conn)
+        await ws.accept()
+
+        try:
+            date = dt.date.fromisoformat(ws.query_params.get("date", ""))
+            path = _investigation_file(cfg, repo, date)
+            editor = term.resolve_editor(cfg.investigate.editor)
+        except (ValueError, LookupError, term.TerminalError) as e:
+            # Reported down the socket rather than as a close reason: the panel
+            # has a terminal on screen by now, and a line of text in it is read
+            # where a close code is not.
+            await ws.send_bytes(f"\r\n\x1b[31m{e}\x1b[0m\r\n".encode())
+            await ws.close()
+            return
+
+        session = term.Session.spawn(
+            editor, cfg.investigate.editor_commands, path, cwd=cfg.path("investigations")
+        )
+        log.info("editor %d opened %s", session.pid, path.name)
+
+        loop = asyncio.get_running_loop()
+        outbound: asyncio.Queue[bytes | None] = asyncio.Queue()
+
+        async def pump() -> None:
+            """Queue -> socket. One task, so frames keep the pty's order."""
+            while True:
+                chunk = await outbound.get()
+                if chunk is None:
+                    return
+                await ws.send_bytes(chunk)
+
+        async def keys() -> None:
+            """Socket -> pty. The only thing that reads from the client."""
+            while True:
+                message = await ws.receive_json()
+                kind = message.get("t")
+                if kind == "in":
+                    session.write(str(message.get("d", "")).encode())
+                elif kind == "resize":
+                    session.resize(int(message.get("rows", 24)), int(message.get("cols", 80)))
+
+        tasks = [
+            asyncio.create_task(term.bridge(outbound, session, loop)),
+            asyncio.create_task(pump()),
+            asyncio.create_task(keys()),
+        ]
+        try:
+            # Whichever ends first ends the session: the editor quitting, the
+            # tab closing, or the socket dropping. All three mean the same
+            # thing here, so none of them is special-cased.
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            for task in tasks:
+                task.cancel()
+            # Off-thread: close() waits on the editor to die and would
+            # otherwise stall every other request for up to `GRACE_SECONDS`.
+            await loop.run_in_executor(None, session.close)
+            log.info("editor %d closed", session.pid)
+            with contextlib.suppress(RuntimeError):
+                await ws.close()
 
     # -- chess -------------------------------------------------------------
 
