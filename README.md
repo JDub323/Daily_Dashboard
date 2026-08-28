@@ -18,6 +18,7 @@ If the page says **"didn't send any data"**, something else already owns the por
 - **Logging what was prescribed**: `web/app/panels/plan.js` draws one card per outing and `POST /api/session/card` writes the lot in one request. A practice splits into a conditioning row and a technique row so the two volumes stay separable; one card and one button is what keeps that from also costing two round trips and a half-recorded day when the second fails. **Only the kind is ever pre-filled** — load is rpe x minutes, and a default that survived into a submit would be a measurement nobody took. `training_session.plan_key` (`<date>:<token>`, UNIQUE where present) is the only place the plan and the log touch, so a double-clicked card is a 409 rather than a doubled day. The `session` panel is untouched and stays the way in for anything the plan never asked for.
 - **Secrets**: `.env` with `ANTHROPIC_API_KEY=...` (gitignored).
 - **Data**: `dashboard.db` (SQLite, gitignored). `problems.json` is a hand-curated *pool* — the server reads it and never writes to it; drop a problem in and it gets served before any LLM call is paid for.
+- **The week grid is clamped to 8am20138pm** and does not widen for outliers. It used to, and the page therefore got *longer* the busier the week was 2014 one 11:30pm event made every day on screen sixteen hours tall and pushed the year-so-far heatmap under the fold. Events lying wholly outside the window are not dropped: they go to a one-line strip above or below the grid, keeping their title and their time and giving up only their height. An event that merely straddles an edge stays in the grid and is clipped by it. `CLAMP` at the top of `calendar.js` turns the whole thing off and restores the old widening. The add box folds to a single line when nothing is being typed into it 2014 focus, hover or any text in it brings the picker, the buttons and the preview back.
 - **Calendar**: runs gcalcli directly as an argv list (prefixed with `wsl -e` when the server is on Windows), so gcalcli must be authed in WSL. stdin is closed on every call — gcalcli drops to an interactive menu whenever a subcommand cannot resolve its target calendar, and with stdin inherited that menu *hangs* until the timeout instead of failing. Every write names its `--calendar`, for the same reason.
 - **Quick add**: the box on the home hero takes one line per item ("fpm Thornhill Chapter 3 due thursday"), and a whole pasted list at once — Ctrl+Enter commits, the lines that could not be written stay behind with their errors while the rest disappear. `calparse.py` resolves the title, day and span locally; `todo.py` expands aliases and reads recurrence before it; `calclass.py` picks the calendar with a scikit-learn model fitted at boot on the account's own history — an event's calendar is its label, so the training set costs nothing. `POST /api/calendar/preview` resolves every line without writing, which is what the preview under the box shows.
 - **A line with no day in it is refused.** `calparse` still resolves one onto today — that is what makes it usable for an event — but it reports `date_explicit`, and the box rejects the line rather than inventing a due date. This is the one rule the todo layer adds and it applies to everything the box writes.
@@ -80,20 +81,30 @@ web/                  the front end — native ES modules, no build step
     keys.js     the bindings, as data; the cheatsheet is generated from them
     carousel.js the four logging panels taking turns in one card
     nudges.js   what the day is still waiting on, said out loud
-    piano.js    the piano voice — inharmonic partials, hammer, two strings
+    piano.js    the sampler behind the scale and chord buttons
     panels/     one file per panel
     modals/     theorems, math, tricks, day logs (the archives) + trickset,
                 and the sheet on how the calendar box reads a line
   data/         piano.json — scale/chord content, out of the logic file
   vendor/katex  see PROVENANCE.txt
+  vendor/piano  one mp3 per semitone, C42013Ab6 2014 see PROVENANCE.txt
 
 tests/          pytest, plus tests/js for node --test
 ```
 
-There is no bundler. The front end has no npm dependency at runtime — KaTeX is
-vendored and everything else is hand-written — so native `<script type="module">`
-does the whole job, and a build step would only add a thing that can break
-between you and the page.
+There is no bundler. The front end has no npm dependency at runtime — KaTeX and
+the piano samples are vendored and everything else is hand-written — so native
+`<script type="module">` does the whole job, and a build step would only add a
+thing that can break between you and the page.
+
+**The piano is recorded, not synthesised.** `web/vendor/piano` is one mp3 per
+semitone from middle C to Ab6 off the FluidR3 GM grand — 800 KB, MIT, served
+from this origin and cached immutable beside KaTeX. One file per semitone
+rather than the usual handful pitch-shifted to fill the gaps, because
+resampling drags the formants of the body along with the pitch of the string:
+a note shifted up three semitones is not a piano playing higher, it is a
+smaller piano, and the seam is most audible inside a chord, which is the only
+thing that panel plays. At 25 KB a note there is nothing to resample.
 
 UI: six tabs, each a subject with one **hero** panel saying what the tab is for
 and supporting panels under it — home (calendar, what is due, completion
@@ -110,10 +121,15 @@ Keyboard-first, and the mouse still works. `Tab`/`Shift-Tab` cycle sections,
 `1`–`6` jump to one, `h`/`j`/`k`/`l` move a focus ring between panels — and,
 after `Enter` descends into a panel, between the links and controls inside it.
 `Enter` opens the focused thing, `Esc` backs out a level, `gg`/`G` go to the
-first/last panel, `n` opens the next unfinished task, `?` lists the lot. `f`
-letters every link in the panel and then opens the one you name — and carries
-four letters of its own, `c`/`l`/`m`/`p`, which reach the check-in, the session
-log, the meals and the in-and-out from any section. The
+first/last panel, `n` opens the next unfinished task, `?` lists the lot.
+
+`f` is three layers over one press, and they do not collide because only one of
+them is an alphabet: **letters** open the links it has just lettered,
+`c`/`l`/`m`/`p` reach the check-in, the session log, the meals and the
+in-and-out from any section, and **digits** open that numbered notification.
+Standing on an article you get `f a`–`f e` on the headlines, `f m` to the meal
+log and `f 1` to whatever is in the corner. The mode line prints all three
+ranges while the layer is up. The
 bindings are data in `keys.js`; the cheatsheet is generated from the same list
 that dispatches them.
 
@@ -128,24 +144,37 @@ the minutes box, `Enter` goes to the note and `Enter` there logs it. While a
 capture is up the digits belong to the panel; `Esc` — or any key the panel does
 not use — gives them back to the tabs.
 
-**A key the focused panel would have taken after an `Enter` takes it without
-one.** `b` on the session log starts it *on boxing*; `s` on the meal log starts
-it *on small*. Keys that take you somewhere else — `hjkl`, the section digits —
-are never claimed this way, which is why the check-in's `1`–`5` still needs its
-Enter first. A finished log lets go of the keyboard on its own, so the `Esc`
-that used to follow every entry is one the entry no longer needs.
+So the flow is: **move the ring to a cell, then one key enters it.** `i` for a
+text box; `b` on the session log starts it *on boxing*; `s` on the in-and-out
+log starts it *on stool*; `m`/`p` on the meal log open it standing on the hour,
+one step earlier or later. Enter enters whatever the cell's first question is.
+After that a single-answer field advances by itself and a text box advances on
+Enter, and the last answer commits — a finished log lets go of the keyboard on
+its own, so the `Esc` that used to follow every entry is one the entry no
+longer needs.
 
-The meal log is quicker still, because it is answered three times a day and a
-log that costs fifteen seconds is a log kept for nine days. **`m` logs a meal
-from any tab** — one press switches section, lands on the panel and starts its
-ladder, and every question after that is one key:
+Keys that take you somewhere else — `hjkl`, the section digits — are never
+claimed by a panel this way, which is why the check-in's `1`–`5` still needs
+its Enter first. `m` is the one exception in the other direction: it is global
+("go to the meal log") on every card except the meal log, where there is
+nowhere left to go and it means minus an hour.
+
+**`m` logs a meal from any tab** — one press switches section, lands on the
+panel and starts its ladder, and every question after that is one key:
 
 ```
 m l 4          a large, fairly unprocessed meal, now
-m - - m 3      the lunch you forgot to log, an hour and a bit ago
+m m m ⏎ l 4    a large meal two hours ago — m and p are minus and plus
 f p  s 2 m     a soft stool, medium, now
 f p  u 4 l     dark urine, large volume, now
+b 7 45 ⏎ ⏎     45 minutes of boxing at RPE 7
 ```
+
+The meal log asks the hour *first*, which is why `m` at that card steps it back
+rather than picking a size, and why `⏎` — "the hour is already right" — is what
+skips past it. Only the meal log does this: the in-and-out log has no global
+key of its own and is answered more often, so a question in front of it would
+cost a keystroke on every entry to save one on a few.
 
 There used to be a global `b` for the in-and-out log, and it is gone: `b` is
 also the first letter of boxing, so on the session card it was genuinely
@@ -165,14 +194,19 @@ its reason. Hovering pauses it, selecting it with the focus ring holds it, and
 a ladder running on it freezes it outright, so nothing rotates through a
 half-typed meal. The arrows turn it by hand once the ring is on it, and
 `f c`/`f l`/`f m`/`f p` stop it on one from anywhere. Nothing is rebuilt on the
-turn — only `hidden` moves — because these panels hold captures, half-typed
-inputs and a cursor into a ladder, and tearing them down would drop all three
-every five seconds.
+turn — only `visibility` moves — because these panels hold captures,
+half-typed inputs and a cursor into a ladder, and tearing them down would drop
+all three every five seconds. `visibility` and not `display`, because the four
+slides share one grid cell so the card is always as tall as the tallest of
+them: hidden the other way they contribute no height and the card resized 200px
+under the pointer every time it turned. It also stops turning entirely when its
+section is not the one showing.
 
 **Nudges** (`nudges.js`) are the one thing here that arrives rather than
-waiting to be looked at: the morning check-in still not done at eleven, a meal
-not logged by lunchtime, the required half of the day still open at eight in
-the evening, what is due today and what is overdue. Each has a clock on it and
+waiting to be looked at: the morning check-in still not done at eleven,
+breakfast/lunch/dinner unlogged at 8am/2pm/9pm, the required half of the day
+still open at eight in the evening, what is due today and what is overdue. Each
+is numbered and `f` plus that digit opens it. Each has a clock on it and
 a repeat interval measured in hours, because a notification you learn to
 dismiss is worse than none; each is computed from the same `chipTasks()` that
 defines a day, so the two cannot disagree about whether the maths is finished;

@@ -40,13 +40,14 @@
 // It does not lazily build its slides, and it does not tear down the ones that
 // are off screen. Every panel is mounted and rendered exactly as it was when
 // each had its own card; the only thing this file does is decide which one is
-// `hidden`. That is deliberate and it is the same argument tabs.js makes: these
+// visible. That is deliberate and it is the same argument tabs.js makes: these
 // panels hold live captures, half-typed inputs and a cursor into a ladder, and
 // rebuilding them on every rotation would drop all three every five seconds.
 
 import { captureOwner, capturing } from "./capture.js";
-import { $, el } from "./dom.js";
+import { el } from "./dom.js";
 import { focusedPanel } from "./nav.js";
+import { activeTab } from "./tabs.js";
 
 /** How long each slide gets. Long enough to read a card's worth of numbers,
  *  short enough that the four come round inside half a minute. */
@@ -79,6 +80,17 @@ const current = () => slides[index];
 
 /** True when something says a human is working on this card right now. */
 function held() {
+  // Nobody is looking at it: another section is showing, or the whole tab is
+  // in the background. Turning anyway is not harmful so much as pointless —
+  // and it is actively wrong for the one thing the rotation is for, which is
+  // being seen out of the corner of an eye. Coming back to health should show
+  // the card the rotation left off on, not the fourth one it turned to while
+  // the maths tab was up.
+  //
+  // It also stops the dwell from being a lie. Browsers throttle timers in a
+  // background tab to about one a minute, so a widget that kept rotating there
+  // was doing it at whatever interval the browser felt like.
+  if (document.hidden || activeTab() !== "health") return true;
   if (hovering) return true;
   // The ring is on the slide that is showing. Selecting it is the explicit,
   // sticky version of hovering: you are working here now, and the card must
@@ -93,10 +105,27 @@ function held() {
 
 // --- the rotation -----------------------------------------------------------
 
+/**
+ * Show slide `index` and hide the rest.
+ *
+ * `visibility` rather than the `hidden` attribute, and the difference is the
+ * whole reason this card no longer moves. The four slides are stacked in one
+ * grid cell (see `.cyc-track`), so the shell is always as tall as the tallest
+ * of them — and a hidden-by-`display:none` slide contributes no height, which
+ * meant the card was 505px on the check-in and 300px on the meal log and
+ * resized under the pointer every five seconds, shoving the plan beside it and
+ * the whole page below it. A rotating widget that reflows the page is worse
+ * than no rotating widget.
+ *
+ * `visibility: hidden` also takes a slide out of the accessibility tree and
+ * out of the tab order, which `opacity: 0` would not — see `visible()` in
+ * nav.js, which had to learn about it so the focus ring does not offer you
+ * three cards you cannot see.
+ */
 function paint() {
   for (const [i, slide] of slides.entries()) {
     const showing = i === index;
-    slide.card.hidden = !showing;
+    slide.card.classList.toggle("cyc-on", showing);
     // Re-triggered by removing and re-adding, because an animation replayed on
     // an element that never lost the class does not replay at all.
     if (showing) {
@@ -129,9 +158,6 @@ export function show(i) {
 }
 
 export const step = (delta) => show(index + delta);
-
-/** The panel id currently on screen. */
-export const showing = () => current()?.id ?? null;
 
 /**
  * Put slide `id` on screen. True if there is one.
@@ -262,29 +288,3 @@ export function takeArrow(e) {
   return false;
 }
 
-/** The shell's element id, so `nav` and `panel.js` can address it. */
-export const hostId = () => host?.id ?? null;
-
-/** The showing slide's card element, which is what the focus ring should
- *  actually land on when something asks for this widget. */
-export const showingCard = () => current()?.card ?? null;
-
-/** True when `id` is one of the four. Lets callers route a "show me that
- *  panel" through the rotation rather than scrolling to a hidden card. */
-export const hosts = (id) => slides.some((s) => s.id === id);
-
-// Rebuilt bodies do not disturb the rotation — the cards themselves are never
-// replaced — so there is nothing to re-run after a render. This export exists
-// only so `main.js` can put the ring back on the right card after a rollover.
-export function repaintCarousel() {
-  if (slides.length) paint();
-}
-
-/** Used by the cheatsheet, so the letters are documented from the same table
- *  that dispatches them. */
-export function jumpHints() {
-  return Object.entries(JUMPS).map(([key, id]) => {
-    const slide = slides.find((s) => s.id === id);
-    return [key, slide ? $(`#${slide.card.id} h2`)?.textContent ?? id : id];
-  });
-}

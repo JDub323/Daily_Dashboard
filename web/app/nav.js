@@ -41,7 +41,24 @@ let itemIndex = -1;
 let panelId = null;
 
 const pane = () => $(`#pane-${activeTab()}`);
-const visible = (node) => node.offsetParent !== null;
+
+/**
+ * On screen, and therefore worth landing on.
+ *
+ * `offsetParent` alone was enough while everything off screen was off screen
+ * by way of `display: none` — a hidden pane, a collapsed card. The logging
+ * carousel stacks its four slides in one grid cell and hides three of them
+ * with `visibility`, which keeps their layout (that is the point: the shell
+ * stops resizing as it turns) and therefore keeps their `offsetParent`. Left
+ * at the old test, `h`/`j`/`k`/`l` stopped on three cards nobody could see
+ * and `f` painted hints on their links.
+ *
+ * Checked on the node's own ancestors rather than the node alone, because
+ * `visibility` inherits and it is the *track* that is hiding the slide, not
+ * the slide hiding itself.
+ */
+const visible = (node) =>
+  node.offsetParent !== null && getComputedStyle(node).visibility !== "hidden";
 
 /** Every visible panel card in the active tab, in document order. */
 function panels() {
