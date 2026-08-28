@@ -8,7 +8,7 @@
 // three boxes waiting to be filled in later.
 //
 // So the four take turns. The plan keeps the left half and stays still; the
-// right half is one card that changes every five seconds, in the shape of the
+// right half is one card that changes every three seconds, in the shape of the
 // news strip in a Windows taskbar — which is the reference for a reason. That
 // strip works because it never asks anything of you: it cycles in the corner
 // of your eye and stops the moment you look at it, and looking at it is
@@ -28,8 +28,24 @@
 //
 //   **The focus ring selects it.** Explicit, and it holds. Once h/j/k/l has
 //   landed on this card you are working here, and a rotation under a card you
-//   have selected would move the buttons out from under the keyboard. The
-//   arrow keys then steer it by hand.
+//   have selected would move the buttons out from under the keyboard.
+//
+// All three are one rule on screen: a lit cell is a still one. The shell --
+// not the slide inside it — takes the highlight for the ring and for the
+// pointer both, so the thing that stops rotating and the thing that lights up
+// are visibly the same thing. Before this the pause was invisible, and a
+// widget that stops for no stated reason reads as a widget that has broken.
+//
+// --- how you pick one --------------------------------------------------------
+//
+// A tab bar, and the same one the sections use: `.tab`, with its key printed
+// on it and its active state lit. Four dots and a pair of chevrons answered
+// "which of the four is showing" only for somebody who already knew the
+// order, and they made picking a particular one a matter of stepping past the
+// ones you did not want. `f` then the tab's letter goes straight there, from
+// anywhere in the app. The arrow keys still step to the neighbour once the
+// ring is on the card, which is the small convenience it should always have
+// been rather than the only way in.
 //
 //   **Filling one in holds it.** A capture running on the card (see
 //   capture.js) is the strongest signal there is that you are mid-answer, and
@@ -42,36 +58,69 @@
 // each had its own card; the only thing this file does is decide which one is
 // visible. That is deliberate and it is the same argument tabs.js makes: these
 // panels hold live captures, half-typed inputs and a cursor into a ladder, and
-// rebuilding them on every rotation would drop all three every five seconds.
+// rebuilding them on every rotation would drop all three every three seconds.
 
 import { captureOwner, capturing } from "./capture.js";
 import { el } from "./dom.js";
 import { focusedPanel } from "./nav.js";
 import { activeTab } from "./tabs.js";
 
-/** How long each slide gets. Long enough to read a card's worth of numbers,
- *  short enough that the four come round inside half a minute. */
-const DWELL_MS = 5000;
+/**
+ * How long each slide gets.
+ *
+ * Three rather than five, which is what the tab bar buys. A dwell has to be
+ * long enough to finish reading in only while the slide that turned away is
+ * gone until the rotation brings it back; with the four named on a bar and one
+ * keystroke away, missing one costs a keypress. Twelve seconds for the full
+ * turn is also about the longest a thing can take to come round and still read
+ * as cycling, rather than as a card that changes when you are not looking.
+ */
+const DWELL_MS = 3000;
 
 /**
- * `key: panel id`. The letters `f` waits for, and what each one means.
+ * The four, and how to address one.
+ *
+ * `key` is the letter `f` waits for, and it is printed on the tab — the same
+ * argument as the digit on a section tab, that a shortcut you have to look up
+ * is one you never learn.
  *
  * `c`heck-in, `l`og a session, `m`eals, `p`lumbing — the last of which is the
  * only one that is not the first letter of its title, because `i` is taken by
  * insert mode and "in and out" has no other free letter. `m` agrees with the
  * global meal binding on purpose: the same letter means the same panel from
  * either direction.
+ *
+ * Letters and not digits, though these are painted as the same control as the
+ * section tabs and those are digits. Under `f` a digit already means "open
+ * that numbered notification" (see keys.js), and the whole reason `f` can
+ * carry an alphabet and a numbering at once is that the two never overlap.
+ *
+ * `label` is not the panel's own title. A title is a line at the top of a card
+ * — "morning check-in", "log a session" — and four of those in a row is a
+ * stack of headlines rather than a tab bar.
  */
-export const JUMPS = { c: "checkin", l: "session", m: "meals", p: "bathroom" };
+const TABS = [
+  { key: "c", id: "checkin", label: "check-in" },
+  { key: "l", id: "session", label: "session" },
+  { key: "m", id: "meals", label: "meals" },
+  { key: "p", id: "bathroom", label: "in & out" },
+];
 
-/** Mounted slides, in rotation order. `{ id, card }`. */
+/** `key: panel id`, for the hint layer in keys.js. Derived rather than written
+ *  out a second time, so the letter printed on the tab and the letter that
+ *  works are one fact. */
+export const JUMPS = Object.fromEntries(TABS.map((tab) => [tab.key, tab.id]));
+
+const byId = new Map(TABS.map((tab) => [tab.id, tab]));
+
+/** Mounted slides, in rotation order. `{ id, card, tab }`. */
 const slides = [];
 
 let index = 0;
 let timer = null;
 let hovering = false;
 let track = null;
-let dots = null;
+let bar = null;
 
 /** The card the rotation lives in, or null before `mount` has run. */
 let host = null;
@@ -113,7 +162,7 @@ function held() {
  * grid cell (see `.cyc-track`), so the shell is always as tall as the tallest
  * of them — and a hidden-by-`display:none` slide contributes no height, which
  * meant the card was 505px on the check-in and 300px on the meal log and
- * resized under the pointer every five seconds, shoving the plan beside it and
+ * resized under the pointer every three seconds, shoving the plan beside it and
  * the whole page below it. A rotating widget that reflows the page is worse
  * than no rotating widget.
  *
@@ -126,6 +175,13 @@ function paint() {
   for (const [i, slide] of slides.entries()) {
     const showing = i === index;
     slide.card.classList.toggle("cyc-on", showing);
+    // `active` because that is the class the section tabs carry: one class,
+    // one look, one idea of what a selected tab is.
+    slide.tab.classList.toggle("active", showing);
+    slide.tab.setAttribute("aria-selected", String(showing));
+    // Roving tabindex, the documented tablist pattern and what tabs.js does
+    // upstairs — only the selected tab is in the browser's own focus order.
+    slide.tab.tabIndex = showing ? 0 : -1;
     // Re-triggered by removing and re-adding, because an animation replayed on
     // an element that never lost the class does not replay at all.
     if (showing) {
@@ -135,11 +191,6 @@ function paint() {
       void slide.card.offsetWidth;
       slide.card.classList.add("cyc-in");
     }
-  }
-  if (!dots) return;
-  for (const [i, dot] of [...dots.children].entries()) {
-    dot.classList.toggle("on", i === index);
-    dot.setAttribute("aria-current", String(i === index));
   }
 }
 
@@ -162,7 +213,7 @@ export const step = (delta) => show(index + delta);
 /**
  * Put slide `id` on screen. True if there is one.
  *
- * This is what `f c` and the notifications both call, and it is separate from
+ * This is what a tab, `f c` and the notifications all call, and it is separate from
  * `show` because everything outside this file addresses these panels by id —
  * their position in the rotation is this file's business and nobody else's.
  */
@@ -181,7 +232,7 @@ function arm() {
 function tick() {
   // Re-armed rather than cancelled: whatever is holding it will stop holding
   // it, and a timer that had to be restarted by an event would mean finding
-  // every event that could end a hold. Checking once every five seconds costs
+  // every event that could end a hold. Checking once every three seconds costs
   // nothing and cannot be forgotten.
   if (!held()) step(1);
   arm();
@@ -202,7 +253,10 @@ export function slot(gridNode) {
 
   track = el("div.cyc-track");
 
-  dots = el("div.cyc-dots", { role: "tablist", "aria-label": "which log" });
+  // A real tablist, and the same control the sections are switched with. The
+  // look, the printed key and the lit active state all come from `.tab`, so
+  // this app has one tab rather than two things that resemble each other.
+  bar = el("div.cyc-bar", { role: "tablist", "aria-label": "which log" });
 
   // Deliberately *not* a `.panel`, though it is painted as one. nav.js finds
   // its targets with `$$(".panel")`, so a shell that carried the class would
@@ -218,24 +272,7 @@ export function slot(gridNode) {
     onmouseleave: () => {
       hovering = false;
     },
-  },
-    el("div.cyc-bar", null,
-      el("button.ghost.tiny", {
-        text: "‹",
-        title: "previous log",
-        "aria-label": "previous log",
-        onclick: () => step(-1),
-      }),
-      dots,
-      el("button.ghost.tiny", {
-        text: "›",
-        title: "next log",
-        "aria-label": "next log",
-        onclick: () => step(1),
-      }),
-    ),
-    track,
-  );
+  }, bar, track);
   host.style.setProperty("--span", 3);
   gridNode.append(host);
   return track;
@@ -244,20 +281,31 @@ export function slot(gridNode) {
 /**
  * Register a card as a slide. Called once per hosted panel, from `mountAll`.
  *
- * The dot carries the panel's title as its label rather than a number: the
- * question it answers is "which of the four is showing", and four unlabelled
- * pips answer it only for someone who already knows the order.
+ * Rotation order and tab order are both the order of these calls — which is
+ * the order the panels are listed in main.js — so the bar reads left to right
+ * in the order the card turns, and there is no second table anywhere saying
+ * which of the four comes first.
+ *
+ * `TABS` supplies the short label and the letter; the panel's own `title` is
+ * the fallback and the tooltip, so a fifth hosted panel added without an entry
+ * gets a working, if unkeyed, tab rather than a blank one.
  */
 export function addSlide(id, card, title) {
-  slides.push({ id, card });
-  dots.append(
-    el("button.cyc-dot", {
-      title,
-      "aria-label": title,
-      role: "tab",
-      onclick: () => reveal(id),
-    }),
-  );
+  const meta = byId.get(id);
+  const tab = el("button.tab.cyc-tab", {
+    text: meta?.label ?? title,
+    title,
+    role: "tab",
+    "aria-selected": "false",
+    "aria-controls": card.id,
+    tabIndex: -1,
+    // Drawn by `.tab::before` from the attribute — which is most of the reason
+    // this is the section tabs' own class and not a copy of it.
+    dataset: { key: meta?.key ?? "" },
+    onclick: () => reveal(id),
+  });
+  slides.push({ id, card, tab });
+  bar.append(tab);
 }
 
 /** Start rotating. Called once, after every panel has mounted. */
@@ -273,6 +321,11 @@ export function startCarousel() {
  * Only while the ring is actually on this card — Left and Right are not bound
  * to anything globally and could safely be taken, but a key that steers a
  * widget you are not looking at is a key that appears to do nothing.
+ *
+ * Stepping to the neighbour, and nothing more. Picking a particular one of the
+ * four is the tab bar's job and `f`'s: arrowing past two cards to reach the
+ * third was never a way to choose a card, it was a way to be shown the two you
+ * had not asked for.
  */
 export function takeArrow(e) {
   const focused = focusedPanel();

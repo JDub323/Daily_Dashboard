@@ -150,15 +150,16 @@ const BINDINGS = [
   {
     keys: ["f"],
     hint: "letter every link in this panel, then press its letter to open it "
-      + "· c l m p go to the check-in, the session log, the meals and the "
-      + "in-and-out · a digit opens that numbered notification",
+      + "· c l m p select one of the logging card's four tabs, which print "
+      + "their letter · a digit opens that numbered notification",
     match: (e) => e.key === "f",
     run: () => nav.hint(nudgeCount()),
   },
   {
     keys: ["←", "→"],
-    hint: "turn the logging card, once the ring is on it — it stops turning "
-      + "by itself while you are hovering it, holding it, or filling it in",
+    hint: "step the logging card to the tab beside this one, once the ring is "
+      + "on it — f and a letter go straight to one · it stops turning by "
+      + "itself whenever it is lit: hovered, held, or being filled in",
     // Dispatched ahead of the table, like the capture and the hints. Listed
     // here because the sheet is the map.
     match: () => false,

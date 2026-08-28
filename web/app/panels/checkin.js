@@ -50,13 +50,24 @@ import { put, store } from "../store.js";
  * `[key, label, what 1 means, what 5 means]`, in the order the ladder walks
  * them. The two ends are printed beside every row, because a scale whose
  * direction you have to remember is one you will eventually answer backwards.
+ *
+ * Motivation sits second, straight after the night it follows from, rather
+ * than last. Last is the worst seat in a five-item questionnaire: it is the
+ * one answered while you are already reaching for the next thing, and of the
+ * five this is the answer that most deserves a moment — the other three are
+ * readings off the body, which you either are or are not sore, and this one
+ * is the only question about the day ahead rather than the night behind.
+ *
+ * Reordering is free. The row is stored by key, so the five columns are
+ * untouched, `score` is the same sum it was, and every morning logged before
+ * this is still comparable with every morning after it.
  */
 const ITEMS = [
   ["sleep_quality", "sleep quality", "slept badly", "slept well"],
+  ["motivation", "motivation", "dreading it", "keen"],
   ["fatigue", "fatigue", "fresh", "wiped out"],
   ["soreness", "soreness", "loose", "wrecked"],
   ["stress", "stress", "calm", "frazzled"],
-  ["motivation", "motivation", "dreading it", "keen"],
 ];
 
 /**

@@ -793,35 +793,48 @@ svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(-
        display: flex; flex-direction: column; gap: var(--s2); }
 .grid > .cyc { grid-column: span var(--span, 3); }
 .cyc > .cyc-track > .panel {
-  background: transparent; border: none; padding: 0;
-  /* The ring still has to be able to land on the slide — it is the slide, not
-     the shell, that owns the keyboard — so the highlight is drawn as an inset
-     ring rather than as the border it no longer has. */
-  box-shadow: none;
+  background: transparent; border: none; padding: 0; box-shadow: none;
 }
-.cyc > .cyc-track > .panel.nav-panel {
-  box-shadow: inset 0 0 0 1px var(--accent); border-radius: var(--r-sm);
+
+/* ---- lit means still ----
+   The ring still *lands* on the slide — it is the slide, not the shell, that
+   owns the keyboard — but it is drawn on the shell. A ring around the inner
+   card was a box inside a box: it lit a sub-cell of a cell, when what you have
+   selected is the whole cell and everything on it.
+
+   Hover gets the same treatment one step dimmer, and that is the point of the
+   pair. All three things that stop the rotation — the pointer, the ring, a
+   capture running inside — now say so, where before the card simply stopped,
+   and a widget that stops for no visible reason reads as a broken one. One
+   rule to hold: a lit cell is a still cell.
+
+   `:has` because nav.js puts the class on the slide and knows nothing about
+   the shell; this is the shell answering for its own contents. */
+.cyc:hover, .cyc:focus-within {
+  border-color: var(--accent-dim); box-shadow: 0 0 0 1px var(--accent-dim);
+}
+.cyc:has(> .cyc-track > .panel.nav-panel) {
+  border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent);
 }
 /* All four in the same cell, so the shell is as tall as the tallest and does
    not resize as it turns. `visibility` and not `display`, or the three that
    are off screen would contribute no height and we would be back to a card
-   that jumps 200px every five seconds. */
+   that jumps 200px every three seconds. */
 .cyc-track { display: grid; }
 .cyc-track > .panel { grid-area: 1 / 1; visibility: hidden; pointer-events: none; }
 .cyc-track > .panel.cyc-on { visibility: visible; pointer-events: auto; }
 
-/* The controls sit where a heading would, and are the same height as one, so
+/* The tab bar sits where a heading would, and is the same height as one, so
    the four slides do not each start at a different y. */
-.cyc-bar { display: flex; align-items: center; gap: var(--s2);
+.cyc-bar { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap;
            border-bottom: 1px solid var(--border-soft);
            padding-bottom: var(--s2); margin-bottom: var(--s1); }
-.cyc-dots { display: flex; gap: var(--s1); flex: 1; justify-content: center; }
-.cyc-dot {
-  width: 22px; height: 3px; padding: 0; border: none; border-radius: 0;
-  background: var(--border); cursor: pointer;
-}
-.cyc-dot:hover { background: var(--accent-dim); }
-.cyc-dot.on { background: var(--accent); }
+/* `.tab` does all of the work — these *are* the section tabs, and everything
+   below is the four of them fitting inside a card rather than across a page.
+   Four dots and two chevrons answered "which of the four is showing" only for
+   somebody who already knew the order, and made choosing one a matter of
+   stepping past the ones you did not want. */
+.cyc > .cyc-bar > .tab { padding: var(--s1) var(--s2); letter-spacing: .12em; }
 
 /* The rotation, made visible. Short and small — this is a card changing, not
    a transition anybody should be waiting on, and at 5s dwell an animation of
@@ -1694,6 +1707,28 @@ html::before {
 .panel.hero { --bracket-color: var(--gold-dim); }
 .panel.done-gold { --bracket-color: var(--gold); }
 .panel.nav-panel { --bracket-color: var(--accent); }
+
+/* The rotating cell is one plate, not four of them stacked inside a frame.
+   The slides hand their brackets up to the shell, which is the thing that
+   actually has the edges — and which is now also the thing that lights when
+   the ring is on one of them. Same reason the inset ring went: the cell is
+   the unit, and drawing its parts separately made it read as several. */
+.cyc {
+  border-radius: 0;
+  border-color: rgba(92,207,230,.14);
+  background:
+    linear-gradient(180deg, rgba(223,230,242,.045), transparent 38%),
+    var(--panel);
+  box-shadow: inset 0 1px 0 rgba(223,230,242,.10);
+}
+.cyc > .cyc-track > .panel::before, .cyc > .cyc-track > .panel::after { content: none; }
+.cyc::before, .cyc::after {
+  content: ""; position: absolute; width: var(--bracket); height: var(--bracket);
+  pointer-events: none; border: 0 solid var(--bracket-color, rgba(92,207,230,.34));
+}
+.cyc::before { top: -1px; left: -1px; border-top-width: 2px; border-left-width: 2px; }
+.cyc::after { bottom: -1px; right: -1px; border-bottom-width: 2px; border-right-width: 2px; }
+.cyc:has(> .cyc-track > .panel.nav-panel) { --bracket-color: var(--accent); }
 
 /* ---- headings ----
    A panel heading is a machine label now: display face, uppercase, wide
