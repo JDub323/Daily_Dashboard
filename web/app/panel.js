@@ -225,8 +225,15 @@ export function panelEnter() {
  *     other one is the exact hazard `capture.js` was written to avoid. Once
  *     the ladder is up the capture owns them properly, and it is one Enter
  *     away.
+ *
+ * `m` is deliberately *not* here, though it is a global binding. It takes you
+ * to the meal log — so on every card but that one it is a key that moves you
+ * and the panel has no claim on it, which is what the list is protecting. On
+ * the meal log itself there is nowhere left to go, and `m` is that panel's own
+ * word for *minus an hour*. Leaving it out of the set is what lets the card
+ * under the ring win, and nothing else claims `m`, so nowhere else changes.
  */
-const RESERVED = new Set(["h", "j", "k", "l", "i", "f", "g", "G", "n", "m", "?", "/"]);
+const RESERVED = new Set(["h", "j", "k", "l", "i", "f", "g", "G", "n", "?", "/"]);
 
 /**
  * Offer a key to the focused panel, ahead of the global table.
