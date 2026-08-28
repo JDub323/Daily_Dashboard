@@ -98,11 +98,29 @@ const DWELL_MS = 3000;
  * `label` is not the panel's own title. A title is a line at the top of a card
  * — "morning check-in", "log a session" — and four of those in a row is a
  * stack of headlines rather than a tab bar.
+ *
+ * `task` names the entry in the day's list (chips.js) that speaks for this
+ * tab, and it is what the dot beside the label reports. Three of the four have
+ * one and the fourth deliberately does not:
+ *
+ *   check-in  its own required task — weight and the questionnaire both.
+ *   session   `training`, which is the plan's prescribed blocks all logged.
+ *             The chip points at the plan panel because that is where you read
+ *             what is owed, but this is the card you discharge it from, and
+ *             the tab is answering "have I written the day's sessions down".
+ *             On a rest day the task does not exist and the dot is absent,
+ *             which is the correct thing for it to say.
+ *   meals     three logged.
+ *   in & out  nothing. It is a report with no target — there is no number of
+ *             times a day you are supposed to have gone — and inventing an
+ *             obligation for it so that all four tabs could carry a dot would
+ *             be the tail wagging the dog. An absent dot means this card asks
+ *             nothing of today, which is a true and useful third state.
  */
 const TABS = [
-  { key: "c", id: "checkin", label: "check-in" },
-  { key: "l", id: "session", label: "session" },
-  { key: "m", id: "meals", label: "meals" },
+  { key: "c", id: "checkin", label: "check-in", task: "checkin" },
+  { key: "l", id: "session", label: "session", task: "training" },
+  { key: "m", id: "meals", label: "meals", task: "meals" },
   { key: "p", id: "bathroom", label: "in & out" },
 ];
 
@@ -113,7 +131,7 @@ export const JUMPS = Object.fromEntries(TABS.map((tab) => [tab.key, tab.id]));
 
 const byId = new Map(TABS.map((tab) => [tab.id, tab]));
 
-/** Mounted slides, in rotation order. `{ id, card, tab }`. */
+/** Mounted slides, in rotation order. `{ id, card, tab, mark, title }`. */
 const slides = [];
 
 let index = 0;
@@ -292,8 +310,12 @@ export function slot(gridNode) {
  */
 export function addSlide(id, card, title) {
   const meta = byId.get(id);
+  // Starts at `none` and stays there until `markTabs` says otherwise, which is
+  // the right default in both directions: a tab with no task never moves off
+  // it, and one whose task has not been counted yet shows nothing rather than
+  // guessing that it is owed.
+  const mark = el("span.cyc-mark", { dataset: { state: "none" }, "aria-hidden": "true" });
   const tab = el("button.tab.cyc-tab", {
-    text: meta?.label ?? title,
     title,
     role: "tab",
     "aria-selected": "false",
@@ -303,9 +325,44 @@ export function addSlide(id, card, title) {
     // this is the section tabs' own class and not a copy of it.
     dataset: { key: meta?.key ?? "" },
     onclick: () => reveal(id),
-  });
-  slides.push({ id, card, tab });
+  }, meta?.label ?? title, mark);
+  slides.push({ id, card, tab, mark, title });
   bar.append(tab);
+}
+
+/**
+ * Say which of the four today still wants, from the day's task list.
+ *
+ * Called by `renderChips`, which already runs on every store change and is
+ * already where `markDone` turns a finished panel gold — so this is the same
+ * fact reaching one more surface rather than a second definition of done. The
+ * list is passed in rather than imported: chips.js reaches this file through
+ * panel.js already, and an import back the other way would be a cycle.
+ *
+ * The point of it is that the card shows one slide at a time. Everything else
+ * on the page can be read by looking at it; this cell could only be read by
+ * waiting for it, and "have I done my check-in" is not a question worth twelve
+ * seconds. The dot answers all four at once, from any one of them.
+ *
+ * Gold and filled is done, hollow is owed, absent is not asked — which is the
+ * app's own gold-means-finished rule, and the reason the tabs themselves are
+ * lit cyan rather than the gold the section tabs use: on a bar that now has a
+ * real gold marker on it, a gold *selection* would be the same colour saying a
+ * different thing.
+ */
+export function markTabs(tasks) {
+  for (const slide of slides) {
+    const wanted = byId.get(slide.id)?.task;
+    const task = wanted ? tasks.find((entry) => entry.id === wanted) : null;
+    const state = task ? (task.done ? "done" : "owed") : "none";
+    slide.mark.dataset.state = state;
+    // On the button rather than the dot, because a `title` on a span inside a
+    // button is a tooltip you have to find. The state is spelled out because a
+    // colour is not a label — and this one has three values.
+    slide.tab.title = task
+      ? `${slide.title} · ${task.done ? "done today" : "still owed"}`
+      : slide.title;
+  }
 }
 
 /** Start rotating. Called once, after every panel has mounted. */

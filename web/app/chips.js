@@ -55,6 +55,7 @@
 // puzzle and the word are a real sitting each, and a Wordle is a Wordle.
 
 import * as api from "./api.js";
+import { markTabs } from "./carousel.js";
 import { el, mount } from "./dom.js";
 import { focusPanel, markDone } from "./panel.js";
 import { weightToday } from "./panels/checkin.js";
@@ -369,6 +370,12 @@ export async function renderChips() {
   // training is finished outright — a card still open is a panel still owed.
   const training = list.filter((task) => task.panel === "plan");
   if (training.length) markDone("plan", training.every((task) => task.done));
+
+  // The logging carousel shows one of its four at a time, so the same fact has
+  // to reach its tab bar or three quarters of it is unreadable without waiting
+  // for the rotation. Which task speaks for which tab is carousel.js's table,
+  // not this one's — here it is only the list.
+  markTabs(list);
 
   // The old client fired a save on every page load: it recomputed `pct` as a
   // float and compared it against a stored float, which differed often enough

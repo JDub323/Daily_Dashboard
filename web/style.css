@@ -834,7 +834,36 @@ svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(-
    Four dots and two chevrons answered "which of the four is showing" only for
    somebody who already knew the order, and made choosing one a matter of
    stepping past the ones you did not want. */
-.cyc > .cyc-bar > .tab { padding: var(--s1) var(--s2); letter-spacing: .12em; }
+.cyc > .cyc-bar > .tab { padding: var(--s1) var(--s2); letter-spacing: .12em; gap: var(--s1); }
+/* The documented fallback in addSlide: a hosted panel with no entry in `TABS`
+   gets a working tab rather than one carrying an empty key box. */
+.cyc > .cyc-bar > .tab[data-key=""]::before { content: none; }
+
+/* ---- which of the four today still wants ----
+   The card shows one slide at a time, so without this the other three can only
+   be read by waiting for them. Gold and filled is done, hollow is owed, absent
+   is not asked of today at all — the in-and-out log has no target and never
+   carries one. */
+.cyc-mark {
+  width: 5px; height: 5px; border-radius: 50%; box-sizing: border-box;
+  border: 1px solid transparent; flex: none;
+}
+.cyc-mark[data-state="none"] { display: none; }
+.cyc-mark[data-state="owed"] { border-color: var(--dim); }
+.cyc-mark[data-state="done"] { border-color: var(--gold); background: var(--gold); }
+
+/* Cyan where the section tabs are gold, and the dot above is why. Gold means
+   *finished* everywhere in this app — it is what a done panel's border goes,
+   and it is now what a done tab's dot is — so a gold selection sitting two
+   pixels from a gold completion would be one colour saying two things. Which
+   tab you are on is a statement about where the cursor is, and cyan is what
+   that means: the focus ring, the item ring, every link. The bar upstairs can
+   keep gold because nothing on it is ever finished. */
+.cyc > .cyc-bar > .tab.active {
+  color: var(--accent); border-color: var(--accent-dim);
+  background: linear-gradient(180deg, rgba(92,207,230,.12), rgba(92,207,230,.02));
+  box-shadow: inset 0 -2px 0 var(--accent), inset 0 1px 0 rgba(223,230,242,.10);
+}
 
 /* The rotation, made visible. Short and small — this is a card changing, not
    a transition anybody should be waiting on, and at 5s dwell an animation of
@@ -1972,3 +2001,16 @@ input:focus, textarea:focus {
   font: inherit; font-size: var(--t-meta); color: var(--dim);
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
+
+/* One corrected claim: what I wrote, what is actually so, and where that was
+   checked. Bordered on the left rather than boxed, like `.motion` — it is a
+   quotation from the ballot, not a control. This is the part of the grade
+   worth the most, so it is the one thing on the card that is not dimmed. */
+.correction {
+  border-left: 2px solid var(--bad); padding: 0 0 0 var(--s3);
+  margin: var(--s2) 0;
+}
+
+/* The prose half of the ballot. Wider line height than the rest of the panel
+   because this is read as paragraphs rather than scanned as a row. */
+.feedback { white-space: pre-wrap; line-height: 1.55; }
