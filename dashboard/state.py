@@ -661,6 +661,30 @@ def patterns_panel(repo: Repository, today: dt.date) -> api.PatternsPanel:
     )
 
 
+def investigate_panel(repo: Repository, today: dt.date) -> api.InvestigatePanel:
+    """Today's topic, if one has been drawn, and the pool behind it.
+
+    Read-only, like everything in this module: it reports the draw, it does not
+    make one. Drawing spends a topic, and a boot payload that drew would mean
+    the day's topic depended on whether the dashboard happened to be opened --
+    the same rule that keeps the theorem draw off this path.
+
+    A `investigation_day` row pointing at a topic that has since been struck off
+    is possible -- draw it in the morning, clear it in the evening -- and is
+    reported as drawn anyway. The day did draw it, and rewriting that after the
+    fact would make the panel disagree with its own history.
+    """
+    day = repo.investigation_day(today)
+    pool = repo.pool()
+    return api.InvestigatePanel(
+        today=repo.investigation(day.investigation_id) if day else None,
+        drawn_on=day.date if day else None,
+        pool=pool,
+        pool_size=len(pool),
+        investigated=repo.investigated_count(),
+    )
+
+
 def papers_panel(repo: Repository, today: dt.date) -> api.PapersPanel:
     return api.PapersPanel(
         surfaced=repo.surfaced_paper(today),
@@ -881,6 +905,7 @@ def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.Dash
         math=math_panel(cfg, repo, today),
         chess=chess_panel(repo, today),
         debate=debate_panel(cfg, repo, today),
+        investigate=investigate_panel(repo, today),
         patterns=patterns_panel(repo, today),
         spelling=spelling_panel(cfg, repo, today),
         tricks=tricks_panel(cfg, repo, today),

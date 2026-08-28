@@ -988,3 +988,45 @@ class TodoItem(Base):
     @property
     def all_day(self) -> bool:
         return self.start is None
+
+
+# --- investigations --------------------------------------------------------
+
+
+class Investigation(Base):
+    """One thing to look into, sitting in the pool until a day draws it.
+
+    The pool is a queue only in the sense that things join the back of it --
+    the draw is uniform over whatever is open, because the list the class hands
+    out is a list of things worth doing, not a list in priority order.
+
+    `used_on` and `cleared_on` are both "no longer in the pool" and are kept
+    apart on purpose: one says the topic was investigated, the other says it
+    was struck off. Only the first should ever be counted as work done.
+    """
+
+    id: int | None = None
+    added_on: dt.date
+    topic: str = Field(min_length=3, max_length=300)
+
+    used_on: dt.date | None = None
+    cleared_on: dt.date | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def open(self) -> bool:
+        return self.used_on is None and self.cleared_on is None
+
+
+class InvestigationDay(Base):
+    """The topic one day drew.
+
+    Nothing here records whether the work was done -- that lives on the
+    `Investigation` this points at, which is what lets an unanswered day expire
+    on its own. The row is the claim "this day drew this topic", and that claim
+    stays true whatever happens next.
+    """
+
+    date: dt.date
+    investigation_id: int
+    drawn_at: dt.datetime | None = None

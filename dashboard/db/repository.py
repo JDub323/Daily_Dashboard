@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import random
 import sqlite3
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -1524,6 +1525,134 @@ class Repository:
         return self.conn.execute(
             "SELECT COUNT(*) FROM debate_fact WHERE date = ?", (_iso(on),)
         ).fetchone()[0]
+
+    # -- investigations -----------------------------------------------------
+
+    #: What "still in the pool" means, in the one place it is spelled.
+    _OPEN = "used_on IS NULL AND cleared_on IS NULL"
+
+    def pool(self) -> list[d.Investigation]:
+        """Everything still open, oldest first.
+
+        Insertion order rather than `added_on` order: a paste puts five topics
+        on the same day and the order they were typed is the only thing that
+        separates them, so ordering by the date would shuffle each day's list
+        on every read.
+        """
+        rows = self.conn.execute(
+            f"SELECT * FROM investigation WHERE {self._OPEN} ORDER BY id"
+        ).fetchall()
+        return [d.Investigation(**dict(r)) for r in rows]
+
+    def investigation(self, investigation_id: int) -> d.Investigation | None:
+        row = self.conn.execute(
+            "SELECT * FROM investigation WHERE id = ?", (investigation_id,)
+        ).fetchone()
+        return d.Investigation(**dict(row)) if row else None
+
+    def investigated_count(self) -> int:
+        """Topics carried to a grade. Struck-off ones are deliberately not
+        counted -- clearing the pool is tidying, not work."""
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM investigation WHERE used_on IS NOT NULL"
+        ).fetchone()[0]
+
+    def _add_investigation(self, topic: str, on: dt.date) -> d.Investigation | None:
+        """One topic, or None if an identical one is already open.
+
+        None rather than an exception: the caller is reading a pasted box and a
+        line already in the pool is the ordinary case, not a failure -- the
+        same list gets pasted twice far more often than it gets typed twice.
+
+        The case-folded uniqueness is the partial index's, not this method's.
+        Spelling the rule again here would be a second copy that could disagree
+        with the first under a race.
+        """
+        try:
+            row = self.conn.execute(
+                "INSERT INTO investigation (added_on, topic) VALUES (?, ?) RETURNING *",
+                (_iso(on), topic),
+            ).fetchone()
+        except sqlite3.IntegrityError:
+            return None
+        return d.Investigation(**dict(row))
+
+    def add_investigations(
+        self, topics: Sequence[str], on: dt.date
+    ) -> list[d.Investigation | None]:
+        """A pasted list, added in one transaction, in order.
+
+        One transaction for the paste rather than one per line: the insert is
+        guarded by a partial unique index, so two tabs pasting the same handout
+        at once would otherwise interleave into a pool half-filled from each.
+
+        The result is positional -- None where the topic was already open -- so
+        the caller can report per line without matching anything back up.
+        """
+        with transaction(self.conn):
+            return [self._add_investigation(topic, on) for topic in topics]
+
+    def clear_investigation(self, investigation_id: int, on: dt.date) -> d.Investigation:
+        """Strike one topic off without spending a day on it.
+
+        Guarded on `used_on IS NULL`: an investigated topic is history, and
+        history does not get struck off. Clearing an already-cleared row is a
+        no-op that hands it back unchanged.
+        """
+        with transaction(self.conn):
+            self.conn.execute(
+                "UPDATE investigation SET cleared_on = ? "
+                "WHERE id = ? AND used_on IS NULL AND cleared_on IS NULL",
+                (_iso(on), investigation_id),
+            )
+            row = self.investigation(investigation_id)
+        if row is None:
+            raise LookupError(f"no investigation {investigation_id}")
+        return row
+
+    def investigation_day(self, date: dt.date) -> d.InvestigationDay | None:
+        row = self.conn.execute(
+            "SELECT * FROM investigation_day WHERE date = ?", (_iso(date),)
+        ).fetchone()
+        return d.InvestigationDay(**dict(row)) if row else None
+
+    def draw_investigation(
+        self, date: dt.date, rng: random.Random | None = None
+    ) -> d.InvestigationDay | None:
+        """Claim the day for a topic, or hand back the one that already has it.
+
+        Uniform over the open pool. Not weighted by age the way `_draw_card` is
+        -- that curve exists to space out *repeats*, and a topic here is drawn
+        at most once, so there is nothing to space.
+
+        `ON CONFLICT DO NOTHING` and a re-read rather than check-then-write,
+        for the reason `record_draw` gives: two tabs loading at once both see
+        no draw, and the loser of that race should get today's actual topic
+        rather than an IntegrityError.
+
+        None when the pool is empty, which is a state and not an error -- the
+        panel says so and offers the box.
+        """
+        with transaction(self.conn):
+            existing = self.investigation_day(date)
+            if existing is not None:
+                return existing
+
+            rows = self.conn.execute(
+                f"SELECT id FROM investigation WHERE {self._OPEN} ORDER BY id"
+            ).fetchall()
+            if not rows:
+                return None
+            chosen = (rng or random).choice([r["id"] for r in rows])
+
+            self.conn.execute(
+                "INSERT INTO investigation_day (date, investigation_id) VALUES (?, ?) "
+                "ON CONFLICT (date) DO NOTHING",
+                (_iso(date), chosen),
+            )
+            drawn = self.investigation_day(date)
+        assert drawn is not None  # just inserted, or already there
+        return drawn
 
     # -- word ---------------------------------------------------------------
 

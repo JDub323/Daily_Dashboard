@@ -1401,6 +1401,63 @@ MIGRATIONS: list[tuple[int, str]] = [
                 '"brutal"',   '"impossible"');
         """,
     ),
+    (
+        23,
+        """
+        -- The investigation pool: things to look into, drawn one a day.
+        --
+        -- The class hands out a list of them; this is where a list lives until
+        -- a day picks something off it. One row per topic, and the row outlives
+        -- the day that drew it: `used_on` is set when the write-up is graded,
+        -- not when the topic is drawn. That is the whole of the "returns to the
+        -- pool" rule -- a day that draws and then writes nothing leaves
+        -- `used_on` NULL, so tomorrow's draw sees the topic again and there is
+        -- nothing to reconcile at midnight. Compare `debate_session`, which
+        -- needed a lapse sweep precisely because it recorded the claim on the
+        -- day rather than leaving the pool alone.
+        CREATE TABLE investigation (
+            id         INTEGER PRIMARY KEY,
+            added_on   TEXT NOT NULL
+                            CHECK (added_on IS strftime('%Y-%m-%d', added_on)),
+            topic      TEXT NOT NULL CHECK (length(topic) BETWEEN 3 AND 300),
+
+            -- Investigated and graded. NULL means still in the pool.
+            used_on    TEXT CHECK (used_on IS NULL
+                                   OR used_on IS strftime('%Y-%m-%d', used_on)),
+
+            -- Struck off by hand: gone stale, superseded by a later list, or
+            -- simply not worth a day. Deliberately not the same column as
+            -- `used_on` -- the two say opposite things about whether the topic
+            -- was ever looked into, and collapsing them would make the pool's
+            -- own history a lie.
+            cleared_on TEXT CHECK (cleared_on IS NULL
+                                   OR cleared_on IS strftime('%Y-%m-%d', cleared_on))
+        ) STRICT;
+
+        -- "Open" is read by the draw, counted by the panel and checked against
+        -- by the paste box, so the predicate is written once here rather than
+        -- three times over in Python.
+        CREATE INDEX investigation_pool ON investigation (id)
+            WHERE used_on IS NULL AND cleared_on IS NULL;
+
+        -- Case-folded, and scoped to the open pool. Pasting Monday's list again
+        -- on Tuesday should be a no-op, but a topic investigated in September
+        -- may fairly come round again in November -- so the constraint has to
+        -- lapse when the row does.
+        CREATE UNIQUE INDEX investigation_open_topic ON investigation (lower(topic))
+            WHERE used_on IS NULL AND cleared_on IS NULL;
+
+        -- One draw a day, keyed by the date, so a reload cannot reroll it --
+        -- the contract `theorem_draw` and `debate_session` already hold.
+        CREATE TABLE investigation_day (
+            date             TEXT PRIMARY KEY
+                                  CHECK (date IS strftime('%Y-%m-%d', date)),
+            investigation_id INTEGER NOT NULL REFERENCES investigation (id),
+            drawn_at         TEXT NOT NULL
+                                  DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        ) STRICT;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

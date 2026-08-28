@@ -29,6 +29,7 @@ import debateStats, { invalidateDebateHistory } from "./panels/debatestats.js";
 import deck from "./panels/deck.js";
 import games from "./panels/games.js";
 import health from "./panels/health.js";
+import investigate from "./panels/investigate.js";
 import markets from "./panels/markets.js";
 import meals from "./panels/meals.js";
 import math from "./panels/math.js";
@@ -123,8 +124,10 @@ const PANELS = [
   // math — the problem is the hero; the trick and the deck are the two things
   // that make the next one easier.
   math, tricks, theorem, deck,
-  // politics
-  debate, patterns, debateStats, politics,
+  // politics — `investigate` is the class's daily assignment and is on its way
+  // to being the tab's hero; debate and its trends come off once it can carry
+  // the tab on its own.
+  debate, investigate, patterns, debateStats, politics,
   // dailies — no hero, in pairs: the day's line about itself at the top, then
   // the two vocabulary cells, the two games cells, the two hobbies, and the
   // day's article across the bottom.

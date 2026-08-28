@@ -48,6 +48,7 @@ from .domain import (
     DebateFact,
     DebateReading,
     DebateSession,
+    Investigation,
     MathProblem,
     MealLog,
     Paper,
@@ -189,6 +190,28 @@ class PatternRecallRequest(DateBody):
 class PatternArchiveRequest(DateBody):
     card_id: int
     archived: bool = True
+
+
+class InvestigateAddRequest(DateBody):
+    """The day's list, pasted whole.
+
+    One topic per line, and the box is the unit rather than the line -- the
+    class hands out five or six at a time and typing them in one at a time is
+    how a pool stops being filled. Same bargain `TodoWriteRequest` makes, and
+    the same failure mode it avoids: a line that cannot be written comes back
+    carrying its own reason rather than failing the other five.
+    """
+
+    text: str = Field(min_length=3, max_length=8000)
+
+
+class InvestigateDrawRequest(DateBody):
+    """No body beyond the date. The draw takes no argument -- picking is the
+    server's job, and a client that could name the topic would be a reroll."""
+
+
+class InvestigateClearRequest(DateBody):
+    investigation_id: int
 
 
 class TheoremNewRequest(DateBody):
@@ -921,6 +944,72 @@ class DebatePanel(Base):
     week_start: dt.date | None = None
 
 
+class InvestigatePanel(Base):
+    """Today's investigation: what was drawn, and what is left to draw from.
+
+    Two states so far -- nothing drawn, and drawn -- which is why `today` is
+    nullable rather than the panel carrying a status enum. The states the
+    write-up and the ballot add hang off the same row, so the shape holds.
+
+    The whole pool travels with the payload. It is a few hundred short strings
+    at the very most and the panel lists them so they can be struck off, which
+    is the only way the pool ever shrinks without a day being spent.
+    """
+
+    today: Investigation | None = None
+    """The topic this day drew, or None before the button is pressed.
+
+    [Invariant] Drawing is a button. A panel that drew on render would spend a
+    topic every morning the politics tab was painted, which is every morning --
+    the rule the theorem draw and the debate session both hold.
+    """
+
+    drawn_on: dt.date | None = None
+    """The date `today` was drawn for. Echoed back so the panel can tell "drawn
+    this morning" from a stale payload it is about to replace."""
+
+    pool: list[Investigation] = Field(default_factory=list)
+    """Everything still open, oldest first -- the order they were handed out,
+    which is the only order the list has ever had."""
+
+    pool_size: int = 0
+    investigated: int = 0
+    """Topics carried all the way to a grade. Not `len(pool)`'s complement:
+    struck-off topics are neither."""
+
+
+class InvestigateLine(Base):
+    """What one pasted line became.
+
+    Exactly one of `topic` and `error` is set. The box needs both halves: a
+    paste of six where the fourth was a stray page number should say so, and a
+    paste where every line was already in the pool should not look like a
+    success.
+    """
+
+    raw: str
+    topic: str | None = None
+    error: str | None = None
+
+
+class InvestigateAddResponse(Base):
+    """The panel, plus what the box did with each line.
+
+    Two fields rather than folding the report into the panel: the report is
+    about one request and is gone on the next render, while the panel is the
+    state of the world. A panel carrying the last paste's errors would show
+    them again after an unrelated redraw.
+    """
+
+    panel: InvestigatePanel
+    lines: list[InvestigateLine] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def added(self) -> int:
+        return sum(1 for line in self.lines if line.error is None)
+
+
 class RubricTrend(Base):
     """One ballot line's record across every scored debate.
 
@@ -1184,6 +1273,7 @@ class DashboardState(Base):
     math: MathPanel
     chess: ChessPanel
     debate: DebatePanel
+    investigate: InvestigatePanel
     patterns: PatternsPanel
     spelling: SpellingPanel
     tricks: TricksPanel

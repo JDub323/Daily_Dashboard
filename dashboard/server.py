@@ -49,6 +49,7 @@ from . import (
     feeds,
     garmin,
     interests,
+    investigate,
     logs,
     portfolio,
     scoring,
@@ -1312,6 +1313,63 @@ def _register(app: FastAPI) -> None:
         )
         _render_dossier(cfg, repo, session.issue)
         return state.debate_panel(cfg, repo, body.date)
+
+    # -- investigations ----------------------------------------------------
+
+    @app.get("/api/investigate")
+    def investigate_today(repo: Repo, date: Today) -> api.InvestigatePanel:
+        return state.investigate_panel(repo, date)
+
+    @app.post("/api/investigate/add")
+    def investigate_add(repo: Repo, body: api.InvestigateAddRequest) -> api.InvestigateAddResponse:
+        """Read the whole box and add whatever is new in it.
+
+        Never raises on a bad line. The box is the day's handout and a paste of
+        six where one is a stray page number should add the five -- so every
+        line comes back with its own verdict and the request itself succeeds.
+        A line already in the pool is reported the same way, because pasting
+        the same list twice is the ordinary way this endpoint is reached.
+        """
+        parsed = investigate.parse_topics(body.text)
+        written = repo.add_investigations(
+            [item.topic for item in parsed if item.topic is not None], body.date
+        )
+
+        lines: list[api.InvestigateLine] = []
+        results = iter(written)
+        for item in parsed:
+            if item.topic is None:
+                lines.append(api.InvestigateLine(raw=item.raw, error=item.error))
+            elif next(results) is None:
+                lines.append(api.InvestigateLine(raw=item.raw, error="already in the pool"))
+            else:
+                lines.append(api.InvestigateLine(raw=item.raw, topic=item.topic))
+
+        return api.InvestigateAddResponse(
+            panel=state.investigate_panel(repo, body.date), lines=lines
+        )
+
+    @app.post("/api/investigate/draw")
+    def investigate_draw(repo: Repo, body: api.InvestigateDrawRequest) -> api.InvestigatePanel:
+        """Claim the day for one topic.
+
+        A POST and a button, never a GET on render: drawing spends a topic, and
+        a panel that drew on mount would spend one every morning the politics
+        tab was painted. Idempotent all the same -- a second press returns the
+        topic the first one drew, which is what makes it safe to press when you
+        cannot remember whether you did.
+
+        An empty pool is not an error. It comes back as a panel with nothing
+        drawn, and the panel says so and offers the box.
+        """
+        repo.draw_investigation(body.date)
+        return state.investigate_panel(repo, body.date)
+
+    @app.post("/api/investigate/clear")
+    def investigate_clear(repo: Repo, body: api.InvestigateClearRequest) -> api.InvestigatePanel:
+        """Strike a topic off without spending a day on it."""
+        repo.clear_investigation(body.investigation_id, body.date)
+        return state.investigate_panel(repo, body.date)
 
     # -- chess -------------------------------------------------------------
 
