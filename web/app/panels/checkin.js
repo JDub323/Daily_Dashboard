@@ -165,6 +165,10 @@ async function save() {
 export default {
   id: OWNER,
   title: "morning check-in",
+  // In the rotation rather than in the grid. This is the first of the four
+  // registered, so it is the one whose position builds the shell — the plan
+  // is registered before it and therefore keeps the left half.
+  host: "cyc",
   tab: "health",
   slot: "grid",
   span: 3,

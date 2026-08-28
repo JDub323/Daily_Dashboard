@@ -1,5 +1,6 @@
 // The panel harness: mount, render, and turn a thrown error into a retry.
 
+import * as carousel from "./carousel.js";
 import { el, mount } from "./dom.js";
 import { focusPanelNode, focusedPanel, repaint } from "./nav.js";
 import { activate, slotNode } from "./tabs.js";
@@ -111,11 +112,21 @@ export function mountAll() {
 
     const body = el("div.body");
     card.append(...(head ? [head] : []), body);
-    slotNode(def.tab, def.slot).append(card);
+    // A hosted panel goes into the rotation rather than into the grid. The
+    // shell is built on the first one, which lands it exactly where that
+    // panel would have gone — so the layout is still decided by the order in
+    // main.js and there is no second table saying where the widget sits.
+    if (def.host) {
+      carousel.slot(slotNode(def.tab, def.slot)).append(card);
+      carousel.addSlide(def.id, card, def.title ?? def.id);
+    } else {
+      slotNode(def.tab, def.slot).append(card);
+    }
     def.node = body;
     def.card = card;
     draw(def);
   }
+  carousel.startCarousel();
 }
 
 // --- collapsing a finished panel -------------------------------------------
@@ -153,6 +164,11 @@ export function focusPanel(id) {
   const def = registry.get(id);
   if (!def?.card) return;
   activate(def.tab);
+  // Before anything below touches the card: a slide that is not the one
+  // showing is `hidden`, and a hidden card can neither take the focus ring
+  // nor be scrolled to. Asking for one of the four *is* asking the rotation
+  // to stop on it.
+  carousel.reveal(id);
   // Asking for a panel is asking to see it. Scrolling to a one-line summary
   // and flashing its border would be the shortcut appearing not to work, so a
   // collapsed panel opens — and counts as manual, since you asked for it.
@@ -184,6 +200,54 @@ export function panelEnter() {
   if (!cardId) return false;
   for (const def of registry.values()) {
     if (def.card?.id === cardId) return Boolean(def.onEnter?.());
+  }
+  return false;
+}
+
+/**
+ * Keys a panel may never claim, however much it would like to.
+ *
+ * These are the keys that take you *somewhere else*, and that is the whole
+ * distinction: a binding that fills something in can be overruled by the card
+ * under the ring, because you are looking at that card and it is obvious what
+ * you meant. A binding that leaves the card cannot, because the moment it
+ * stops working you are stuck on a panel with no way off it but Alt-hjkl,
+ * which is the key you press when something has already gone wrong.
+ *
+ * The two casualties are worth naming, because both look like omissions:
+ *
+ *   - `l` cannot start a **l**arge meal, so that one still costs the `m` that
+ *     brings you here first. Not a regression — `m` `l` is the same two
+ *     keystrokes `Enter` `l` was.
+ *   - the **digits** cannot start the check-in, which is the bigger loss and
+ *     the easier call. They are the section switches, printed on the tabs, and
+ *     a `3` that means "fatigue 3" on one card and "go to maths" on every
+ *     other one is the exact hazard `capture.js` was written to avoid. Once
+ *     the ladder is up the capture owns them properly, and it is one Enter
+ *     away.
+ */
+const RESERVED = new Set(["h", "j", "k", "l", "i", "f", "g", "G", "n", "m", "?", "/"]);
+
+/**
+ * Offer a key to the focused panel, ahead of the global table.
+ *
+ * A panel may export `onKey(event)`, returning true for a key it consumed.
+ * That is the "one keystroke, not two" rule: the six session kinds and the
+ * first rung of either quick log start their ladder *and* answer with it,
+ * where before they needed an Enter to open the ladder and then the same key
+ * again.
+ *
+ * Never while a capture is running — a panel that is already filling something
+ * in is served by `takeKey`, and this would be a second, competing route to
+ * the same handler.
+ */
+export function panelKey(event) {
+  if (event.shiftKey || event.altKey) return false;
+  if (RESERVED.has(event.key) || /^[0-9]$/.test(event.key)) return false;
+  const cardId = focusedPanel();
+  if (!cardId) return false;
+  for (const def of registry.values()) {
+    if (def.card?.id === cardId) return Boolean(def.onKey?.(event));
   }
   return false;
 }

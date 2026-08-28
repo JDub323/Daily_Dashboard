@@ -30,6 +30,7 @@
 import * as api from "../api.js";
 import { beginCapture, captureLabel, endCapture } from "../capture.js";
 import { el, mount } from "../dom.js";
+import { leaveCell } from "../nav.js";
 import { put, store } from "../store.js";
 
 /** `kind: key`. Alphabetical collision resolved once, here: sparring is `s`,
@@ -86,6 +87,7 @@ function take() {
 export default {
   id: OWNER,
   title: "log a session",
+  host: "cyc",
   tab: "health",
   slot: "grid",
   span: 3,
@@ -94,6 +96,24 @@ export default {
     stage = "kind";
     take();
     return true;
+  },
+
+  /**
+   * A kind letter, pressed at the card rather than inside its ladder.
+   *
+   * The six letters were already the way to pick a kind; they simply needed
+   * an Enter first to open the ladder they belonged to, which is a keystroke
+   * spent saying "yes, this panel" to a panel the ring was already on. Now
+   * the letter does both, and lands on the RPE row exactly as it would have.
+   *
+   * None of the six is bound anywhere else — `b` was the bathroom log and is
+   * not any more, which is what made this unambiguous enough to do.
+   */
+  onKey(e) {
+    if (stage !== null || !BY_KEY.has(e.key)) return false;
+    stage = "kind";
+    take();
+    return Boolean(handlers?.onKey(e));
   },
 
   async render(node) {
@@ -179,6 +199,12 @@ export default {
         rpe = 0;
         stage = null;
         endCapture(OWNER);
+        // Out of the boxes as well as out of the ladder. The note field still
+        // has the caret at this point — it is where Enter was pressed — and a
+        // finished log that leaves you in insert mode costs an Esc before the
+        // next key does anything. Nothing is being typed any more, so nothing
+        // should still be holding the keyboard.
+        leaveCell();
       } catch (error) {
         message.textContent = `failed: ${error.message}`;
       }

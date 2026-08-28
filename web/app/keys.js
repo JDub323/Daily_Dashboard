@@ -31,10 +31,11 @@
 // something you sit down to; these two are answered on the way past.
 
 import { capturing, endCapture, takeKey } from "./capture.js";
+import { JUMPS, takeArrow } from "./carousel.js";
 import { chipTasks, openNextUnfinished, required, score } from "./chips.js";
 import { $, el } from "./dom.js";
 import * as nav from "./nav.js";
-import { panelEnter, quickStart } from "./panel.js";
+import { focusPanel, panelEnter, panelKey, quickStart } from "./panel.js";
 import { splashOpen } from "./splash.js";
 import { TABS, activateNth, cycle } from "./tabs.js";
 import { openModal, toast } from "./ui.js";
@@ -123,9 +124,20 @@ const BINDINGS = [
   },
   {
     keys: ["f"],
-    hint: "letter every link in this panel, then press its letter to open it",
+    hint: "letter every link in this panel, then press its letter to open it "
+      + "· c l m p go to the check-in, the session log, the meals and the "
+      + "in-and-out, from any section",
     match: (e) => e.key === "f",
     run: () => nav.hint(),
+  },
+  {
+    keys: ["←", "→"],
+    hint: "turn the logging card, once the ring is on it — it stops turning "
+      + "by itself while you are hovering it, holding it, or filling it in",
+    // Dispatched ahead of the table, like the capture and the hints. Listed
+    // here because the sheet is the map.
+    match: () => false,
+    run: () => {},
   },
   {
     keys: ["gg", "G"],
@@ -157,12 +169,6 @@ const BINDINGS = [
     hint: "log a meal from wherever you are — size, then how processed",
     match: (e) => e.key === "m",
     run: () => quickStart("meals"),
-  },
-  {
-    keys: ["b"],
-    hint: "log a bathroom visit — stool or urine, then two answers",
-    match: (e) => e.key === "b",
-    run: () => quickStart("bathroom"),
   },
   {
     keys: ["?"],
@@ -292,8 +298,41 @@ export function initKeys() {
     // the whole alphabet while `g`, `h` and `n` keep their normal meanings.
     if (nav.inHints()) {
       e.preventDefault();
-      if (/^[a-z]$/i.test(e.key)) nav.takeHint(e.key.toLowerCase());
+      const key = e.key.toLowerCase();
+      // Four letters are the carousel rather than a link, and `nav` has been
+      // told not to paint them, so the two can never mean the same key.
+      // `focusPanel` rather than `quickStart`: `f c` is "show me the
+      // check-in", and starting its ladder as well would be answering a
+      // question you had only asked to look at.
+      if (JUMPS[key]) {
+        nav.exitHints();
+        focusPanel(JUMPS[key]);
+        return;
+      }
+      if (/^[a-z]$/i.test(key)) nav.takeHint(key);
       else nav.exitHints();
+      return;
+    }
+
+    // The arrows steer the logging card, and only while the ring is on it.
+    // Ahead of the table because the table has no entry for them and the
+    // browser would otherwise scroll the pane sideways.
+    if (takeArrow(e)) {
+      e.preventDefault();
+      return;
+    }
+
+    // A key the focused panel would have taken *after* an Enter takes it
+    // without one: pressing `b` on the session log starts it on boxing,
+    // rather than starting it on nothing and waiting to be told again.
+    //
+    // Offered after the hints and the arrows and before the table, which is
+    // the one ordering that works: a panel may claim any key the table has
+    // not already spent on *going somewhere else*. Panels enforce that half
+    // themselves — see `RESERVED` in panel.js — because the rule is about
+    // which keys are safe to claim, and that is one fact rather than six.
+    if (panelKey(e)) {
+      e.preventDefault();
       return;
     }
 

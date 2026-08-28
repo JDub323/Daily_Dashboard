@@ -308,7 +308,11 @@ function activateItem() {
 // One letter per link also means a headline list is not capped at the six
 // letters that happened to be free.
 
-const HINT_KEYS = "abcdefghijklmnopqrstuvwxyz";
+// Four letters short of the alphabet: c, l, m and p belong to the logging
+// carousel, which `f` also dispatches. Two meanings for one key inside one
+// layer is not a shortcut, and painting `c` on a headline while `c` also
+// jumped to the check-in is exactly that.
+const HINT_KEYS = "abdefghijknoqrstuvwxyz";
 
 let hinted = [];
 /** The mode `f` was pressed from, so cancelling puts you back in it. */
@@ -321,10 +325,17 @@ function links() {
 
 export const inHints = () => mode === "hints";
 
-/** Paint the hints. False if this panel has no links to hint. */
+/**
+ * Paint the hints and take the next key.
+ *
+ * It used to decline on a panel with no links, which was right when links
+ * were the only thing this layer did. It now also carries the four letters
+ * that jump to a log — and those have to work from the maths tab, which has
+ * no links on it at all — so an empty panel opens the layer with nothing
+ * painted rather than swallowing the keypress.
+ */
 export function hint() {
   const list = links().slice(0, HINT_KEYS.length);
-  if (!list.length) return false;
   clearHints();
   hintReturn = mode === "hints" ? hintReturn : mode;
   hinted = list;
@@ -335,7 +346,8 @@ export function hint() {
     node.dataset.navkey = HINT_KEYS[i];
   });
   mode = "hints";
-  $("#st-mode").textContent = `hints a–${HINT_KEYS[hinted.length - 1]}`;
+  const painted = hinted.length ? `a–${HINT_KEYS[hinted.length - 1]} · ` : "";
+  $("#st-mode").textContent = `hints ${painted}c l m p`;
   return true;
 }
 
@@ -351,7 +363,8 @@ export function exitHints() {
 
 /** Consume a key while the hints are up. True if it opened something. */
 export function takeHint(key) {
-  const node = hinted[HINT_KEYS.indexOf(key)];
+  const i = HINT_KEYS.indexOf(key);
+  const node = i < 0 ? null : hinted[i];
   exitHints();
   if (!node) return false;
   // click() rather than window.open: the anchor already carries target and
@@ -461,6 +474,28 @@ export function escape() {
     return true;
   }
   return false;
+}
+
+/**
+ * Finished: give the keyboard back, without moving the ring.
+ *
+ * What `escape()` does, minus the part that is about *you* deciding to
+ * leave — there are no hints to take down, because a panel that just posted
+ * something was not in the hint layer. A log that ends with the caret still
+ * in its note box costs an Esc before the next key means anything, and that
+ * Esc is being pressed at a form that is already empty.
+ *
+ * The ring stays on the card deliberately. You have just written to it, it
+ * is what you are looking at, and moving on is a decision with a key of its
+ * own.
+ */
+export function leaveCell() {
+  const active = document.activeElement;
+  if (active?.blur && active !== document.body) active.blur();
+  if (mode !== "panels") {
+    itemIndex = -1;
+    setMode("panels");
+  }
 }
 
 /**

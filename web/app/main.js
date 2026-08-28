@@ -131,19 +131,19 @@ const PANELS = [
   // markets — the portfolio is the hero; the movements list is the frame it
   // is read against.
   portfolio, markets, finance,
-  // health — the readout is the hero, and the things you type sit under it in
-  // the order the day asks for them: the check-in in the morning, then what the
-  // plan asked for, then the freehand log for anything it did not ask for.
-  // `plan` sits above `session` because on most evenings it is the whole job —
-  // `session` is the escape hatch for a session nobody prescribed.
+  // health — the readout is the hero. Under it the tab is two halves: the plan
+  // on the left, which is the thing you read, and on the right one card that
+  // takes turns being the four things you write into.
   //
-  // The two quick logs come last, and being last is not being least: they are
-  // the two panels you will almost never be *looking* at when you use them.
-  // `b` and `m` reach them from any tab in one keystroke, so their position in
-  // the column is only about reading the day back afterwards — for which the
-  // bottom of the page, under the training you are actually here for, is
-  // exactly right.
-  health, checkin, plan, session, meals, bathroom,
+  // `plan` is registered first and therefore keeps the left half. The four
+  // after it all carry `host: "cyc"`, so the first of them builds the rotation
+  // where it stands and the rest join it — which is why this list is still the
+  // whole of the layout even though half of it is now one card.
+  //
+  // Their order in the rotation is the order the day asks for them: the
+  // check-in in the morning, the session in the evening, and the two logs that
+  // are answered on the way past in between.
+  health, plan, checkin, session, meals, bathroom,
 ];
 
 async function loadConfig() {

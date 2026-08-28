@@ -34,6 +34,7 @@
 import * as api from "./api.js";
 import { beginCapture, captureLabel, endCapture } from "./capture.js";
 import { el, mount } from "./dom.js";
+import { leaveCell } from "./nav.js";
 import { put, store } from "./store.js";
 
 /** Keys that move the hour rather than answering the question in front of
@@ -130,6 +131,12 @@ export function quickLog({
     tab: "health",
     slot: "grid",
     span,
+    // Both quick logs ride in the rotation with the check-in and the session
+    // log. Their old argument for being last in the column — that you are
+    // never looking at them when you use them — is unchanged and is now
+    // served better: they are reachable in two keystrokes from anywhere and
+    // cost no height at all on the days nobody scrolls past them.
+    host: "cyc",
 
     /** Enter, from the focus ring — and the global key, through `quickStart`.
      *  Always a fresh entry: this panel has no half-finished state worth
@@ -138,6 +145,28 @@ export function quickLog({
     onEnter() {
       start();
       return true;
+    },
+
+    /**
+     * A first-rung answer, pressed at the card rather than inside the ladder.
+     *
+     * `s` on the meal log means a small meal and always did — it just needed
+     * an Enter in front of it to open the ladder the `s` belonged to. Only
+     * the first step is offered here, because only the first step is
+     * answerable without context: every rung after it is a question that
+     * depends on what came before, and there is nothing before yet.
+     *
+     * The hour is deliberately not reachable this way. `-` and `+` at an
+     * idle card would start an entry whose only content was a timestamp,
+     * which is a row nobody wants and an easy one to leave half made.
+     */
+    onKey(e) {
+      if (cursor !== null) return false;
+      const first = applicableSteps(steps, {})[0];
+      const hit = first?.options.find(([key]) => key === e.key);
+      if (!hit) return false;
+      start();
+      return Boolean(handlers?.onKey(e));
     },
 
 
@@ -208,6 +237,11 @@ export function quickLog({
         const body = { hour, ...draft };
         cursor = null;
         endCapture(id);
+        // Out of the cell as well as out of the ladder, on the same argument
+        // the session log makes: the entry is finished, nothing is being
+        // typed, and an Esc pressed at a form that has already posted is a
+        // keystroke spent on housekeeping.
+        leaveCell();
         try {
           put("health", await api.post(endpoint, body));
           draft = {};
