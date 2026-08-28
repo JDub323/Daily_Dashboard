@@ -993,6 +993,56 @@ class TodoItem(Base):
 # --- investigations --------------------------------------------------------
 
 
+class Correction(Base):
+    """One factual claim the grader checked and found wanting.
+
+    The part of the ballot worth the most, and the reason the prompt tells it
+    to go and search: a grade is an opinion, and this is a fact you got wrong
+    with a source saying so.
+    """
+
+    claim: str = ""
+    """What the write-up said."""
+
+    correction: str = ""
+    source: str = ""
+
+
+class InvestigationBallot(Base):
+    """What the grader returns, pasted back as JSON.
+
+    Parsed and re-scored rather than trusted -- the model reports what it
+    observed and `investigate.score_ballot` decides what that is worth. Same
+    bargain the debate ballot made, and for the same reason: a judge that hands
+    back its own total is a judge whose scale has to be trusted across model
+    versions, and this rating is meant to outlive several.
+    """
+
+    items: list[RubricItem] = Field(default_factory=list)
+    corrections: list[Correction] = Field(default_factory=list)
+
+    feedback: str = ""
+    """The prose half, addressed to you. Not scored, and the part actually
+    worth reading twice -- which is why it is a stored column of its own and
+    not something reconstructed from the five numbers."""
+
+    patterns: list[str] = Field(default_factory=list, max_length=3)
+    """Reasoning moves worth being able to name, offered to the argument deck.
+
+    Free, since the grader is already writing a ballot, and the answer to the
+    standing problem with a curated deck: you cannot add a card for a pattern
+    you did not know existed. The panel offers each as a button; nothing is
+    added without a press.
+    """
+
+    verdict: str = ""
+
+    capped: list[str] = Field(default_factory=list)
+    """Lines the server pulled down from what the grader awarded. Said out loud
+    on the panel, because a rule you cannot see enforced is one you assume is
+    not being enforced -- see `investigate.apply_accuracy_rule`."""
+
+
 class Investigation(Base):
     """One thing to look into, sitting in the pool until a day draws it.
 
@@ -1018,6 +1068,14 @@ class Investigation(Base):
     On the topic rather than on the day, so a topic drawn twice opens the same
     file the second time -- with whatever was written the first time still in
     it. That is what makes an unfinished day cost nothing.
+    """
+
+    folder: str | None = None
+    """The subject area it was filed under, set when it is graded.
+
+    Also the rating `area`, exactly as a debate issue slug was both a bucket
+    and a filename -- one string, so the folder on disk and the rating it moves
+    cannot drift apart. None until the day it is graded.
     """
 
     @computed_field  # type: ignore[prop-decorator]
@@ -1048,3 +1106,11 @@ class InvestigationDay(Base):
     """
 
     written_at: dt.datetime | None = None
+
+    ballot: InvestigationBallot | None = None
+    """The graded result, pasted back. None until it is."""
+
+    score: Score | None = None
+    """`investigate.score_ballot`'s number, not the grader's own. Stored
+    because it is what the rating event was computed from, and a rubric edit
+    must not retroactively rewrite what a past day scored."""

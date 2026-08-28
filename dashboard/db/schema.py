@@ -1482,6 +1482,67 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE investigation_day ADD COLUMN written_at TEXT;
         """,
     ),
+    (
+        25,
+        """
+        -- A fourth rated track. SQLite cannot widen a CHECK in place, so the
+        -- whole table is rebuilt -- the same dance migrations 9, 14, 17, 19 and
+        -- 22 did, and the reason `rating_event` is on its seventh name.
+        --
+        -- `investigate` is its own track rather than a second area of `debate`.
+        -- Researching a claim and arguing one are different jobs; sharing a
+        -- track would pool their `n`, so a year of debates would make the
+        -- investigation rating confident about evidence it never saw.
+        CREATE TABLE rating_event_v7 (
+            id             INTEGER PRIMARY KEY,
+            track          TEXT    NOT NULL
+                                   CHECK (track IN ('math', 'chess', 'debate',
+                                                    'spelling', 'investigate')),
+            date           TEXT    NOT NULL CHECK (date IS strftime('%Y-%m-%d', date)),
+            ref            TEXT    NOT NULL,
+            opponent       INTEGER NOT NULL CHECK (opponent BETWEEN 100 AND 4000),
+            score          REAL    NOT NULL CHECK (score BETWEEN 0.0 AND 1.0),
+            k              INTEGER NOT NULL CHECK (k >= 1),
+            rating_before  INTEGER,
+            rating_after   INTEGER,
+            provenance     TEXT    NOT NULL DEFAULT 'measured'
+                                   CHECK (provenance IN ('measured', 'reconstructed',
+                                                         'lapsed', 'late', 'unlapsed',
+                                                         'theorem')),
+            area           TEXT,
+            CHECK ((rating_before IS NULL) = (rating_after IS NULL)),
+            CHECK ((rating_after IS NULL) = (provenance = 'reconstructed'))
+        ) STRICT;
+
+        INSERT INTO rating_event_v7
+            (id, track, date, ref, opponent, score, k,
+             rating_before, rating_after, provenance, area)
+        SELECT id, track, date, ref, opponent, score, k,
+               rating_before, rating_after, provenance, area
+        FROM rating_event;
+
+        DROP TABLE rating_event;
+        ALTER TABLE rating_event_v7 RENAME TO rating_event;
+        CREATE INDEX rating_event_track_id ON rating_event (track, id);
+        CREATE INDEX rating_event_area ON rating_event (track, area, id);
+        CREATE INDEX rating_event_date ON rating_event (track, date);
+
+        -- The graded ballot, as JSON, plus the number it was scored at.
+        --
+        -- `score` is stored rather than recomputed from `ballot` because it is
+        -- what the rating event was calculated from. The rubric is editable and
+        -- adding a sixth line would silently rewrite what every past day
+        -- scored, which would make the rating history disagree with itself.
+        ALTER TABLE investigation_day ADD COLUMN ballot TEXT;
+        ALTER TABLE investigation_day ADD COLUMN score REAL
+            CHECK (score IS NULL OR score BETWEEN 0.0 AND 1.0);
+
+        -- Which subject folder the write-up was filed under. Also the rating
+        -- `area`, exactly as a debate issue slug was both a bucket and a
+        -- filename -- one string, so the two cannot drift apart.
+        ALTER TABLE investigation ADD COLUMN folder TEXT;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

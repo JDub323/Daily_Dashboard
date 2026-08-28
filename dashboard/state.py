@@ -673,7 +673,11 @@ def patterns_panel(repo: Repository, today: dt.date) -> api.PatternsPanel:
 
 
 def investigate_panel(
-    repo: Repository, today: dt.date, root: Path, scrollback: int = 1000
+    repo: Repository,
+    today: dt.date,
+    root: Path,
+    scrollback: int = 1000,
+    folders: list[str] | None = None,
 ) -> api.InvestigatePanel:
     """Today's topic, if one has been drawn, and the pool behind it.
 
@@ -700,12 +704,36 @@ def investigate_panel(
     if topic and topic.path:
         on_disk = investigate.read_file(root / topic.path)
 
+    # Assembled off the *snapshot*, not off the file. What you hand to the
+    # grader has to be what the grade will be recorded against, and the file
+    # goes on being editable in a terminal this app cannot see.
+    prompt = None
+    if topic is not None and day is not None and day.write_up:
+        prompt = investigate.build_prompt(
+            topic.topic, day.write_up, investigate.known_folders(root, folders or [])
+        )
+
     return api.InvestigatePanel(
         today=topic,
         drawn_on=day.date if day else None,
         day=day,
         scrollback=scrollback,
         file_body=investigate.body(on_disk),
+        prompt=prompt,
+        rubric=[
+            api.RubricLine(key=c.key, label=c.label, asks=c.asks) for c in investigate.RUBRIC
+        ],
+        summary=track_summary(repo, Track.investigate),
+        delta=repo.investigation_delta(today),
+        folders=sorted(
+            (
+                api.AreaRating(area=name, rating=rating, events=n)
+                for name, rating, n in repo.area_ratings(
+                    repo.investigation_folders(), Track.investigate
+                )
+            ),
+            key=lambda x: -x.rating,
+        ),
         pool=pool,
         pool_size=len(pool),
         investigated=repo.investigated_count(),
@@ -933,7 +961,11 @@ def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.Dash
         chess=chess_panel(repo, today),
         debate=debate_panel(cfg, repo, today),
         investigate=investigate_panel(
-            repo, today, cfg.path("investigations"), cfg.investigate.scrollback
+            repo,
+            today,
+            cfg.path("investigations"),
+            cfg.investigate.scrollback,
+            cfg.investigate.folders,
         ),
         patterns=patterns_panel(repo, today),
         spelling=spelling_panel(cfg, repo, today),

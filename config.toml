@@ -58,6 +58,10 @@ theorem-grade = "claude-haiku-4-5"
 # The same argument, for the same shape of job: grading a recalled argument
 # pattern is a comparison against a statement already on file.
 pattern-grade = "claude-haiku-4-5"
+# Filing a write-up under a subject folder: a short list in, one name out. The
+# smallest job in the app by a wide margin -- a few hundred tokens once a day,
+# which is well under a cent a year.
+investigate-file = "claude-haiku-4-5"
 
 # Approx $/token for the retrieval-efficiency log. Sonnet 5 is at intro
 # pricing through 2026-08-31; update when it reverts to $3/$15.
@@ -380,11 +384,11 @@ recur_weeks = 12
 # word the date parser reads -- `sat`, `may` and friends are refused at load.
 # `calendar` is optional and overrides the default above.
 [todo.subjects]
-fpm = { name = "US Foreign Policy Making" }
-ra = { name = "Real Analysis" }
+fpm = { name = "US National Security Policy Making" }
+db = { name = "Database Concepts" }
 os = { name = "Operating Systems" }
-algo = { name = "Algorithms" }
-pt = { name = "Political Theory" }
+alg = { name = "Abstract Algebra" }
+oop = { name = "Object Oriented SWE" }
 
 [news]
 cache_seconds = 900
@@ -448,6 +452,48 @@ editor_commands = ["nnoremap U <C-r>"]
 # Lines of terminal scrollback. Only ever reached by `:!` output; a buffer
 # scrolls inside the editor, not into the terminal's history.
 scrollback = 1000
+
+# The opponent rating every investigation is scored against. One number, not a
+# table: the topics differ in subject, not in difficulty, so there is nothing
+# for a second anchor to mean. Fixed, so the scale cannot drift when the
+# grading model changes.
+anchor = 1500
+
+# The subject folders write-ups are filed under, and the list the classifier
+# chooses from. Broad on purpose and not limited to foreign policy -- the class
+# is one source of topics, not the only one.
+#
+# A seeded list rather than an empty directory, because the cold start is
+# exactly when a classifier invents near-duplicates. It may still add folders
+# beyond these; this is a floor, not a whitelist. Renaming one here does not
+# move anything already filed.
+folders = [
+    "national security and defense",
+    "foreign policy and diplomacy",
+    "trade and the global economy",
+    "immigration",
+    "health policy",
+    "climate and energy",
+    "civil rights and liberties",
+    "gender and family policy",
+    "race and inequality",
+    "elections and democracy",
+    "courts and the constitution",
+    "technology, speech and privacy",
+    "education",
+    "crime and policing",
+    "taxes and the budget",
+    "labor and welfare",
+]
+
+# Once a folder holds this many write-ups, new ones are filed into a sub-folder
+# of it -- so "national security and defense" grows a `ukraine/`, a `middle
+# east/` and so on rather than becoming a directory of sixty files.
+#
+# Only ever affects the file being placed now. Nothing already written is
+# moved: a bulk re-file of your own prose, decided by a model, is not something
+# this should do unasked.
+split_at = 25
 
 [debate]
 # The Sunday the traversal starts from. Validated as a Sunday at startup, the

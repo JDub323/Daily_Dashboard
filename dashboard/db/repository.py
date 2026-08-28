@@ -48,6 +48,7 @@ SEEDS = {
     Track.chess: scoring.CHESS_SEED,
     Track.debate: scoring.DEBATE_SEED,
     Track.spelling: scoring.SPELLING_SEED,
+    Track.investigate: scoring.INVESTIGATE_SEED,
 }
 
 ARGUMENT_AREA = "argument-patterns"
@@ -1550,6 +1551,19 @@ class Repository:
         ).fetchone()
         return d.Investigation(**dict(row)) if row else None
 
+    def investigation_folders(self) -> list[str]:
+        """Folders that actually hold a graded write-up, alphabetically.
+
+        Read off the rows rather than off config, so the strip shows what you
+        have written about rather than what you might. A seeded folder nothing
+        has been filed under has no rating and would only be a line of 1500s.
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT folder FROM investigation "
+            "WHERE folder IS NOT NULL ORDER BY folder"
+        ).fetchall()
+        return [r["folder"] for r in rows]
+
     def investigated_count(self) -> int:
         """Topics carried to a grade. Struck-off ones are deliberately not
         counted -- clearing the pool is tidying, not work."""
@@ -1628,6 +1642,19 @@ class Repository:
             raise LookupError(f"no investigation {investigation_id}")
         return row
 
+    def relocate_investigation(self, investigation_id: int, path: str) -> None:
+        """Point a topic at where its file moved to.
+
+        Unguarded, unlike `set_investigation_path`: that one refuses to
+        overwrite because it is claiming a file for the first time, and this
+        one is recording that a file the server just moved is somewhere else
+        now. Refusing here would leave the row pointing at nothing.
+        """
+        with transaction(self.conn):
+            self.conn.execute(
+                "UPDATE investigation SET path = ? WHERE id = ?", (path, investigation_id)
+            )
+
     def record_write_up(self, date: dt.date, text: str) -> d.InvestigationDay:
         """Snapshot what the file said, as the day's submission.
 
@@ -1646,11 +1673,90 @@ class Repository:
             raise LookupError(f"nothing was drawn on {date}")
         return row
 
+    def score_investigation(
+        self, date: dt.date, ballot: d.InvestigationBallot, score: float, anchor: int, folder: str
+    ) -> tuple[d.InvestigationDay, d.RatingEvent]:
+        """Close the day on a pasted ballot, spend the topic, apply the elo.
+
+        Three things in one transaction, and the ordering is the point. The
+        `WHERE ballot IS NULL` is the double-submit guard -- two tabs pasting
+        the same result update zero rows on the second and raise, rather than
+        rating one afternoon twice.
+
+        This is also the only place `used_on` is ever set: a topic leaves the
+        pool when it has been graded and at no other moment, which is the whole
+        of the "returns to the pool" rule stated as one UPDATE.
+        """
+        with transaction(self.conn):
+            day = self.investigation_day(date)
+            if day is None:
+                raise LookupError(f"nothing was drawn on {date}")
+            if day.ballot is not None:
+                raise ValueError(f"the investigation on {date} is already graded")
+            if day.write_up is None:
+                raise ValueError("nothing has been read back to grade")
+
+            row = self.conn.execute(
+                "UPDATE investigation_day SET ballot = ?, score = ? "
+                "WHERE date = ? AND ballot IS NULL RETURNING *",
+                (_json(ballot), score, _iso(date)),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"the investigation on {date} was graded concurrently")
+            closed = self._investigation_day(row)
+
+            self.conn.execute(
+                "UPDATE investigation SET used_on = ?, folder = ? WHERE id = ?",
+                (_iso(date), folder, day.investigation_id),
+            )
+            topic = self.investigation(day.investigation_id)
+            assert topic is not None  # it is what the day points at
+
+            event = self._rate_investigation(date, topic.topic, anchor, score, area=None)
+            # The same result inside its folder, second and in the same
+            # transaction -- `score_debate`'s rule, for its reason: the pooled
+            # row is what the panel reads, so it must never be able to exist
+            # without its partner.
+            self._rate_investigation(date, topic.topic, anchor, score, area=folder)
+            return closed, event
+
+    def _rate_investigation(
+        self, date: dt.date, topic: str, anchor: int, score: float, *, area: str | None
+    ) -> d.RatingEvent:
+        """One elo row against the fixed anchor. Caller holds the transaction;
+        `area=None` is the pooled investigation rating."""
+        n = self.event_count(Track.investigate, area)
+        before = self.current_rating(Track.investigate, area)
+        k = scoring.k_factor(n)
+        after = scoring.elo_update(before, anchor, score, n)
+        row = self.conn.execute(
+            "INSERT INTO rating_event "
+            "(track, date, ref, opponent, score, k, rating_before, rating_after, "
+            "provenance, area) "
+            "VALUES ('investigate', ?, ?, ?, ?, ?, ?, ?, 'measured', ?) RETURNING *",
+            (_iso(date), topic[:300], anchor, score, k, before, after, area),
+        ).fetchone()
+        return d.RatingEvent(**dict(row))
+
+    def investigation_delta(self, date: dt.date) -> int | None:
+        """What that day's ballot did to the pooled rating."""
+        row = self.conn.execute(
+            "SELECT rating_after - rating_before AS delta FROM rating_event "
+            "WHERE track = 'investigate' AND area IS NULL AND date = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (_iso(date),),
+        ).fetchone()
+        return row["delta"] if row else None
+
+    @staticmethod
+    def _investigation_day(row: sqlite3.Row) -> d.InvestigationDay:
+        return d.InvestigationDay(**_unpack(row, "ballot"))
+
     def investigation_day(self, date: dt.date) -> d.InvestigationDay | None:
         row = self.conn.execute(
             "SELECT * FROM investigation_day WHERE date = ?", (_iso(date),)
         ).fetchone()
-        return d.InvestigationDay(**dict(row)) if row else None
+        return self._investigation_day(row) if row else None
 
     def draw_investigation(
         self, date: dt.date, rng: random.Random | None = None

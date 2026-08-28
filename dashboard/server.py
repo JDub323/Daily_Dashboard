@@ -541,6 +541,16 @@ def _register_errors(app: FastAPI) -> None:
         log.info("%s: unusable ballot: %s", request.url.path, exc)
         return JSONResponse({"error": str(exc)}, status_code=400)
 
+    @app.exception_handler(investigate.InvestigateError)
+    def _investigation_ballot(
+        request: Request, exc: investigate.InvestigateError
+    ) -> JSONResponse:
+        # Same reasoning as the debate ballot above: a result that will not
+        # parse is a paste that went wrong, not an upstream failure, and the
+        # message says which way.
+        log.info("%s: unusable ballot: %s", request.url.path, exc)
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
     @app.exception_handler(garmin.GarminError)
     def _garmin(request: Request, exc: garmin.GarminError) -> JSONResponse:
         # 502 and no traceback. Every case is the far end -- an expired token
@@ -1322,9 +1332,7 @@ def _register(app: FastAPI) -> None:
 
     @app.get("/api/investigate")
     def investigate_today(cfg: Cfg, repo: Repo, date: Today) -> api.InvestigatePanel:
-        return state.investigate_panel(
-            repo, date, cfg.path("investigations"), cfg.investigate.scrollback
-        )
+        return _investigate_panel(cfg, repo, date)
 
     @app.post("/api/investigate/add")
     def investigate_add(
@@ -1354,9 +1362,7 @@ def _register(app: FastAPI) -> None:
                 lines.append(api.InvestigateLine(raw=item.raw, topic=item.topic))
 
         return api.InvestigateAddResponse(
-            panel=state.investigate_panel(
-            repo, body.date, cfg.path("investigations"), cfg.investigate.scrollback
-        ), lines=lines
+            panel=_investigate_panel(cfg, repo, body.date), lines=lines
         )
 
     @app.post("/api/investigate/draw")
@@ -1375,9 +1381,7 @@ def _register(app: FastAPI) -> None:
         drawn, and the panel says so and offers the box.
         """
         repo.draw_investigation(body.date)
-        return state.investigate_panel(
-            repo, body.date, cfg.path("investigations"), cfg.investigate.scrollback
-        )
+        return _investigate_panel(cfg, repo, body.date)
 
     @app.post("/api/investigate/clear")
     def investigate_clear(
@@ -1385,8 +1389,19 @@ def _register(app: FastAPI) -> None:
     ) -> api.InvestigatePanel:
         """Strike a topic off without spending a day on it."""
         repo.clear_investigation(body.investigation_id, body.date)
+        return _investigate_panel(cfg, repo, body.date)
+
+    def _investigate_panel(
+        cfg: Settings, repo: Repository, date: dt.date
+    ) -> api.InvestigatePanel:
+        """The panel, with the four config values it needs. Written once here
+        rather than spelled out at each of the six endpoints that return it."""
         return state.investigate_panel(
-            repo, body.date, cfg.path("investigations"), cfg.investigate.scrollback
+            repo,
+            date,
+            cfg.path("investigations"),
+            cfg.investigate.scrollback,
+            cfg.investigate.folders,
         )
 
     def _investigation_file(cfg: Settings, repo: Repository, date: dt.date) -> Path:
@@ -1426,9 +1441,7 @@ def _register(app: FastAPI) -> None:
         `$EDITOR` in a real terminal still works.
         """
         _investigation_file(cfg, repo, body.date)
-        return state.investigate_panel(
-            repo, body.date, cfg.path("investigations"), cfg.investigate.scrollback
-        )
+        return _investigate_panel(cfg, repo, body.date)
 
     @app.post("/api/investigate/read")
     def investigate_read(
@@ -1446,9 +1459,71 @@ def _register(app: FastAPI) -> None:
         if not investigate.body(text):
             raise ValueError("the file is still empty — write something first")
         repo.record_write_up(body.date, text)
-        return state.investigate_panel(
-            repo, body.date, cfg.path("investigations"), cfg.investigate.scrollback
+        return _investigate_panel(cfg, repo, body.date)
+
+    @app.post("/api/investigate/ballot")
+    def investigate_ballot(
+        cfg: Cfg, repo: Repo, body: api.InvestigateBallotRequest
+    ) -> api.InvestigatePanel:
+        """Grade the day on a pasted ballot, spend the topic, file the file.
+
+        The order is deliberate and the filing is last. Parsing can fail, the
+        classification is a network call that can fail, and the elo write is
+        the one thing that must not happen twice -- so the ballot is read
+        first, the folder decided second, and only then does one transaction
+        close the day. A failed classification costs you the paste, not a
+        double-rated afternoon.
+
+        Filing moves the file into its folder. That is a move the server does
+        make -- unlike a write, it cannot lose text, and it is the whole point
+        of the folder. Nothing else in the directory is touched.
+        """
+        ballot = investigate.parse_ballot(body.text)
+        score = investigate.score_ballot(ballot)
+
+        day = repo.investigation_day(body.date)
+        if day is None:
+            raise LookupError(f"nothing was drawn on {body.date}")
+        topic = repo.investigation(day.investigation_id)
+        if topic is None:
+            raise LookupError(f"investigation {day.investigation_id} is missing")
+
+        root = cfg.path("investigations")
+        folder, _ = content.file_investigation(
+            cfg, body.date, topic.topic, investigate.known_folders(root, cfg.investigate.folders)
         )
+        # Past the threshold the folder grows sub-folders rather than a
+        # sixtieth flat file. Only this write-up is placed; nothing already in
+        # there is moved -- see `investigate.needs_splitting`.
+        sub = None
+        if investigate.needs_splitting(root, folder, cfg.investigate.split_at):
+            sub, _ = content.file_investigation(
+                cfg,
+                body.date,
+                f"{topic.topic} (within {folder})",
+                investigate.subfolders_of(root, folder),
+            )
+
+        _, event = repo.score_investigation(
+            body.date, ballot, score, cfg.investigate.anchor, folder
+        )
+
+        if topic.path:
+            moved = investigate.move_write_up(
+                root / topic.path, investigate.filed_path(root, folder, sub, root / topic.path)
+            )
+            repo.relocate_investigation(topic.id, moved.relative_to(root).as_posix())
+
+        log.info(
+            "investigation %s scored %d/%d, filed under %s: %s -> %s",
+            body.date,
+            round(score * investigate.MAX_SCORE),
+            investigate.MAX_SCORE,
+            f"{folder}/{sub}" if sub else folder,
+            event.rating_before,
+            event.rating_after,
+        )
+        return _investigate_panel(cfg, repo, body.date)
 
     @app.websocket("/api/investigate/term")
     async def investigate_term(ws: WebSocket) -> None:

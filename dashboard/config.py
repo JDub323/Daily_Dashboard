@@ -534,6 +534,34 @@ class InvestigateSettings(Base):
     """Lines the terminal keeps. Only reached with `:!` output -- a buffer
     scrolls inside the editor, not into the terminal's own history."""
 
+    anchor: int = Field(default=1500, ge=100, le=4000)
+    """The opponent rating every investigation is scored against.
+
+    One number, unlike `[debate.anchors]`, because an investigation has no
+    format and no assigned side -- the topics differ in subject, not in
+    difficulty, so there is nothing for a second anchor to mean. Fixed, so the
+    scale cannot drift when the grading model changes.
+    """
+
+    folders: list[str] = Field(default_factory=list)
+    """The subject areas write-ups are filed under, seeded.
+
+    A starting list rather than an empty directory, because the cold start is
+    exactly when a classifier forks near-duplicates: asked to invent a folder
+    with nothing to choose from, it produces "US-China trade" in September and
+    "China trade policy" in October, and now there are two. It may still add
+    beyond this list -- the seed is a floor, not a whitelist.
+    """
+
+    split_at: int = Field(default=25, ge=2, le=1000)
+    """How many write-ups a folder may hold before new ones are filed into a
+    sub-folder of it.
+
+    Only ever affects the file being placed now. Nothing already written is
+    moved -- a bulk re-file of a directory of your own prose, decided by a
+    model, is not something this should do without being asked each time.
+    """
+
 
 class DebateIssue(Base):
     """One issue: a rating bucket, and the weeks that rate into it.

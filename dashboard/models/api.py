@@ -228,6 +228,17 @@ class InvestigateReadRequest(DateBody):
     """Take the file in as today's submission. No body beyond the date."""
 
 
+class InvestigateBallotRequest(DateBody):
+    """The graded result, pasted back whole.
+
+    The whole reply rather than the JSON block, because asking for the block
+    means asking you to find it -- the parser hunts for it, which is cheaper
+    for you and no harder for it.
+    """
+
+    text: str = Field(min_length=2, max_length=60_000)
+
+
 class TheoremNewRequest(DateBody):
     pass
 
@@ -1005,6 +1016,24 @@ class InvestigatePanel(Base):
         a day is written when you have typed something, not when the panel
         last noticed."""
         return bool(self.file_body)
+
+    prompt: str | None = None
+    """The assembled prompt, or None before anything has been read back.
+
+    Sent with the panel rather than fetched on click, as the debate's was, so
+    the copy button is instant and what you copy is what you were looking at.
+    """
+
+    rubric: list[RubricLine] = Field(default_factory=list)
+    """The five lines, so the panel can label a ballot it did not assemble."""
+
+    summary: TrackSummary
+    delta: int | None = None
+    """What today's ballot did to the pooled investigation rating."""
+
+    folders: list[AreaRating] = Field(default_factory=list)
+    """Per-folder ratings, strongest first — the investigation track's answer
+    to `MathPanel.areas`, and read the same way: the last line is the weak one."""
 
     pool: list[Investigation] = Field(default_factory=list)
     """Everything still open, oldest first -- the order they were handed out,

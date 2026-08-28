@@ -11,6 +11,7 @@ the schema does rather than a thing a job has to remember to do at midnight.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import random
 
 import pytest
@@ -432,3 +433,362 @@ def test_the_same_topic_drawn_again_opens_the_work_already_done(client, settings
 def test_opening_with_nothing_drawn_is_a_clean_error(client):
     got = client.post("/api/investigate/open", json={"date": TODAY.isoformat()})
     assert got.status_code == 404
+
+
+# --- the ballot ------------------------------------------------------------
+
+
+def ballot_json(scores=None, corrections=(), **extra):
+    """A grader's reply, shaped the way the prompt asks for it."""
+    scores = scores or dict.fromkeys([c.key for c in investigate.RUBRIC], 2)
+    payload = {
+        "items": [{"key": k, "score": v, "note": f"note on {k}"} for k, v in scores.items()],
+        "corrections": list(corrections),
+        "feedback": "Sourcing was the weak half. Name the report, not the outlet.",
+        "verdict": "solid, under-sourced",
+        **extra,
+    }
+    return "Here is my assessment.\n\n```json\n" + json.dumps(payload) + "\n```"
+
+
+def test_the_ballot_is_found_inside_a_chat_reply():
+    ballot = investigate.parse_ballot(ballot_json())
+    assert len(ballot.items) == len(investigate.RUBRIC)
+    assert investigate.score_ballot(ballot) == 1.0
+
+
+def test_the_second_fenced_block_wins():
+    """A grader that shows the shape first and then fills it in leaves two
+    blocks, and the real one is the last."""
+    text = (
+        "The format is:\n```json\n"
+        + json.dumps({"items": [], "feedback": "x"})
+        + "\n```\nAnd here it is:\n"
+        + ballot_json({"sourcing": 1})
+    )
+    ballot = investigate.parse_ballot(text)
+    assert [i.key for i in ballot.items] == ["sourcing"]
+
+
+def test_bare_braces_with_no_fence_still_parse():
+    payload = {"items": [{"key": "depth", "score": 2}], "feedback": "fine"}
+    ballot = investigate.parse_ballot("Sure. " + json.dumps(payload))
+    assert ballot.items[0].key == "depth"
+
+
+def test_the_lines_come_back_in_rubric_order():
+    """Whatever order the grader wrote them in, the panel's five rows are
+    always in the same places."""
+    shuffled = {"calibration": 1, "sourcing": 2, "reasoning": 0, "accuracy": 2, "depth": 1}
+    ballot = investigate.parse_ballot(ballot_json(shuffled))
+    assert [i.key for i in ballot.items] == [c.key for c in investigate.RUBRIC]
+
+
+def test_an_invented_sixth_line_costs_that_line_and_not_the_paste():
+    ballot = investigate.parse_ballot(ballot_json({"sourcing": 2, "eloquence": 2}))
+    assert [i.key for i in ballot.items] == ["sourcing"]
+
+
+def test_a_line_listed_twice_keeps_the_lower_score():
+    """The one tie-break that cannot be exploited by listing a line again."""
+    payload = {
+        "items": [{"key": "depth", "score": 2}, {"key": "depth", "score": 0}],
+        "feedback": "x",
+    }
+    ballot = investigate.parse_ballot("```json\n" + json.dumps(payload) + "\n```")
+    assert ballot.items[0].score == 0
+
+
+def test_a_score_out_of_range_is_clamped_not_rejected():
+    ballot = investigate.parse_ballot(ballot_json({"depth": 7}))
+    assert ballot.items[0].score == 2
+
+
+def test_an_empty_paste_says_so():
+    with pytest.raises(investigate.InvestigateError, match="nothing pasted"):
+        investigate.parse_ballot("   ")
+
+
+def test_a_paste_with_no_ballot_in_it_says_where_to_look():
+    with pytest.raises(investigate.InvestigateError, match="json block"):
+        investigate.parse_ballot("Nice work. I thought the second paragraph was strongest.")
+
+
+def test_a_ballot_of_only_unknown_lines_is_refused():
+    with pytest.raises(investigate.InvestigateError, match="no usable rubric lines"):
+        investigate.parse_ballot(ballot_json({"vibes": 2}))
+
+
+# --- the accuracy rule -----------------------------------------------------
+
+
+def test_full_marks_for_accuracy_are_capped_once_something_was_corrected():
+    """Enforced server-side, not trusted to the prompt: a rule that lives only
+    in a prompt holds until the grader would rather be encouraging."""
+    correction = {"claim": "NATO spends 2%", "correction": "it is a target", "source": "NATO"}
+    ballot = investigate.parse_ballot(ballot_json(corrections=[correction]))
+
+    accuracy = next(i for i in ballot.items if i.key == "accuracy")
+    assert accuracy.score == 1
+    assert ballot.capped == ["accuracy"]
+    assert all(i.score == 2 for i in ballot.items if i.key != "accuracy")
+
+
+def test_a_ballot_with_no_corrections_is_not_capped():
+    assert investigate.parse_ballot(ballot_json()).capped == []
+
+
+def test_an_accuracy_score_already_below_two_is_left_alone():
+    correction = {"claim": "a", "correction": "b", "source": "c"}
+    ballot = investigate.parse_ballot(ballot_json({"accuracy": 0}, corrections=[correction]))
+    assert ballot.items[0].score == 0
+    assert ballot.capped == []  # nothing was pulled down
+
+
+def test_a_correction_with_neither_claim_nor_fix_is_dropped():
+    text = ballot_json(corrections=[{"source": "somewhere"}])
+    assert investigate.parse_ballot(text).corrections == []
+
+
+# --- filing ----------------------------------------------------------------
+
+
+def test_the_folder_list_is_the_seed_plus_what_is_on_disk(files):
+    (files / "immigration").mkdir(parents=True)
+    (files / "a folder I made").mkdir()
+
+    got = investigate.known_folders(files, ["immigration", "health policy"])
+    assert got == ["immigration", "health policy", "a folder I made"]
+
+
+def test_folders_differing_only_in_case_are_one_entry(files):
+    files.mkdir(parents=True)
+    (files / "Immigration").mkdir()
+    assert investigate.known_folders(files, ["immigration"]) == ["immigration"]
+
+
+def test_a_folder_splits_once_it_is_bulky(files):
+    folder = files / investigate.slug("national security and defense")
+    folder.mkdir(parents=True)
+    for n in range(4):
+        (folder / f"topic-{n}.md").write_text("x")
+
+    assert not investigate.needs_splitting(files, "national security and defense", 5)
+    (folder / "topic-4.md").write_text("x")
+    assert investigate.needs_splitting(files, "national security and defense", 5)
+
+
+def test_files_already_in_sub_folders_do_not_count_toward_the_split(files):
+    """A folder that has already been split is not still overflowing."""
+    folder = files / "immigration"
+    (folder / "asylum").mkdir(parents=True)
+    (folder / "one.md").write_text("x")
+    for n in range(10):
+        (folder / "asylum" / f"deep-{n}.md").write_text("x")
+
+    assert not investigate.needs_splitting(files, "immigration", 5)
+
+
+def test_filing_keeps_the_filename_it_already_had(files):
+    """It was chosen when the topic was opened and the `path` column has been
+    pointing at it ever since; renaming here would be a rename for nothing."""
+    current = files / "hormuz-shipping-insurance-rates.md"
+    got = investigate.filed_path(files, "Foreign Policy and Diplomacy", None, current)
+    assert got == files / "foreign-policy-and-diplomacy" / "hormuz-shipping-insurance-rates.md"
+
+
+def test_filing_into_a_sub_folder_nests_both_slugs(files):
+    got = investigate.filed_path(files, "national security", "the middle east", files / "note.md")
+    assert got == files / "national-security" / "the-middle-east" / "note.md"
+
+
+def test_moving_never_clobbers_an_existing_write_up(files):
+    target_dir = files / "immigration"
+    target_dir.mkdir(parents=True)
+    (target_dir / "note.md").write_text("an afternoon that was already there")
+    source = files / "note.md"
+    source.write_text("mine")
+
+    moved = investigate.move_write_up(source, target_dir / "note.md")
+
+    assert moved.name == "note-2.md"
+    assert moved.read_text() == "mine"
+    assert (target_dir / "note.md").read_text() == "an afternoon that was already there"
+
+
+def test_moving_a_file_onto_itself_does_nothing(files):
+    files.mkdir(parents=True)
+    path = files / "note.md"
+    path.write_text("x")
+    assert investigate.move_write_up(path, path) == path
+    assert path.read_text() == "x"
+
+
+# --- grading, end to end ---------------------------------------------------
+#
+# The filing call is the only paid thing in the feature, so it is stubbed here
+# rather than skipped: what matters is the order the endpoint does things in,
+# and a real call would only make that slower to observe.
+
+
+@pytest.fixture
+def filed_as(monkeypatch):
+    """Stub the folder classifier, and record what it was asked."""
+    asked = []
+
+    def stub(settings, date, topic, folders):
+        asked.append((topic, list(folders)))
+        # First call files the write-up; a second is the sub-folder question.
+        return ("national security and defense", True) if len(asked) == 1 else ("ukraine", False)
+
+    monkeypatch.setattr("dashboard.content.file_investigation", stub)
+    return asked
+
+
+def written(client, settings, topic="Hormuz shipping insurance rates", text="Lloyd's tripled.\n"):
+    """Draw a topic, open its file, write in it, and hand it in."""
+    client.post("/api/investigate/add", json={"date": TODAY.isoformat(), "text": topic})
+    client.post("/api/investigate/draw", json={"date": TODAY.isoformat()})
+    panel = client.post("/api/investigate/open", json={"date": TODAY.isoformat()}).json()
+    path = settings.path("investigations") / panel["today"]["path"]
+    path.write_text(path.read_text() + text)
+    return client.post("/api/investigate/read", json={"date": TODAY.isoformat()}).json()
+
+
+def test_the_prompt_appears_only_once_something_is_read_back(client, settings):
+    client.post("/api/investigate/add", json={"date": TODAY.isoformat(), "text": "Hormuz rates"})
+    drawn = client.post("/api/investigate/draw", json={"date": TODAY.isoformat()}).json()
+    assert drawn["prompt"] is None
+
+    panel = written(client, settings, topic="Hormuz rates")
+    assert panel["prompt"] is not None
+
+
+def test_the_prompt_quotes_the_snapshot_and_the_rubric(client, settings):
+    panel = written(client, settings)
+
+    assert "Lloyd's tripled." in panel["prompt"]
+    assert "Hormuz shipping insurance rates" in panel["prompt"]
+    for line in investigate.RUBRIC:
+        assert line.key in panel["prompt"]
+
+
+def test_the_prompt_does_not_follow_the_file_after_it_is_read_back(client, settings):
+    """What you hand the grader has to be what the grade is recorded against,
+    and the file goes on being editable in a terminal the app cannot see."""
+    panel = written(client, settings)
+    path = settings.path("investigations") / panel["today"]["path"]
+    path.write_text("# Hormuz shipping insurance rates\n\nCompletely different.\n")
+
+    after = client.get("/api/investigate", params={"date": TODAY.isoformat()}).json()
+    assert "Lloyd's tripled." in after["prompt"]
+    assert "Completely different." not in after["prompt"]
+
+
+def test_grading_scores_files_and_spends_the_topic(client, settings, filed_as):
+    written(client, settings)
+    got = client.post(
+        "/api/investigate/ballot",
+        json={"date": TODAY.isoformat(), "text": ballot_json({"sourcing": 2, "accuracy": 2,
+                                                              "depth": 1, "reasoning": 1,
+                                                              "calibration": 0})},
+    ).json()
+
+    assert got["day"]["ballot"] is not None
+    assert got["today"]["folder"] == "national security and defense"
+    # 6/10 against a 1500 anchor from a 1400 seed: a win, so the rating rises.
+    assert got["delta"] > 0
+    # Spent at last: this is the only place `used_on` is ever set.
+    assert got["pool_size"] == 0
+    assert got["investigated"] == 1
+
+
+def test_grading_moves_the_file_into_its_folder(client, settings, filed_as):
+    before = written(client, settings)
+    old = settings.path("investigations") / before["today"]["path"]
+    assert old.exists()
+
+    got = client.post(
+        "/api/investigate/ballot",
+        json={"date": TODAY.isoformat(), "text": ballot_json()},
+    ).json()
+
+    new = settings.path("investigations") / got["today"]["path"]
+    assert got["today"]["path"].startswith("national-security-and-defense/")
+    assert new.exists() and not old.exists()
+    assert "Lloyd's tripled." in new.read_text()
+
+
+def test_the_classifier_is_offered_the_seeded_folders(client, settings, filed_as):
+    written(client, settings)
+    client.post(
+        "/api/investigate/ballot", json={"date": TODAY.isoformat(), "text": ballot_json()}
+    )
+
+    topic, offered = filed_as[0]
+    assert topic == "Hormuz shipping insurance rates"
+    assert "immigration" in offered  # straight off config.toml
+
+
+def test_a_bulky_folder_gets_a_sub_folder_and_a_second_call(client, settings, filed_as):
+    root = settings.path("investigations")
+    bulky = root / investigate.slug("national security and defense")
+    bulky.mkdir(parents=True)
+    for n in range(settings.investigate.split_at):
+        (bulky / f"old-{n}.md").write_text("x")
+
+    written(client, settings)
+    got = client.post(
+        "/api/investigate/ballot", json={"date": TODAY.isoformat(), "text": ballot_json()}
+    ).json()
+
+    assert len(filed_as) == 2  # the folder, then the sub-folder
+    assert got["today"]["path"].startswith("national-security-and-defense/ukraine/")
+    # Nothing that was already there moved.
+    assert len(list(bulky.glob("old-*.md"))) == settings.investigate.split_at
+
+
+def test_grading_twice_is_refused_rather_than_rated_twice(client, settings, filed_as):
+    written(client, settings)
+    body = {"date": TODAY.isoformat(), "text": ballot_json()}
+    client.post("/api/investigate/ballot", json=body)
+    again = client.post("/api/investigate/ballot", json=body)
+
+    assert again.status_code == 409
+    assert "already graded" in again.json()["error"]
+
+
+def test_grading_with_nothing_read_back_is_refused(client, settings, filed_as):
+    client.post("/api/investigate/add", json={"date": TODAY.isoformat(), "text": "Hormuz rates"})
+    client.post("/api/investigate/draw", json={"date": TODAY.isoformat()})
+
+    got = client.post(
+        "/api/investigate/ballot", json={"date": TODAY.isoformat(), "text": ballot_json()}
+    )
+    assert got.status_code == 409
+
+
+def test_an_unparseable_paste_costs_nothing(client, settings, filed_as):
+    """Parsing happens before the classification and before the transaction, so
+    a bad paste must leave the day exactly where it was."""
+    written(client, settings)
+    got = client.post(
+        "/api/investigate/ballot",
+        json={"date": TODAY.isoformat(), "text": "Great work, honestly."},
+    )
+
+    assert got.status_code == 400  # a paste that went wrong, not a server fault
+    assert filed_as == []  # nothing was paid for
+    after = client.get("/api/investigate", params={"date": TODAY.isoformat()}).json()
+    assert after["day"]["ballot"] is None
+    assert after["pool_size"] == 1  # still spendable
+
+
+def test_the_folder_becomes_a_rating_bucket(client, settings, filed_as):
+    written(client, settings)
+    got = client.post(
+        "/api/investigate/ballot", json={"date": TODAY.isoformat(), "text": ballot_json()}
+    ).json()
+
+    assert [f["area"] for f in got["folders"]] == ["national security and defense"]
+    assert got["folders"][0]["events"] == 1

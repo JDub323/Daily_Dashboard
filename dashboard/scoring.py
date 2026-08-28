@@ -37,6 +37,15 @@ week a run of losses that says nothing. Between them, the first few days find
 the level quickly at K=96 and then settle.
 """
 
+INVESTIGATE_SEED = 1400
+"""Below `[investigate].anchor`, on the debate seed's argument.
+
+Starting level with the anchor would make the first month read as "about as
+good as a competent write-up", which is a claim nothing has evidence for yet.
+A hundred below means the early ballots have somewhere to move from, and K=96
+finds the real level inside a fortnight either way.
+"""
+
 DEBATE_SEED = 1400
 """Below every format anchor, deliberately.
 

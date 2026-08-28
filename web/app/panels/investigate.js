@@ -15,10 +15,14 @@
 // be struck off — a list you cannot see is a list that only ever grows.
 
 import * as api from "../api.js";
+import { promptBlock } from "../clipboard.js";
 import { el, mount } from "../dom.js";
 import { put, store } from "../store.js";
 import { openEditor, ready as termReady } from "../term.js";
 import { toast } from "../ui.js";
+
+/** Half-pasted ballots, kept across re-renders — the debate box's lesson. */
+let ballotDraft = "";
 
 /**
  * The live editor, if one is open. At most one, ever.
@@ -164,17 +168,68 @@ function undrawn(panel, redraw) {
   );
 }
 
-/** Drawn: what today is about, and the editor it is written in. */
+/** The rating, and the per-folder strip. Read like the math header: the last
+ *  folder in the row is the one to write about next. */
+function header(panel) {
+  const { rating, k_next, measured_count, success_rate } = panel.summary;
+  const detail = [`elo · K=${k_next}`];
+  if (success_rate !== null) detail.push(`${success_rate}% last ${Math.min(measured_count, 10)}`);
+
+  return [
+    el("div.figure-row", null,
+      el("span.figure", { text: rating }),
+      el("span.figure-label", { text: detail.join(" · ") }),
+    ),
+    panel.folders.length
+      ? el("div.areas", null,
+          ...panel.folders.map((f) =>
+            el("span.area", {
+              title: `${f.area}: ${f.events} write-up${f.events === 1 ? "" : "s"}`,
+            },
+              el("span.faint", { text: `${f.area} ` }),
+              el("span", { text: f.rating }),
+            ),
+          ),
+        )
+      : null,
+  ];
+}
+
+/** Drawn: what today is about, and wherever it has got to. */
 function drawn(panel, redraw) {
+  const day = panel.day;
+  const graded = Boolean(day?.ballot);
+
   return el("div", null,
-    el("div.big.value", { text: panel.today.topic }),
-    el("div.faint", {
-      text: panel.written
-        ? `written · ${panel.today.path ?? "on disk"}`
-        : "drawn today · it stays in the pool until the write-up is graded",
-    }),
-    writeUp(panel, redraw),
+    el("div.row.spread", null,
+      el("div", null,
+        el("div.big.value", { text: panel.today.topic }),
+        // The file is the `title`, not the text. It is the folder plus a slug
+        // of the topic already on screen above, so spelling it out costs three
+        // lines to repeat two things you can see — but it is still the thing
+        // you want when you go to open the file in a terminal.
+        el("div.faint", { text: statusLine(panel, graded), title: panel.today.path ?? "" }),
+      ),
+      graded ? deltaTag(panel) : null,
+    ),
+    graded ? scored(panel) : el("div", null, writeUp(panel, redraw), submit(panel, redraw)),
   );
+}
+
+function statusLine(panel, graded) {
+  if (graded) return `graded · filed under ${panel.today.folder ?? "—"}`;
+  if (panel.day?.write_up) return "read back · take the prompt below";
+  if (panel.written) return "written · not handed in yet";
+  return "drawn today · it stays in the pool until the write-up is graded";
+}
+
+function deltaTag(panel) {
+  const delta = panel.delta;
+  if (delta == null) return null;
+  return el(`span.${delta > 0 ? "delta-up" : delta < 0 ? "delta-down" : "faint"}`, {
+    text: delta === 0 ? "no change" : `${delta > 0 ? "+" : ""}${delta}`,
+    title: "investigation rating",
+  });
 }
 
 /**
@@ -246,6 +301,106 @@ function editorBlock(panel, redraw) {
   );
 }
 
+/**
+ * The prompt, and the box the graded result comes back in.
+ *
+ * Only once something has been read back: the prompt quotes the *snapshot*,
+ * not the file, so offering it before there is one would hand the grader an
+ * empty document. Same shape as the debate's briefed state, and the copy
+ * button is the same three-fallback one from `clipboard.js`.
+ */
+function submit(panel, redraw) {
+  if (!panel.prompt) return null;
+
+  const box = el("textarea.recall-box", {
+    rows: 4,
+    value: ballotDraft,
+    placeholder: "paste the whole reply back — the parser finds the ```json block in it",
+    oninput: (e) => { ballotDraft = e.target.value; },
+  });
+  const message = el("span.faint");
+
+  const grade = el("button.primary", {
+    text: "grade it",
+    onclick: async () => {
+      if (!box.value.trim()) {
+        message.textContent = "paste the reply first";
+        return;
+      }
+      grade.disabled = true;
+      message.textContent = "grading…";
+      try {
+        put("investigate", await api.post("/api/investigate/ballot", { text: box.value }));
+        ballotDraft = "";
+        redraw();
+      } catch (error) {
+        grade.disabled = false;
+        message.textContent = error.message;
+      }
+    },
+  });
+
+  return el("div.divider", null,
+    promptBlock(panel.prompt, {
+      summary: "read the prompt",
+      label: "copy the prompt",
+    }).node,
+    el("div.faint.gap", { text: "the result" }),
+    box,
+    el("div.row", null, grade, message),
+  );
+}
+
+/** Graded: the five lines, what was corrected, and the prose. */
+function scored(panel) {
+  const ballot = panel.day.ballot;
+  const byKey = new Map(ballot.items.map((item) => [item.key, item]));
+  const total = ballot.items.reduce((sum, item) => sum + item.score, 0);
+  const max = 2 * panel.rubric.length;
+
+  const line = (spec) => {
+    const item = byKey.get(spec.key);
+    const score = item?.score ?? 0;
+    return el("div.ballot-line", null,
+      el("div.row.spread", null,
+        el("span", { text: spec.label, title: spec.asks }),
+        el(`span.${score === 2 ? "ok" : score === 1 ? "gold" : "bad"}`, { text: `${score}/2` }),
+      ),
+      item?.note ? el("div.dim.small", { text: item.note }) : null,
+      // Said out loud rather than silently applied: a rule you cannot see
+      // enforced is one you assume is not being enforced.
+      ballot.capped.includes(spec.key)
+        ? el("div.err.small", { text: "capped — full marks are not available once "
+            + "something needed correcting" })
+        : null,
+    );
+  };
+
+  return el("div", null,
+    el("div.faint.gap", { text: `${total}/${max}` }),
+    ...panel.rubric.map(line),
+    ballot.corrections.length
+      ? el("div.divider", null,
+          el("div.faint", { text: "what it checked and I got wrong" }),
+          ...ballot.corrections.map((c) =>
+            el("div.correction", null,
+              el("div.err.small", { text: c.claim }),
+              el("div.small", { text: c.correction }),
+              c.source ? el("div.faint.small", { text: c.source }) : null,
+            ),
+          ),
+        )
+      : el("div.faint.divider", { text: "nothing it could fault on the facts" }),
+    ballot.feedback
+      ? el("div.divider", null,
+          el("div.faint", { text: "feedback" }),
+          el("div.dim.feedback", { text: ballot.feedback }),
+        )
+      : null,
+    ballot.verdict ? el("div.dim.divider", { text: ballot.verdict }) : null,
+  );
+}
+
 /** Hand the file in as today's submission. */
 function readBack(redraw) {
   const button = el("button", {
@@ -276,8 +431,15 @@ export default {
 
   summary() {
     const panel = store.state.investigate;
-    if (panel.today) return `${panel.written ? "✓ " : ""}${panel.today.topic}`;
-    return panel.pool_size ? `${panel.pool_size} waiting` : "pool empty";
+    if (!panel.today) {
+      return panel.pool_size ? `${panel.pool_size} waiting` : "pool empty";
+    }
+    if (panel.day?.ballot) {
+      const total = panel.day.ballot.items.reduce((sum, item) => sum + item.score, 0);
+      const delta = panel.delta == null ? "" : ` ${panel.delta >= 0 ? "+" : ""}${panel.delta}`;
+      return `${panel.summary.rating}${delta} · ${total}/${2 * panel.rubric.length}`;
+    }
+    return `${panel.written ? "✓ " : ""}${panel.today.topic}`;
   },
 
   async render(node) {
@@ -285,6 +447,7 @@ export default {
     const redraw = () => this.render(node);
 
     mount(node,
+      ...header(panel),
       panel.today ? drawn(panel, redraw) : undrawn(panel, redraw),
       // Hidden while the editor is up. The pool is a list of things you are
       // *not* doing today, and it has no business under a buffer you are

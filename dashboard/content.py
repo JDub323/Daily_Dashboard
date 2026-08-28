@@ -1184,3 +1184,75 @@ def topic_info(settings: Settings, repo: Repository, date: dt.date) -> TopicResp
         raise ContentError("the topic generation did not return links") from e
     repo.upsert_topic(info)
     return TopicResponse(**info.model_dump())
+
+
+# --- filing an investigation -----------------------------------------------
+#
+# The smallest paid call in the app: a list of folder names in, one folder name
+# out. It runs once a day at most, on Haiku, and costs well under a cent a
+# year -- which is worth saying because the cost is not the interesting
+# constraint here. Near-duplicate folders are.
+
+_FOLDER_SYSTEM = (
+    "You file a piece of political research under one subject folder. "
+    "You are given the folders that already exist; strongly prefer one of them. "
+    "Propose a new folder ONLY when the topic genuinely belongs to no existing "
+    "one -- a topic that is a narrower case of an existing folder goes in that "
+    "folder, not in a new one. Respond ONLY with JSON:\n"
+    '{"folder":"the folder name, lower case, plain words, no slashes or '
+    'punctuation beyond spaces and hyphens",'
+    '"existing":true if you chose one from the list, false if you are proposing '
+    "a new one}"
+)
+
+
+def file_investigation(
+    settings: Settings, date: dt.date, topic: str, folders: list[str]
+) -> tuple[str, bool]:
+    """Which folder a topic belongs in. Returns `(folder, was_existing)`.
+
+    Two guards on top of the generation, both aimed at the same failure -- the
+    directory quietly growing "us-china trade" beside "china trade policy":
+
+    * A claim of `existing` that does not case-fold to something on the list is
+      not believed. That is the model having invented a name while asserting it
+      did not, and treating it as new is the honest reading.
+    * Matching is done on the *slug*, so casing, punctuation and spacing cannot
+      fork a folder on their own.
+
+    The same dance `pattern_from_prompt` does with `card_named`, and for the
+    same reason: a generation that resolves to something already held is a
+    success, not a duplicate.
+    """
+    from . import investigate
+
+    listing = "\n".join(f"- {name}" for name in folders) or "(none yet)"
+    raw = _json_generation(
+        settings,
+        kind="investigate-file",
+        date=date,
+        topic=topic[:60],
+        system=_FOLDER_SYSTEM,
+        user=f"Existing folders:\n{listing}\n\nFile this topic: {topic!r}",
+    )
+
+    try:
+        proposed = str(raw["folder"]).strip()
+    except (KeyError, TypeError) as e:
+        raise ContentError(f"the filing call was missing {e}") from e
+    if not proposed:
+        raise ContentError("the filing call returned an empty folder name")
+
+    by_slug = {investigate.slug(name): name for name in folders}
+    hit = by_slug.get(investigate.slug(proposed))
+    if hit is not None:
+        # Whatever it *said*, it named a folder already on the list.
+        if not raw.get("existing"):
+            log.info("filing proposed %r as new; it is %r, already held", proposed, hit)
+        return hit, True
+
+    if raw.get("existing"):
+        # It claimed to have chosen from the list and did not. Believing the
+        # claim would file the write-up under a folder that does not exist.
+        log.info("filing claimed %r was existing; it is not, treating as new", proposed)
+    return proposed, False

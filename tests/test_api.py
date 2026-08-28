@@ -952,8 +952,10 @@ def test_the_good_lines_commit_and_the_bad_ones_come_back(client, monkeypatch):
             "today": DATE,
         },
     ).json()
+    # The expansion is read from the real config.toml, so this string tracks
+    # `[todo.subjects].fpm` and has to be updated when the class is renamed.
     assert [line["title"] for line in body["written"]] == [
-        "US Foreign Policy Making Thornhill Chapter 3",
+        "US National Security Policy Making Thornhill Chapter 3",
         "Read ch4",
     ]
     assert [line["raw"] for line in body["failed"]] == ["someday: fix the printer"]

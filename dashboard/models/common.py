@@ -51,6 +51,12 @@ class Track(StrEnum):
     right: five independent trials a day is a great deal more evidence per day
     than one problem."""
 
+    investigate = "investigate"
+    """The politics class's daily investigation, rated per subject folder in
+    `area`. Its own track rather than a second kind of debate: researching a
+    claim and arguing one are different jobs, and one number cannot mean both
+    -- which is exactly the mistake `debate` would have been reused for."""
+
 
 class Provenance(StrEnum):
     measured = "measured"
