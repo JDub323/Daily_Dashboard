@@ -391,6 +391,31 @@ class MathSettings(Base):
         """The proof-textbook section this week is pinned to, if one is."""
         return self.proof.sections.get(self.topic_for(date))
 
+    def is_second_day(self, date: dt.date) -> bool:
+        """Is this the second day of a two-day problem?
+
+        True when this day and the one before it are both `proof-long` -- which
+        is what a two-day problem *is*, expressed as the pair of entries in
+        `[math.week]` that make it one. Derived rather than configured, so
+        moving the pair to Friday/Saturday is one table edit and nothing here
+        needs to know it happened.
+        """
+        return (
+            self.mode_for(date) is DayMode.proof_long
+            and self.mode_for(date - dt.timedelta(days=1)) is DayMode.proof_long
+        )
+
+    def carries_over(self, date: dt.date) -> bool:
+        """Is this day one of a two-day problem?
+
+        The mirror of `is_second_day`, and what tells the lapse reconciler to
+        carry an unmarked day rather than charge it a zero.
+        """
+        return (
+            self.mode_for(date) is DayMode.proof_long
+            and self.mode_for(date + dt.timedelta(days=1)) is DayMode.proof_long
+        )
+
     def tiers_for(self, mode: DayMode) -> list[str]:
         """The tiers a mode may ask for, easiest first."""
         tiers = self.proof.tiers.get(mode.value, [])

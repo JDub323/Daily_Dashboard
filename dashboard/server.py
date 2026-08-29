@@ -693,7 +693,12 @@ def _register(app: FastAPI) -> None:
         # a few seconds later and are on screen at the next redraw -- which,
         # for a set of readings that change once a night, is soon enough.
         garmin.sync_in_background(cfg, request.app.state.db, date)
-        lapses = repo.reconcile_math_lapses(date)
+        # `carries_over` spares day one of the two-day problem: an unmarked
+        # Thursday rolls into Friday instead of being charged a zero. Forgetting
+        # to press "keep going tomorrow" is not abandoning a problem you were
+        # meant to still be holding, and the lapse rule cannot tell those apart
+        # without being handed the week's shape.
+        lapses = repo.reconcile_math_lapses(date, cfg.math.carries_over)
         for event in lapses:
             log.info(
                 "lapsed %s %s (%s): unmarked, %s -> %s",
@@ -1166,7 +1171,31 @@ def _register(app: FastAPI) -> None:
 
     @app.post("/api/math/hint")
     def math_hint(cfg: Cfg, repo: Repo, body: api.MathHintRequest) -> api.MathPanel:
-        repo.reveal_hint(body.date)
+        """Reveal one more hint, up to what the *day* allows.
+
+        The cap is computed here rather than in the repository, which may not
+        read config, and it is the whole of the two-day barrier: on day one it
+        is zero, so this call is a no-op and the hints stay out of the payload
+        `math_panel` builds. A client cannot ask its way past it.
+        """
+        attempt = repo.math_attempt(body.date)
+        problem = repo.problem(attempt.problem_id) if attempt else None
+        if problem is None:
+            raise LookupError(f"no problem drawn on {body.date}")
+        repo.reveal_hint(body.date, content.hints_available(cfg, body.date, problem))
+        return state.math_panel(cfg, repo, body.date)
+
+    @app.post("/api/math/carry")
+    def math_carry(cfg: Cfg, repo: Repo, body: api.MathCarryRequest) -> api.MathPanel:
+        """End day one of the two-day problem with it still unsolved.
+
+        Writes no rating event -- the result lands once, tomorrow. A 409 for a
+        day that is not day one of a two-day problem, because carrying a
+        Wednesday would be a day that never gets rated at all.
+        """
+        if not cfg.math.carries_over(body.date):
+            raise ValueError(f"{body.date} is not day one of a two-day problem")
+        repo.carry_math(body.date)
         return state.math_panel(cfg, repo, body.date)
 
     @app.post("/api/math/finish")
@@ -1175,7 +1204,30 @@ def _register(app: FastAPI) -> None:
         # repository. The browser no longer does the arithmetic -- including
         # the speed bonus, which is why the minutes cross the wire raw and the
         # multiplier is never sent by the client.
-        repo.finish_math(body.date, body.outcome, body.minutes, cfg.math.par_minutes)
+        #
+        # `early_solve` is the one thing the repository cannot work out for
+        # itself: whether today is day one of a two-day problem is a question
+        # about [math.week]. It is asserted here and *checked* there against the
+        # row -- the bonus needs a genuine day-one, unhinted solve.
+        repo.finish_math(
+            body.date,
+            body.outcome,
+            body.minutes,
+            cfg.math.par_minutes,
+            rubric_hit=body.rubric_hit,
+            early_solve=cfg.math.carries_over(body.date),
+        )
+        return state.math_panel(cfg, repo, body.date)
+
+    @app.post("/api/math/segment")
+    def math_segment(cfg: Cfg, repo: Repo, body: api.StudySegmentRequest) -> api.MathPanel:
+        """Tick or skip one segment of Sunday's reading plan.
+
+        Unrated, like the whole day. What it writes that matters is the skip
+        reason, which is the only thing that stops the next generation opening
+        with the introduction you skipped last month.
+        """
+        repo.mark_segment(body.date, body.index, done=body.done, reason=body.reason)
         return state.math_panel(cfg, repo, body.date)
 
     @app.get("/api/math/archive")

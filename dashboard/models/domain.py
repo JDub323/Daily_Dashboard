@@ -22,6 +22,7 @@ from .common import (
     MathStatus,
     MealSize,
     PaperStatus,
+    ProblemKind,
     Provenance,
     Rating,
     Score,
@@ -105,12 +106,45 @@ class MathProblem(Base):
 
     anchor: Rating
     statement: str
-    answer: str
 
-    hints: list[str] = Field(min_length=3, max_length=3)
+    kind: ProblemKind = ProblemKind.compute
+    """Numeric answer, or proof. Frozen on the row at generation time for the
+    reason `topic` and `area` are: `[math.week]` is editable, and a problem must
+    not change into something else when the week is rearranged."""
+
+    answer: str
+    """What you were supposed to produce.
+
+    The final answer on a compute problem; the book's solution sketch on a
+    proof. One column rather than two because it has always meant the same
+    thing -- it is what the panel reveals and what the archive reads back --
+    and a proof whose `answer` column was empty would be a row that cannot
+    show you what you got wrong."""
+
+    hints: list[str] = Field(max_length=3)
     """Was hint1/hint2/hint3. The client immediately built an array anyway.
-    These are the three real hints; the topic/textbook links are not hints and
-    are not counted here."""
+    The topic/textbook links are not hints and are not counted here.
+
+    The *count* is per-kind and enforced at the boundary in `content.to_problem`
+    rather than here: three on a compute problem, two on a proof (a nudge and a
+    giveaway -- see `scoring.PROOF_HINT_COSTS`), none on a problem you brought
+    yourself, which nobody wrote hints for. Encoding that as a bound on the
+    field would make the model unable to hold two of the three."""
+
+    rubric: list[str] = Field(default_factory=list, max_length=6)
+    """Checkpoints a complete proof has to hit, written from the book's own
+    printed solution.
+
+    Empty on a compute problem: there is nothing to itemise about 137. On a
+    proof this is what makes `partial` a claim rather than a mood -- the
+    checkpoints are on screen when the button is pressed."""
+
+    location: str | None = None
+    """Where in the book -- "2.2.4 Viete's Relations, p. 70".
+
+    `source` ("P&B 199") is the unique key and the do-not-repeat handle; this
+    is the pointer a person can act on, so the panel can say where to go and
+    read around it."""
 
     verified_url: Url | None = None
     model: str
@@ -136,10 +170,22 @@ class MathAttempt(Base):
     """PK -- one problem per day."""
 
     problem_id: int
+
+    day: int = Field(default=1, ge=1, le=2)
+    """Which day of a two-day problem this is.
+
+    Two rows point at one problem and only the second is rated. Always 1 on
+    every other kind of day, and on every row written before the column."""
+
     hints_revealed: int = Field(ge=0, le=3, default=0)
     status: MathStatus = MathStatus.open
     score: Score | None = None
-    """NULL while open. Derived server-side from status + hints_revealed."""
+    """NULL while open *or carried*. Derived server-side from status +
+    hints_revealed."""
+
+    rubric_hit: list[bool] = Field(default_factory=list, max_length=6)
+    """Which of the problem's rubric checkpoints you ticked. Empty on a compute
+    day, and on a proof closed without itemising."""
 
     minutes: int | None = Field(default=None, ge=1, le=1440)
     """How long it took, self-reported and rounded to the minute.
@@ -153,6 +199,60 @@ class MathAttempt(Base):
     rating_event's `k`, and reading a K of 36 back later tells you a bonus
     applied but not what it was measured from. This is the input.
     """
+
+
+class SkippedSegment(Base):
+    index: int = Field(ge=0)
+    reason: str = Field(default="", max_length=200)
+    """"knew it", "no time". Short, and free text rather than an enum: the
+    useful reasons are not a list anybody could write in advance, and this is
+    read by a generator rather than aggregated."""
+
+
+class StudySegment(Base):
+    """One half-hour of Sunday: something to read, then problems to work."""
+
+    title: str
+    reading: str
+    """What to read, with pages -- "2.2.4, pp. 70-74, through the worked
+    example". Pages, because a segment that says "read about Viete" is one you
+    have to plan before you can start."""
+
+    problems: list[str] = Field(default_factory=list, max_length=30)
+    """Problem numbers to work, as printed. Many and easy is the point: this is
+    the day for getting used to the objects, not for being stuck."""
+
+    minutes: int = Field(default=30, ge=5, le=120)
+    why: str = ""
+    """One line on what this segment buys you, so choosing between three of
+    them is a decision rather than a guess."""
+
+
+class StudyPlan(Base):
+    """Sunday's reading plan. Unrated -- it ticks the day and moves nothing.
+
+    Three segments generated and one or two expected, so `done` and `skipped`
+    are both partial by design and neither is a failure. `skipped` carries a
+    reason because that is the only thing that stops next month's plan opening
+    with the same introduction.
+    """
+
+    date: dt.date
+    topic: str
+    book: str
+    segments: list[StudySegment] = Field(min_length=1, max_length=6)
+
+    done: list[int] = Field(default_factory=list)
+    skipped: list[SkippedSegment] = Field(default_factory=list)
+
+    model: str
+    generated_at: dt.datetime
+
+    @computed_field
+    @property
+    def started(self) -> bool:
+        """Any segment done at all -- which is what ticks the day."""
+        return bool(self.done)
 
 
 # --- chess -----------------------------------------------------------------

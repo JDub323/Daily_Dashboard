@@ -35,10 +35,10 @@ from typing import Any
 
 from . import llm, logs, tricks
 from .config import Settings
-from .db.repository import Repository
+from .db.repository import PROOF_AREA, Repository
 from .models import domain as d
 from .models.api import TopicResponse
-from .models.common import Deck
+from .models.common import DayMode, Deck, ProblemKind
 
 log = logs.get(__name__)
 
@@ -57,17 +57,52 @@ class ContentError(RuntimeError):
 
 # --- the math problem ------------------------------------------------------
 
-SHOWCASE_WEEKDAY = 5
-"""Saturday, in `date.weekday()` terms (0 = Monday).
 
-The last day of the topic week -- the rotation turns over on Sunday -- so it
-falls where a capstone belongs rather than interrupting the ramp.
+def is_showcase(settings: Settings, date: dt.date) -> bool:
+    """Is this a day for a famous problem rather than a calibrated one?
+
+    Was `date.weekday() == 5`, a constant in this module. The week has a shape
+    in config now, and Saturday is one entry in it -- so the question is asked
+    of `[math.week]` rather than of the calendar, and moving the showcase is an
+    edit to a table rather than to this file.
+    """
+    return settings.math.mode_for(date) is DayMode.proof_showcase
+
+
+HINTS_FOR = {
+    ProblemKind.compute: 3,
+    ProblemKind.proof: 2,
+}
+"""How many hints each kind of problem carries.
+
+Two on a proof, and they are not three with one missing: the pair is a nudge
+and a giveaway (`scoring.PROOF_HINT_COSTS`), which is a different ladder from
+the compute problem's three equal steps rather than a shortened one.
+
+How many are *available on a given day* is a separate question, asked of the
+week -- day one of the two-day problem offers none of the two it has. See
+`hints_available`.
 """
 
 
-def is_showcase(date: dt.date) -> bool:
-    """Is this a day for a famous problem rather than a calibrated one?"""
-    return date.weekday() == SHOWCASE_WEEKDAY
+def hints_available(settings: Settings, date: dt.date, problem: d.MathProblem) -> int:
+    """How many of a problem's hints today is allowed to reveal.
+
+    Zero on day one of the two-day problem. That is the whole mechanism of the
+    two days: you get the first hint by having already spent a day without one,
+    and the second -- which more or less hands over the argument -- only after
+    that. A hint you could take at any time is not a barrier, it is a button.
+
+    Enforced server-side rather than by the panel declining to draw it. The old
+    math panel shipped every hint to the browser and simply did not render the
+    unrevealed ones, and its own comment admits that was "never a control, only
+    an inconvenience". For a *day* barrier that is not good enough: tomorrow's
+    hints must not be in today's response at all.
+    """
+    ceiling = HINTS_FOR.get(problem.kind, 3)
+    if settings.math.mode_for(date) is DayMode.proof_long and not settings.math.is_second_day(date):
+        return 0
+    return min(ceiling, len(problem.hints))
 
 
 def load_pool(path: Path) -> list[dict[str, Any]]:
@@ -113,9 +148,21 @@ def to_problem(
         log.warning("unknown tier %r; falling back to %s", tier, settings.math.default_tier)
         tier = settings.math.default_tier
 
-    hints = raw.get("hints") or [raw.get(f"hint{i}") or "" for i in (1, 2, 3)]
-    if len(hints) != 3:
-        raise ContentError(f"expected 3 hints, got {len(hints)}")
+    kind = ProblemKind(raw.get("kind") or ProblemKind.compute)
+    hints = raw.get("hints")
+    if hints is None:
+        hints = [raw.get(f"hint{i}") or "" for i in (1, 2, 3)]
+    wanted = HINTS_FOR[kind]
+    if len(hints) != wanted:
+        raise ContentError(f"expected {wanted} hints for a {kind.value} problem, got {len(hints)}")
+
+    rubric = [str(c) for c in raw.get("rubric") or []]
+    if kind is ProblemKind.proof and not rubric:
+        # The rubric is what makes `partial` a claim about the mathematics
+        # rather than a mood, and it is free to produce -- the generator is
+        # already reading the book's printed solution to write the hints. A
+        # proof without one is a generation that skipped a step.
+        raise ContentError("a proof problem needs a rubric; the model wrote none")
 
     topic = raw.get("topic") or (settings.math.topic_for(date) if date else None)
     return d.MathProblem(
@@ -123,8 +170,11 @@ def to_problem(
         tier=tier,
         anchor=settings.math.anchors[tier],
         statement=raw["statement"],
+        kind=kind,
         answer=str(raw["answer"]),
         hints=[str(h) for h in hints],
+        rubric=rubric,
+        location=raw.get("location") or None,
         verified_url=raw.get("verified_url") or None,
         model=model,
         generated_at=dt.datetime.now(),
@@ -149,7 +199,35 @@ def next_problem(settings: Settings, repo: Repository, date: dt.date) -> d.MathP
 
     So this raises where it used to spend. `ContentError` says what to do
     about it, because the answer is a real one: run the batch by hand.
+
+    Day two of the two-day problem draws nothing at all: it picks up the
+    problem carried from yesterday and opens a second attempt against it. That
+    is the one path here that does not consult the batch, and it comes first --
+    a Friday that generated a file anyway must not be able to replace the
+    problem you spent Thursday on.
     """
+    mode = settings.math.mode_for(date)
+    if mode is DayMode.reading:
+        raise ContentError(
+            f"{date.isoformat()} is a reading day; there is no problem to draw. "
+            f"See [math.week] in config.toml."
+        )
+
+    if settings.math.is_second_day(date):
+        carried = repo.carried_math_attempt(date)
+        if carried is not None:
+            problem = repo.problem(carried.problem_id)
+            assert problem is not None  # the attempt's FK guarantees it
+            log.info("continuing %s into day two (no draw)", problem.source)
+            repo.open_math_attempt(date, carried.problem_id, day=2)
+            return problem
+        # Nothing carried: yesterday's problem was solved on the day, or never
+        # drawn at all. Solving it is meant to buy the day off -- the panel
+        # offers a problem of your own instead -- so falling through to the
+        # batch here would take that back. The caller checks `free_day` first
+        # and does not reach this; a client that posts anyway gets the honest
+        # answer below, which is that there is no file for today.
+
     seen = set(repo.seen_sources())
     rating = target_rating(settings, repo, date)
 
@@ -184,7 +262,16 @@ def target_rating(settings: Settings, repo: Repository, date: dt.date) -> int:
     and an area with no history *is* the pooled rating (see
     `Repository.current_rating`), so week one of a new area pitches exactly
     where the old behaviour did and only diverges once there is evidence.
+
+    A proof day is pitched against the `proofs` bucket instead, because that is
+    the rating its result will move. Reading the area rating there would pitch
+    a Putnam-level proof against a number earned on AIME answers, which is not
+    a measurement of the same thing in either direction.
     """
+    if settings.math.mode_for(date).is_proof:
+        rating = repo.current_rating("math", PROOF_AREA)
+        log.info("pitching today's proof at the proofs rating (%d)", rating)
+        return rating
     area = settings.math.area_for(date)
     rating = repo.current_rating("math", area)
     if area is not None:
@@ -240,6 +327,25 @@ def _from_batch(
         )
         return None
 
+    # A proof day names the band it is allowed to reach for, so a Wednesday
+    # cannot serve the Thursday-grade rung if the generator wrote one into the
+    # file. Filtered rather than enforced at import: the file is a day's worth
+    # of candidates, and a rung outside the band is a rung this day skips, not
+    # a batch to reject at 3am.
+    mode = settings.math.mode_for(date)
+    allowed = set(settings.math.tiers_for(mode))
+    if allowed:
+        in_band = [p for p in usable if p.tier in allowed]
+        if in_band:
+            usable = in_band
+        else:
+            log.warning(
+                "no rung of %s is in %s's band (%s); serving the file as written",
+                path.name,
+                mode.value,
+                ", ".join(sorted(allowed)),
+            )
+
     def distance(p: Any) -> int:
         anchor = settings.math.anchors.get(p.tier)
         # An unknown tier sorts last rather than crashing; `to_problem` will
@@ -249,7 +355,7 @@ def _from_batch(
     def hardest(p: Any) -> int:
         return settings.math.anchors.get(p.tier, 0)
 
-    pick = max(usable, key=hardest) if is_showcase(date) else min(usable, key=distance)
+    pick = max(usable, key=hardest) if is_showcase(settings, date) else min(usable, key=distance)
 
     try:
         return to_problem(pick.model_dump(), settings, BATCHED, date)

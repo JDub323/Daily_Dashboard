@@ -56,6 +56,7 @@ from .domain import (
     RatingEvent,
     Readiness,
     SpellingWord,
+    StudyPlan,
     TheoremCard,
     TodoItem,
     TopicInfo,
@@ -95,6 +96,39 @@ class MathFinishRequest(DateBody):
     """Optional. Read only on a `solved` outcome -- a failure scores zero
     whether it took three minutes or two hours, so the server does not store a
     time it would then have to explain having ignored."""
+
+    rubric_hit: list[bool] = Field(default_factory=list, max_length=6)
+    """Which of a proof's checkpoints were ticked. Empty on a compute day.
+
+    Stored beside the outcome rather than being turned into the score: the
+    three-way self-report is what is rated, and the checkpoints are what make
+    that report a claim about the mathematics instead of a feeling. Reading a
+    `partial` back later and being able to see *which* half was missing is the
+    reason to keep them.
+    """
+
+
+class MathCarryRequest(DateBody):
+    """End day one of the two-day problem without a result.
+
+    Its own endpoint rather than an outcome on `MathFinishRequest`, because it
+    is the opposite of finishing: no score, no rating event, and the attempt
+    stays alive into tomorrow."""
+
+
+class StudySegmentRequest(DateBody):
+    """Tick or skip one segment of Sunday's reading plan."""
+
+    index: int = Field(ge=0, le=5)
+    done: bool = True
+
+    reason: str = Field(default="", max_length=200)
+    """Why it was skipped -- "knew it", "no time". Ignored when `done`.
+
+    The one field on this request worth having. Three segments are generated
+    and one or two are expected, so a skip carries no information by itself;
+    the reason is what the next generation needs in order to stop leading with
+    material you already had."""
 
 
 class MathLateRequest(DateBody):
@@ -536,10 +570,46 @@ class MathPanel(Base):
     target_area: str | None = None
     """The area this week's topic rates into -- the one driving difficulty."""
 
+    mode: str = "compute"
+    """What today asks for, from `[math.week]`. The panel renders a different
+    surface for each: a ladder rung, a proof, or a reading plan."""
+
+    proof: AreaRating | None = None
+    """The `proofs` bucket -- the rating four days of the week actually move.
+
+    Sent beside `summary` rather than inside `areas`, because it is not one of
+    the `[math.areas]` buckets and must not appear in the strip that iterates
+    them. On a proof day the panel shows this as the headline instead of the
+    pooled rating, which is the number that is standing still those days."""
+
+    plan: StudyPlan | None = None
+    """Sunday's reading plan, when there is one. Unrated, and the only day the
+    hero panel holds something that is not a problem."""
+
     problem: MathProblem | None = None
     hints_revealed: int = 0
     status: str = "open"
     score: Score | None = None
+
+    day: int = 1
+    """Which day of a two-day problem today is."""
+
+    hint_budget: int = 3
+    """How many hints today is allowed to reveal -- *not* how many the problem
+    has.
+
+    Zero on day one of the two-day problem, whose two hints exist and are not
+    reachable until tomorrow. The panel renders the button from this, and the
+    server enforces it; the difference between the two numbers is the barrier.
+    """
+
+    free_day: bool = False
+    """Day two of a two-day problem that was solved on day one.
+
+    The day off that a day-one solve buys. Nothing is drawn and nothing lapses;
+    the panel offers a problem of your own instead, and that one is worth a
+    bonus point rather than a rating change."""
+
     hints_visible: list[str] = Field(default_factory=list)
     """Only the hints actually revealed. The unrevealed ones are not sent --
     previously the whole hint list shipped to the client and was merely not

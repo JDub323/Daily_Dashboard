@@ -34,6 +34,7 @@ from ..models.common import (
     MathStatus,
     MealSize,
     PaperStatus,
+    ProblemKind,
     Provenance,
     SessionKind,
     Stool,
@@ -89,7 +90,27 @@ two months and keep it there -- so the rating would stop responding to the
 problems, which are the only thing it is meant to measure.
 """
 
-_ATTEMPT_ONLY = frozenset({"a_date", "problem_id", "hints_revealed", "status", "score", "minutes"})
+PROOF_AREA = "proofs"
+"""The bucket a proof result rates into, on the math track.
+
+`TRICK_AREA`'s move, for the third time and the sharpest reason yet. A proof is
+scored on a three-way self-report against a rubric, and honestly scored proofs
+sit well below honestly scored numeric answers -- so letting them into the
+`[math.areas]` buckets would drag the very numbers that pitch Monday's and
+Tuesday's difficulty. Four hard days a week would make the two calibrated days
+easier, which is the system undoing the change it was given.
+
+Not one of the `[math.areas]` names, so it stays out of the per-area strip that
+iterates `cfg.math.area_names`, and -- because the pooled rating is
+`area IS NULL` -- writing only this row leaves the headline math rating alone.
+
+The cost of that is worth stating: the proofs rating and the compute rating are
+not comparable numbers, and the headline barely moves Wednesday to Saturday.
+"""
+
+_ATTEMPT_ONLY = frozenset(
+    {"a_date", "problem_id", "day", "hints_revealed", "status", "score", "minutes", "rubric_hit"}
+)
 """Columns the archive join adds for the attempt side. Everything else in the
 row belongs to `math_problem` -- `id` included, which is why the attempt's own
 date is aliased rather than selected twice."""
@@ -132,6 +153,65 @@ def _unpack(row: sqlite3.Row, *json_fields: str) -> dict[str, Any]:
         if out.get(f) is not None:
             out[f] = json.loads(out[f])
     return out
+
+
+def _problem(row: sqlite3.Row) -> d.MathProblem:
+    """One `math_problem` row, with both of its JSON columns read.
+
+    A named helper rather than the `_unpack(row, "hints")` that used to be
+    written out at each of the three call sites: `rubric` joined `hints` as a
+    JSON column, and three places each remembering to list both is three places
+    that can forget one. Forgetting would not raise -- pydantic would see a
+    string where a list belongs and reject it a layer later, naming the field
+    but not the reason.
+    """
+    data = _unpack(row, "hints", "rubric")
+    # NULL rather than '[]' on every problem written before the column existed.
+    data["rubric"] = data.get("rubric") or []
+    return d.MathProblem(**data)
+
+
+def _attempt(row: sqlite3.Row) -> d.MathAttempt:
+    """One `math_attempt` row. `rubric_hit` is NULL on every compute day."""
+    data = _unpack(row, "rubric_hit")
+    data["rubric_hit"] = data.get("rubric_hit") or []
+    return d.MathAttempt(**data)
+
+
+def _plan(row: sqlite3.Row) -> d.StudyPlan:
+    """One `study_plan` row: three JSON columns, all of them lists."""
+    return d.StudyPlan(**_unpack(row, "segments", "done", "skipped"))
+
+
+_STATUS_FOR = {
+    MathOutcome.solved: MathStatus.solved,
+    MathOutcome.partial: MathStatus.partial,
+    MathOutcome.failed: MathStatus.failed,
+}
+"""What the client reports -> what the row records.
+
+`MathOutcome.carried` is absent on purpose: ending day one is not a result, so
+it goes through `carry_math` and writes no rating event at all. Leaving it out
+of this table is what makes `finish_math` unable to be handed it by accident.
+"""
+
+
+def _rating_areas(problem: d.MathProblem) -> list[str | None]:
+    """Which rating buckets one result writes a row into, in order.
+
+    A compute problem writes two: the pooled rating (`None`) and its area. A
+    proof writes one, into `PROOF_AREA`, and specifically *not* the pooled row
+    -- see that constant for why letting proof scores near the numbers that
+    pitch Monday's difficulty would have the system undo the change.
+
+    One function rather than the condition written out at each closing path,
+    because there are three of them -- the ordinary finish, the lapse, and the
+    late submission -- and a rule about which ratings move that is stated three
+    times is a rule that will eventually be stated two ways.
+    """
+    if problem.kind is ProblemKind.proof:
+        return [PROOF_AREA]
+    return [None] if problem.area is None else [None, problem.area]
 
 
 class Repository:
@@ -280,16 +360,19 @@ class Repository:
     def add_problem(self, problem: d.MathProblem) -> d.MathProblem:
         row = self.conn.execute(
             "INSERT INTO math_problem "
-            "(source, tier, anchor, statement, answer, hints, verified_url, model, "
-            "generated_at, topic, area) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+            "(source, tier, anchor, statement, kind, answer, hints, rubric, location, "
+            "verified_url, model, generated_at, topic, area) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
             (
                 problem.source,
                 problem.tier,
                 problem.anchor,
                 problem.statement,
+                problem.kind.value,
                 problem.answer,
                 _json(problem.hints),
+                _json(problem.rubric),
+                problem.location,
                 str(problem.verified_url) if problem.verified_url else None,
                 problem.model,
                 problem.generated_at.isoformat(),
@@ -297,40 +380,88 @@ class Repository:
                 problem.area,
             ),
         ).fetchone()
-        return d.MathProblem(**_unpack(row, "hints"))
+        return _problem(row)
 
     def problem(self, problem_id: int) -> d.MathProblem | None:
         row = self.conn.execute("SELECT * FROM math_problem WHERE id = ?", (problem_id,)).fetchone()
-        return d.MathProblem(**_unpack(row, "hints")) if row else None
+        return _problem(row) if row else None
 
     def problem_by_source(self, source: str) -> d.MathProblem | None:
         row = self.conn.execute("SELECT * FROM math_problem WHERE source = ?", (source,)).fetchone()
-        return d.MathProblem(**_unpack(row, "hints")) if row else None
+        return _problem(row) if row else None
 
     def math_attempt(self, date: dt.date) -> d.MathAttempt | None:
         row = self.conn.execute(
             "SELECT * FROM math_attempt WHERE date = ?", (_iso(date),)
         ).fetchone()
-        return d.MathAttempt(**dict(row)) if row else None
+        return _attempt(row) if row else None
 
-    def open_math_attempt(self, date: dt.date, problem_id: int) -> d.MathAttempt:
+    def carried_math_attempt(self, date: dt.date) -> d.MathAttempt | None:
+        """Yesterday's two-day problem, if it was left open at the end of it.
+
+        The previous day only, and deliberately not "the most recent carried
+        attempt". A problem carried from Thursday is Friday's; if Friday is
+        missed as well, Saturday is Saturday -- it has its own job, and picking
+        up a two-day problem three days later would quietly make the day-two
+        hint rules apply to a day that is not day two.
+        """
         row = self.conn.execute(
-            "INSERT INTO math_attempt (date, problem_id) VALUES (?, ?) "
-            "ON CONFLICT (date) DO UPDATE SET problem_id = excluded.problem_id RETURNING *",
-            (_iso(date), problem_id),
+            "SELECT * FROM math_attempt WHERE date = ? AND status = 'carried'",
+            (_iso(date - dt.timedelta(days=1)),),
         ).fetchone()
-        return d.MathAttempt(**dict(row))
+        return _attempt(row) if row else None
 
-    def reveal_hint(self, date: dt.date) -> d.MathAttempt:
+    def open_math_attempt(self, date: dt.date, problem_id: int, day: int = 1) -> d.MathAttempt:
+        row = self.conn.execute(
+            "INSERT INTO math_attempt (date, problem_id, day) VALUES (?, ?, ?) "
+            "ON CONFLICT (date) DO UPDATE SET problem_id = excluded.problem_id, "
+            "day = excluded.day RETURNING *",
+            (_iso(date), problem_id, day),
+        ).fetchone()
+        return _attempt(row)
+
+    def reveal_hint(self, date: dt.date, max_hints: int = 3) -> d.MathAttempt:
+        """Reveal one more hint, up to `max_hints`.
+
+        The cap is passed in rather than being the column's hard 3, because how
+        many hints a day offers is a question about the day: three on a compute
+        problem, two on a proof, and *none* on day one of the two-day problem,
+        where the whole point is that you sit with it overnight before being
+        told anything.
+
+        Still clamps rather than raising, which is what `MIN(..., 3)` did. The
+        cap moved; the contract did not. A request past it is a double-click on
+        a button the panel has already disabled, not a claim worth a 409 -- and
+        with the cap at zero on a Thursday, clamping is what makes "there are no
+        hints today" a quiet fact rather than an error the client has to know
+        how to render.
+        """
         with transaction(self.conn):
             row = self.conn.execute(
-                "UPDATE math_attempt SET hints_revealed = MIN(hints_revealed + 1, 3) "
+                "UPDATE math_attempt SET hints_revealed = MIN(hints_revealed + 1, ?) "
                 "WHERE date = ? AND status = 'open' RETURNING *",
-                (_iso(date),),
+                (max(0, max_hints), _iso(date)),
             ).fetchone()
             if row is None:
                 raise LookupError(f"no open math attempt on {date}")
-            return d.MathAttempt(**dict(row))
+            return _attempt(row)
+
+    def carry_math(self, date: dt.date) -> d.MathAttempt:
+        """End day one of a two-day problem without a result.
+
+        No rating event, and none is missing: the result lands once, on day
+        two. `day` stays 1 -- this row *is* day one, and tomorrow's row is the
+        one that says 2.
+        """
+        with transaction(self.conn):
+            row = self.conn.execute(
+                "UPDATE math_attempt SET status = 'carried' "
+                "WHERE date = ? AND status = 'open' AND day = 1 RETURNING *",
+                (_iso(date),),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"no open day-one math attempt on {date}")
+            return _attempt(row)
 
     def _close_math(
         self,
@@ -341,6 +472,7 @@ class Repository:
         score_for: Callable[[d.MathAttempt], float],
         minutes: int | None = None,
         multiplier_for: Callable[[d.MathProblem], float] | None = None,
+        rubric_hit: list[bool] | None = None,
     ) -> tuple[d.MathAttempt, d.RatingEvent]:
         """Close one open attempt and apply its elo update, atomically.
 
@@ -365,24 +497,30 @@ class Repository:
             score = score_for(attempt)
             multiplier = multiplier_for(problem) if multiplier_for else 1.0
             row = self.conn.execute(
-                "UPDATE math_attempt SET status = ?, score = ?, minutes = ? "
+                "UPDATE math_attempt SET status = ?, score = ?, minutes = ?, rubric_hit = ? "
                 "WHERE date = ? AND status = 'open' RETURNING *",
-                (status.value, score, minutes, _iso(date)),
+                (
+                    status.value,
+                    score,
+                    minutes,
+                    _json(rubric_hit) if rubric_hit else None,
+                    _iso(date),
+                ),
             ).fetchone()
             if row is None:
                 raise ValueError(f"math attempt on {date} was closed concurrently")
 
-            ev = self._rate_math(date, problem, score, provenance, area=None, multiplier=multiplier)
-            # The same result, rated again inside its area. Second and inside
-            # the same transaction: the pooled row is the one the panel and
-            # the chart read, so it must not be able to exist without its
-            # partner or vice versa. A problem carrying no area -- every one
-            # generated before the column -- rates pooled only.
-            if problem.area is not None:
-                self._rate_math(
-                    date, problem, score, provenance, area=problem.area, multiplier=multiplier
-                )
-            return d.MathAttempt(**dict(row)), ev
+            # One row per bucket the result belongs in, first one returned.
+            # The order matters and is `_rating_areas`': for a compute problem
+            # the pooled row comes first because it is what the panel and the
+            # chart read, and it must not be able to exist without its area
+            # partner or vice versa -- which is what putting both inside this
+            # transaction buys.
+            events = [
+                self._rate_math(date, problem, score, provenance, area=area, multiplier=multiplier)
+                for area in _rating_areas(problem)
+            ]
+            return _attempt(row), events[0]
 
     def _rate_math(
         self,
@@ -433,6 +571,9 @@ class Repository:
         outcome: MathOutcome,
         minutes: int | None = None,
         par_minutes: dict[str, int] | None = None,
+        *,
+        rubric_hit: list[bool] | None = None,
+        early_solve: bool = False,
     ) -> tuple[d.MathAttempt, d.RatingEvent]:
         """Score, close the attempt, and apply the elo update together.
 
@@ -441,24 +582,54 @@ class Repository:
         that it is the only one that knows SQL, and the price of that is that
         it is not allowed to know about config either.
 
+        `early_solve` arrives the same way and for the same reason. Whether
+        today is day one of a two-day problem is a question about `[math.week]`,
+        which this module may not read -- so the caller decides, and what is
+        checked *here* is the part the caller cannot be trusted on: the bonus
+        applies only to a genuine day-one, unhinted solve, and the row is what
+        says so.
+
         A failure discards `minutes` before it is stored. Time is only read on
         a solve, so keeping the number would leave a column on the row that
         nothing consults and that reads, later, as though it once mattered.
         """
         outcome = MathOutcome(outcome)
-        solved = outcome is MathOutcome.solved
+        if outcome is MathOutcome.carried:
+            raise ValueError("a carried day is closed by `carry_math`, not by finishing it")
+        gained = outcome is not MathOutcome.failed
         pars = par_minutes or {}
+
+        def score_for(attempt: d.MathAttempt) -> float:
+            problem = self.problem(attempt.problem_id)
+            assert problem is not None
+            if problem.kind is ProblemKind.proof:
+                return scoring.proof_score(outcome, attempt.hints_revealed)
+            if outcome is MathOutcome.partial:
+                # A numeric answer that is half right is wrong. Rejected here
+                # rather than quietly scored, because the client that sent it
+                # has the wrong idea about what kind of day this is.
+                raise ValueError("`partial` is a proof outcome; this problem has an answer")
+            return scoring.math_score(outcome, attempt.hints_revealed)
+
+        def multiplier_for(problem: d.MathProblem) -> float:
+            if not gained:
+                return 1.0
+            if early_solve:
+                attempt = self.math_attempt(date)
+                assert attempt is not None
+                if attempt.day == 1 and attempt.hints_revealed == 0:
+                    return scoring.early_solve_multiplier(self.event_count(Track.math, PROOF_AREA))
+                return 1.0
+            return scoring.time_multiplier(minutes, pars.get(problem.tier))
+
         return self._close_math(
             date,
-            status=(MathStatus.solved if solved else MathStatus.failed),
+            status=_STATUS_FOR[outcome],
             provenance=Provenance.measured,
-            score_for=lambda attempt: scoring.math_score(outcome, attempt.hints_revealed),
-            minutes=minutes if solved else None,
-            multiplier_for=(
-                (lambda problem: scoring.time_multiplier(minutes, pars.get(problem.tier)))
-                if solved
-                else None
-            ),
+            score_for=score_for,
+            minutes=minutes if gained else None,
+            multiplier_for=multiplier_for,
+            rubric_hit=rubric_hit,
         )
 
     def finish_math_late(
@@ -534,24 +705,19 @@ class Repository:
             if row is None:
                 raise ValueError(f"math attempt on {target} was changed concurrently")
 
-            # Pooled first and area second, matching `_close_math` -- the
-            # pooled row is what the panel and the chart read, so it must not
-            # be able to exist without its partner or vice versa.
-            self._unlapse(target, problem, area=None)
-            ev = self._rate_math(
-                target, problem, score, Provenance.late, area=None, multiplier=multiplier
-            )
-            if problem.area is not None:
-                self._unlapse(target, problem, area=problem.area)
-                self._rate_math(
-                    target,
-                    problem,
-                    score,
-                    Provenance.late,
-                    area=problem.area,
-                    multiplier=multiplier,
+            # Cancel then re-rate, bucket by bucket, in `_rating_areas`' order
+            # -- for a compute problem the pooled row is what the panel and the
+            # chart read, so it must not be able to exist without its partner
+            # or vice versa. A proof has one bucket and cancels one row.
+            events = []
+            for area in _rating_areas(problem):
+                self._unlapse(target, problem, area=area)
+                events.append(
+                    self._rate_math(
+                        target, problem, score, Provenance.late, area=area, multiplier=multiplier
+                    )
                 )
-            return d.MathAttempt(**dict(row)), ev
+            return _attempt(row), events[0]
 
     def _unlapse(self, date: dt.date, problem: d.MathProblem, *, area: str | None) -> None:
         """Hand back exactly what the lapse on `date` took. Caller holds the
@@ -616,23 +782,27 @@ class Repository:
         is the shape that turns a modal into a spinner.
         """
         rows = self.conn.execute(
-            "SELECT a.date AS a_date, a.problem_id, a.hints_revealed, a.status, a.score, "
-            "a.minutes, p.* FROM math_attempt a JOIN math_problem p ON p.id = a.problem_id "
+            "SELECT a.date AS a_date, a.problem_id, a.day, a.hints_revealed, a.status, a.score, "
+            "a.minutes, a.rubric_hit, p.* "
+            "FROM math_attempt a JOIN math_problem p ON p.id = a.problem_id "
             "ORDER BY a.date DESC LIMIT ?",
             (limit,),
         ).fetchall()
         out = []
         for row in rows:
-            data = _unpack(row, "hints")
+            data = _unpack(row, "hints", "rubric", "rubric_hit")
             attempt = d.MathAttempt(
                 date=data["a_date"],
                 problem_id=data["problem_id"],
+                day=data["day"],
                 hints_revealed=data["hints_revealed"],
                 status=data["status"],
                 score=data["score"],
                 minutes=data["minutes"],
+                rubric_hit=data["rubric_hit"] or [],
             )
-            problem = d.MathProblem(**{k: v for k, v in data.items() if k not in _ATTEMPT_ONLY})
+            fields = {k: v for k, v in data.items() if k not in _ATTEMPT_ONLY}
+            problem = d.MathProblem(**{**fields, "rubric": fields.get("rubric") or []})
             out.append((attempt, problem))
         return out
 
@@ -731,15 +901,118 @@ class Repository:
             score_for=lambda _: scoring.LAPSE_SCORE,
         )
 
-    def reconcile_math_lapses(self, today: dt.date) -> list[d.RatingEvent]:
+    def reconcile_math_lapses(
+        self, today: dt.date, should_carry: Callable[[dt.date], bool] | None = None
+    ) -> list[d.RatingEvent]:
         """Close out every unmarked past day. Returns the events applied.
 
         Idempotent by construction: a lapsed attempt is no longer `open`, so
         the second call finds nothing. Each day is its own transaction and
         chains off the rating the previous one produced, so a three-day gap
         costs three successive results rather than one compounded guess.
+
+        `should_carry` names the days that are day one of a two-day problem, and
+        those are carried instead of lapsed -- no rating event, which is why
+        such a day contributes nothing to the returned list. Forgetting to press
+        "keep going tomorrow" should not cost a full result on a problem you
+        were meant to still be holding, and the lapse rule cannot tell that day
+        apart from an abandoned one without being told.
+
+        A predicate rather than a set of dates because the answer comes from
+        `[math.week]`, which this module may not read. Defaulting to None keeps
+        the old behaviour exactly: every unmarked day lapses.
         """
-        return [self.lapse_math(date)[1] for date in self.unmarked_math_dates(today)]
+        events = []
+        for date in self.unmarked_math_dates(today):
+            attempt = self.math_attempt(date)
+            carries = should_carry is not None and attempt is not None and attempt.day == 1
+            if carries and should_carry(date):
+                self.carry_math(date)
+                continue
+            events.append(self.lapse_math(date)[1])
+        return events
+
+    # -- sunday's reading plan ----------------------------------------------
+
+    def study_plan(self, date: dt.date) -> d.StudyPlan | None:
+        row = self.conn.execute(
+            "SELECT * FROM study_plan WHERE date = ?", (_iso(date),)
+        ).fetchone()
+        return _plan(row) if row else None
+
+    def add_study_plan(self, plan: d.StudyPlan) -> d.StudyPlan:
+        """Store one Sunday's plan. Replaces the day's plan if one exists.
+
+        Replace rather than reject, unlike `math_problem.source`. A regenerated
+        reading plan is a legitimate thing to want -- the week's topic did not
+        change and neither did the book, so there is nothing here that a second
+        generation could invalidate, and nothing is rated off it.
+        """
+        row = self.conn.execute(
+            "INSERT INTO study_plan (date, topic, book, segments, model, generated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (date) DO UPDATE SET topic = excluded.topic, book = excluded.book, "
+            "segments = excluded.segments, model = excluded.model, "
+            "generated_at = excluded.generated_at RETURNING *",
+            (
+                _iso(plan.date),
+                plan.topic,
+                plan.book,
+                _json([s.model_dump() for s in plan.segments]),
+                plan.model,
+                plan.generated_at.isoformat(),
+            ),
+        ).fetchone()
+        return _plan(row)
+
+    def mark_segment(
+        self, date: dt.date, index: int, *, done: bool, reason: str = ""
+    ) -> d.StudyPlan:
+        """Tick a segment, or record that it was skipped and why.
+
+        The two lists are kept disjoint: marking a segment done removes it from
+        `skipped` and vice versa, so a segment you skipped in the morning and
+        came back to in the evening reads as done rather than as both.
+
+        The reason is the half of this worth storing. Three segments are
+        generated and one or two are expected, so a skip is the normal case and
+        carries no information on its own -- "knew it" and "no time" are what
+        the next generation needs to hear apart.
+        """
+        with transaction(self.conn):
+            plan = self.study_plan(date)
+            if plan is None:
+                raise LookupError(f"no study plan on {date}")
+            if not 0 <= index < len(plan.segments):
+                raise ValueError(f"segment {index} is not in {date}'s plan")
+
+            done_at = sorted({*plan.done, index} if done else set(plan.done) - {index})
+            skipped = [s for s in plan.skipped if s.index != index]
+            if not done:
+                skipped.append(d.SkippedSegment(index=index, reason=reason))
+            skipped.sort(key=lambda s: s.index)
+
+            row = self.conn.execute(
+                "UPDATE study_plan SET done = ?, skipped = ? WHERE date = ? RETURNING *",
+                (
+                    _json(done_at),
+                    _json([s.model_dump() for s in skipped]),
+                    _iso(date),
+                ),
+            ).fetchone()
+            return _plan(row)
+
+    def recent_study_plans(self, limit: int = 8) -> list[d.StudyPlan]:
+        """The last few Sundays, newest first -- what the generator is shown.
+
+        The feedback loop the day needs. Without it every month opens with the
+        same introduction, because nothing tells the generator that the last
+        three plans all led with a definition you already had.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM study_plan ORDER BY date DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [_plan(r) for r in rows]
 
     # -- chess --------------------------------------------------------------
 

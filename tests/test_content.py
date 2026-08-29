@@ -23,6 +23,10 @@ from dashboard.models import domain as d
 
 from .conftest import TODAY
 
+COMPUTE_DAY = TODAY + dt.timedelta(days=1)
+"""A Monday. `TODAY` is a Sunday, which `[math.week]` now spends reading, so
+the tests that serve a problem cannot use it."""
+
 
 @pytest.fixture
 def paid(monkeypatch):
@@ -334,7 +338,7 @@ def test_the_hand_curated_pool_costs_nothing_and_says_so(settings, repo, monkeyp
 
     monkeypatch.setattr(llm, "call", never)
 
-    problem = content.next_problem(settings, repo, TODAY)
+    problem = content.next_problem(settings, repo, COMPUTE_DAY)
     assert problem.model == content.HAND_CURATED
     assert lines(settings) == []
 
@@ -342,12 +346,16 @@ def test_the_hand_curated_pool_costs_nothing_and_says_so(settings, repo, monkeyp
 # --- the Saturday showcase -------------------------------------------------
 
 SATURDAY = dt.date(2026, 8, 8)
-WEDNESDAY = dt.date(2026, 8, 5)
+MONDAY = dt.date(2026, 8, 3)
 
 
-def test_saturday_is_the_showcase_day_and_nothing_else_is():
-    assert content.is_showcase(SATURDAY)
-    assert not any(content.is_showcase(SATURDAY + dt.timedelta(days=n)) for n in range(1, 7))
+def test_saturday_is_the_showcase_day_and_nothing_else_is(settings):
+    """Asked of [math.week] now rather than of , which is the
+    only thing that changed: moving the showcase is a config edit."""
+    assert content.is_showcase(settings, SATURDAY)
+    assert not any(
+        content.is_showcase(settings, SATURDAY + dt.timedelta(days=n)) for n in range(1, 7)
+    )
 
 
 # What the showcase day *asks for* is asserted in `test_batch.py` now. The
@@ -372,7 +380,7 @@ def test_nothing_in_content_can_ask_for_a_math_problem(settings, repo, monkeypat
     monkeypatch.setattr(llm, "call", never)
 
     with pytest.raises(content.ContentError, match="batch"):
-        content.next_problem(settings, repo, TODAY)
+        content.next_problem(settings, repo, COMPUTE_DAY)
     assert lines(settings) == []
 
 
@@ -418,11 +426,22 @@ def test_the_showcase_serves_the_hardest_rung_not_the_nearest(settings):
     assert picked.tier == "putnam-late"
 
 
-def test_a_weekday_still_serves_the_rung_nearest_the_rating(settings):
+def test_a_calibrated_day_still_serves_the_rung_nearest_the_rating(settings):
+    """Monday and Tuesday keep the thermostat. It is the right mechanism for a
+    day whose job is to be calibrated -- it was only ever wrong as the rule for
+    all seven."""
     rungs = ["aime-late", "olympiad-easy", "putnam-late"]
-    _batch_file(settings, WEDNESDAY, rungs)
-    picked = content._from_batch(settings, WEDNESDAY, set(), 1500)
+    _batch_file(settings, MONDAY, rungs)
+    picked = content._from_batch(settings, MONDAY, set(), 1500)
     assert picked.tier == "aime-late"
+
+
+def test_a_proof_day_will_not_serve_a_rung_outside_its_band(settings):
+    """Wednesday tops out below where Thursday starts, so a file carrying a
+    Thursday-grade rung is a rung Wednesday skips."""
+    _batch_file(settings, dt.date(2026, 8, 5), ["olympiad-easy", "putnam-late"])
+    picked = content._from_batch(settings, dt.date(2026, 8, 5), set(), 2000)
+    assert picked.tier == "olympiad-easy"
 
 
 # --- word pronunciation ----------------------------------------------------

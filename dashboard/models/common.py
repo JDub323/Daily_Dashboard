@@ -166,6 +166,23 @@ class DayMode(StrEnum):
         return self in (DayMode.proof, DayMode.proof_long, DayMode.proof_showcase)
 
 
+class ProblemKind(StrEnum):
+    """What a stored problem is, frozen on the row.
+
+    Narrower than `DayMode` on purpose, and the two are not the same list. The
+    mode says what a *day* asked for -- and `proof`, `proof-long` and
+    `proof-showcase` ask for three different problems out of the same book by
+    three different rules. What comes back is one kind of object, and it is the
+    object the panel renders and the scorer prices.
+    """
+
+    compute = "compute"
+    """A numeric answer, marked right or wrong."""
+
+    proof = "proof"
+    """An argument, self-reported against a rubric."""
+
+
 class MathStatus(StrEnum):
     open = "open"
     solved = "solved"

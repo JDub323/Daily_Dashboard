@@ -28,10 +28,10 @@ from . import (
     tricks,
 )
 from .config import Settings
-from .db.repository import ARGUMENT_AREA, TRICK_AREA, Repository
+from .db.repository import ARGUMENT_AREA, PROOF_AREA, TRICK_AREA, Repository
 from .models import api
 from .models import domain as d
-from .models.common import Deck, EntrySource, Game, HealthMetric, MathOutcome, Track
+from .models.common import DayMode, Deck, EntrySource, Game, HealthMetric, MathOutcome, Track
 
 HISTORY_LIMIT = 40
 """Rating events sent to the elo charts. The chart plots the last 40 anyway;
@@ -74,16 +74,42 @@ def area_ratings(cfg: Settings, repo: Repository) -> list[api.AreaRating]:
     )
 
 
+def proof_rating(repo: Repository) -> api.AreaRating:
+    """The `proofs` bucket, as an `AreaRating` like any other.
+
+    Rendered as the headline on a proof day. Four days of the week move this
+    number and leave the pooled one alone, so showing the pooled rating on a
+    Thursday would be showing the one figure the day cannot change.
+    """
+    area, rating, events = repo.area_ratings([PROOF_AREA])[0]
+    return api.AreaRating(area=area, rating=rating, events=events)
+
+
 def math_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.MathPanel:
     summary = track_summary(repo, Track.math)
+    mode = cfg.math.mode_for(today)
     base = {
         "summary": summary,
         "areas": area_ratings(cfg, repo),
         "target_area": cfg.math.area_for(today),
+        "mode": mode.value,
+        "proof": proof_rating(repo) if mode.is_proof else None,
     }
+
+    if mode is DayMode.reading:
+        # No attempt, no rating, and the hero holds a plan instead of a
+        # problem. `plan` being None on a Sunday is the honest "the overnight
+        # job did not run", which the panel says rather than hiding.
+        return api.MathPanel(**base, plan=repo.study_plan(today))
+
     attempt = repo.math_attempt(today)
     if attempt is None:
-        return api.MathPanel(**base)
+        # Day two with nothing carried is the day off a day-one solve buys.
+        # Computed rather than stored: it is a fact about yesterday's row and
+        # today's date, and storing it would be storing a derivation that stops
+        # being true when either changes.
+        free = cfg.math.is_second_day(today) and repo.carried_math_attempt(today) is None
+        return api.MathPanel(**base, free_day=free)
 
     problem = repo.problem(attempt.problem_id)
     if problem is None:
@@ -92,17 +118,22 @@ def math_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.MathPanel
         # taking the whole dashboard down.
         return api.MathPanel(**base)
 
+    budget = content.hints_available(cfg, today, problem)
     return api.MathPanel(
         **base,
         problem=problem,
+        day=attempt.day,
         hints_revealed=attempt.hints_revealed,
+        hint_budget=budget,
         status=attempt.status.value,
         score=attempt.score,
         minutes=attempt.minutes,
-        par_minutes=cfg.math.par_for(problem.tier),
-        # Only what has actually been revealed. The old client received all
-        # three hints and merely declined to render them.
-        hints_visible=problem.hints[: attempt.hints_revealed],
+        par_minutes=cfg.math.par_for(problem.tier, mode),
+        # Only what has actually been revealed, and never more than the day
+        # allows. The old client received all three hints and merely declined
+        # to render them; on day one of the two-day problem that would hand
+        # over tomorrow's barrier in today's payload.
+        hints_visible=problem.hints[: min(attempt.hints_revealed, budget)],
     )
 
 

@@ -1711,6 +1711,110 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX todo_series ON todo (series) WHERE series IS NOT NULL;
         """,
     ),
+    (
+        29,
+        """
+        -- The week gets a shape: two calibrated days, four proof days out of
+        -- one textbook, one day of reading. See [math.week] in config.toml for
+        -- why -- in short, a ladder centred on the rating and served at its
+        -- nearest rung is a thermostat, and it had converged on a single tier.
+        --
+        -- Three things the old schema cannot express, and one new table.
+
+        -- 1. A problem is now either a numeric answer or a proof, and the row
+        --    has to remember which. Not derived from the date: [math.week] is
+        --    editable, so a reconstruction would silently change what a past
+        --    problem *was* the next time the week is rearranged -- exactly the
+        --    argument that froze `topic` and `area` onto the row already.
+        ALTER TABLE math_problem ADD COLUMN kind TEXT NOT NULL DEFAULT 'compute'
+            CHECK (kind IN ('compute', 'proof'));
+
+        -- `answer` stays NOT NULL and holds the book's solution sketch for a
+        -- proof. That is not a workaround for the constraint: the column has
+        -- always meant "what you were supposed to produce", and for a proof
+        -- that is an argument rather than an integer. It is also what makes
+        -- the archive worth reading back.
+
+        -- 2. The rubric: three or four checkpoints, written from the book's
+        --    printed solution, against which `partial` means something. JSON,
+        --    and NULL on every compute problem -- there is nothing to itemise
+        --    about 137.
+        ALTER TABLE math_problem ADD COLUMN rubric TEXT;
+
+        -- 3. Where in the book it is -- "2.2.4 Viete's Relations, p. 70". The
+        --    `source` string ("P&B 199") is the unique key and the do-not-repeat
+        --    handle; this is the human-readable pointer, kept so the panel can
+        --    say where to go and read around it.
+        ALTER TABLE math_problem ADD COLUMN location TEXT;
+
+        -- The attempt gains a day counter and two states. `carried` is day one
+        -- of the two-day problem: unscored and unrated, because the result
+        -- lands once, on day two. That breaks the old
+        -- "open iff unscored" invariant, which becomes "open or carried iff
+        -- unscored" -- and SQLite cannot alter a CHECK in place, so the table
+        -- is rebuilt exactly as migration 2 rebuilt it.
+        CREATE TABLE math_attempt_v3 (
+            date            TEXT    PRIMARY KEY
+                                    CHECK (date IS strftime('%Y-%m-%d', date)),
+            problem_id      INTEGER NOT NULL REFERENCES math_problem (id),
+
+            day             INTEGER NOT NULL DEFAULT 1 CHECK (day IN (1, 2)),
+            -- Which day of a two-day problem this row is. Two rows point at
+            -- one problem and only the second is rated. A single attempt
+            -- spanning two dates was the alternative and it loses the thing
+            -- the date PK buys: "what did I do on the 14th" stays one lookup.
+
+            hints_revealed  INTEGER NOT NULL DEFAULT 0
+                                    CHECK (hints_revealed BETWEEN 0 AND 3),
+            status          TEXT    NOT NULL DEFAULT 'open'
+                                    CHECK (status IN ('open', 'carried', 'solved',
+                                                      'partial', 'failed', 'lapsed')),
+            score           REAL    CHECK (score IS NULL OR score BETWEEN 0.0 AND 1.0),
+            minutes         INTEGER CHECK (minutes IS NULL
+                                           OR minutes BETWEEN 1 AND 1440),
+
+            rubric_hit      TEXT,
+            -- Which checkpoints you ticked, as JSON booleans. What keeps
+            -- `partial` from being a mood: the claim is itemised against the
+            -- book's own solution rather than being a button you pressed.
+
+            CHECK ((status IN ('open', 'carried')) = (score IS NULL))
+        ) STRICT;
+
+        INSERT INTO math_attempt_v3
+            (date, problem_id, hints_revealed, status, score, minutes)
+        SELECT date, problem_id, hints_revealed, status, score, minutes
+          FROM math_attempt;
+
+        DROP TABLE math_attempt;
+        ALTER TABLE math_attempt_v3 RENAME TO math_attempt;
+
+        -- Sunday. Read, and do many easy problems.
+        --
+        -- Deliberately not a `math_problem` with a funny kind, and deliberately
+        -- unrated. Drilling fifteen easy exercises is a different act from
+        -- solving one hard problem, and folding it into the rating that decides
+        -- Monday's tier would corrupt the one number this is all pitched
+        -- against. It ticks the day and moves nothing.
+        CREATE TABLE study_plan (
+            date         TEXT    PRIMARY KEY
+                                 CHECK (date IS strftime('%Y-%m-%d', date)),
+            topic        TEXT    NOT NULL,
+            book         TEXT    NOT NULL,
+            segments     TEXT    NOT NULL,   -- JSON, as generated; immutable
+            done         TEXT    NOT NULL DEFAULT '[]',   -- JSON: indices done
+            skipped      TEXT    NOT NULL DEFAULT '[]',   -- JSON: {index, reason}
+            model        TEXT    NOT NULL,
+            generated_at TEXT    NOT NULL
+        ) STRICT;
+
+        -- `skipped` carries a reason and that is the whole point of the table
+        -- being written back to rather than being a file. Three half-hours are
+        -- generated and one or two are expected; which one you skipped, and
+        -- whether it was "knew it" or "no time", is what stops next month's
+        -- plan opening with the same introduction.
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)
