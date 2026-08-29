@@ -962,6 +962,24 @@ svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(-
    learn. */
 button.tiny.keyed::before { content: attr(data-key) " "; color: var(--accent-dim); }
 
+/* The one typed answer in a quick log — the drink amount. Sized to the number
+   rather than stretched like the buttons beside it: a box four characters wide
+   says "1.5 goes here" without a placeholder having to, and one that filled
+   the row would read as a note field and get sentences typed into it.
+
+   It keeps the row's baseline (`align-items` on `.scale` is the default
+   stretch, which would make a lone input as tall as nothing at all) and the
+   unit sits after it in the same line, so the row reads `[1.5] drinks`. */
+.scale > input.qlog-field {
+  flex: 0 0 auto;
+  width: 4.5em;
+  text-align: right;
+  font-size: var(--t-meta);
+  padding: 1px var(--s1);
+}
+.scale > input.qlog-field:focus { outline: 1px solid var(--accent-dim); outline-offset: -1px; }
+.scale > input.qlog-field + .faint { align-self: center; }
+
 /* ---- wordle / pokedoku trophy grids ---- */
 .wgrid { display: inline-grid; grid-template-columns: repeat(5, 16px); gap: 2px; margin: var(--s1) var(--s2) var(--s1) 0; vertical-align: top; }
 .pgrid { display: inline-grid; grid-template-columns: repeat(3, 16px); gap: 2px; margin: var(--s1) var(--s2) var(--s1) 0; vertical-align: top; }
@@ -1399,15 +1417,42 @@ select.cal-picker option { background: var(--panel2); color: var(--fg); }
    each — a backlog of work rather than a backlog of dates. */
 .todo-day.overdue .todo-when { color: var(--bad); }
 
+/* The row is the control — there is no checkbox. See the note in todo.js: the
+   box was the widest thing on a line whose content is three words and a time,
+   and it bought an affordance for a list with exactly one verb. The check
+   lives in the right margin and appears under the cursor, so it holds no
+   layout at rest. */
 .todo-row {
   display: flex;
   align-items: baseline;
   gap: var(--s2);
-  padding: 2px 0;
+  width: 100%;
+  /* Room for the check to sit in without reflowing the line when it arrives. */
+  padding: 2px 18px 2px 0;
+  position: relative;
   cursor: pointer;
   font-size: var(--t-body);
+  text-align: left;
+  /* A <button> brings a border, a background, a centred label and 13.33px
+     Arial with it, none of which survive contact with a text row. */
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: inherit;
+  font-family: inherit;
 }
-.todo-row input[type="checkbox"] { accent-color: var(--gold); cursor: pointer; }
+.todo-row::after {
+  content: "✓";
+  position: absolute;
+  right: 2px;
+  color: var(--gold);
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.todo-row:hover, .todo-row:focus-visible { background: var(--panel2); }
+.todo-row:hover::after, .todo-row:focus-visible::after { opacity: .8; }
+/* Already done, so the offer is the other direction. */
+.todo-row.done::after { content: "↩"; color: var(--dim); }
 .todo-title { color: var(--fg); }
 .todo-row.done .todo-title { color: var(--faint); text-decoration: line-through; }
 .todo-subject {

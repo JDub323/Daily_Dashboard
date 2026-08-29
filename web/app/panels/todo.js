@@ -24,6 +24,7 @@
 
 import * as api from "../api.js";
 import { el, mount } from "../dom.js";
+import { get as getPanel, rerender } from "../panel.js";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
@@ -99,16 +100,32 @@ export default {
         done,
         today: todayISO,
       });
+      // Ticking an item deletes its Google event, which means the week grid
+      // above is now drawing something that is gone. It holds its own weeks in
+      // a map, so telling it to redraw is not enough — it has to be told to
+      // forget first, or it will faithfully repaint the event we just removed.
+      const cal = getPanel("cal");
+      cal?.forget?.();
+      rerender("cal");
       await this.render(node);
     };
 
+    // A row is a button, not a checkbox in a label.
+    //
+    // The box itself was the largest thing on the row — a 13px control holding
+    // the full line-height open, repeated down a list whose actual content is
+    // three words and a time. What it bought was an affordance nobody needed
+    // twice: this list has exactly one verb. So the row *is* the control, and
+    // the check appears in the right margin under the cursor, where it costs
+    // no layout at rest. A `<button>` rather than a clickable div because that
+    // is what `nav.ITEMS` walks, so `i` still steps the list and Enter still
+    // ticks — the keyboard path is unchanged.
     const row = (item) =>
-      el("label.todo-row", { class: item.done ? "done" : "" },
-        el("input", {
-          type: "checkbox",
-          checked: item.done,
-          onchange: (e) => tick(item, e.target.checked),
-        }),
+      el("button.todo-row", {
+        class: item.done ? "done" : "",
+        title: item.done ? "mark as still to do" : "mark done",
+        onclick: () => tick(item, !item.done),
+      },
         el("span.todo-title", { text: item.title }),
         item.subject ? el("span.todo-subject", { text: item.subject }) : null,
         item.start ? el("span.todo-at", { text: clock(item.start) }) : null,

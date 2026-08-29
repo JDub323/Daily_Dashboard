@@ -244,6 +244,38 @@ export default {
   // put you back on this week while you are reading next week's.
   offset: 0,
 
+  // --- the weeks already fetched, by offset ---------------------------------
+  //
+  // The server has cached a week all along (`Feeds.cached("calendar:<start>")`)
+  // and that cache is real — but it expires in five minutes and it sits on the
+  // far side of an HTTP round trip that ends in a `gcalcli agenda` subprocess,
+  // through WSL here. So paging back to the week you were reading ninety
+  // seconds ago paid for it again, and the arrows felt like loading rather
+  // than like turning a page.
+  //
+  // These weeks are held on the client too. A hit paints synchronously and
+  // *then* asks the server whether it was still right; a miss is the old
+  // behaviour exactly. Nothing is ever drawn that was not fetched — this is a
+  // cache of answers, never a guess at one.
+  weeks: new Map(),
+
+  // One request per offset, however many callers want it. `prefetch` and a
+  // keypress on `›` reach for the same week constantly, and without this they
+  // would be two subprocesses for one answer.
+  inflight: new Map(),
+
+  // The date the map is keyed against. `offset` counts weeks from *today*, so
+  // every key in it means a different week after midnight — see `expire`.
+  anchor: null,
+
+  // Bumped by `forget`. A fetch in flight when the calendar is written to
+  // would otherwise resolve afterwards and put the week as it was *before* the
+  // write back into the map.
+  epoch: 0,
+
+  // Whether the first, wider warm-up has happened. See `prefetch`.
+  warmed: false,
+
   // The picker's selection, "" meaning auto. Held on the panel rather than in
   // the box because every add re-renders the panel and so rebuilds the box:
   // filing three things onto Homework in a row should not mean choosing it
@@ -257,6 +289,18 @@ export default {
     this.box ??= quickAdd(this, node);
     const box = this.box;
     const focus = box.focusState();
+    this.expire();
+
+    const held = this.weeks.get(this.offset);
+    if (held) {
+      // The whole point of the map: a week you have already looked at costs a
+      // paint rather than a subprocess. Then ask the server whether it was
+      // still right — see `revalidate`, which redraws only if it was not.
+      this.paint(node, held, focus);
+      this.revalidate(node, this.offset, held);
+      this.prefetch();
+      return refreshAfter(held.feed);
+    }
 
     // Shown on the first paint only. Replacing the week with a one-line
     // placeholder on *every* render collapsed the card to a sliver and sprang
@@ -270,7 +314,7 @@ export default {
 
     let week;
     try {
-      week = await api.get("/api/calendar", { date: api.today(), weeks: this.offset });
+      week = await this.load(this.offset);
     } catch (error) {
       // Handled rather than thrown: the harness's error card would replace the
       // whole panel, and the add box is how you fix the thing that is broken.
@@ -283,6 +327,115 @@ export default {
       return;
     }
 
+    this.paint(node, week, focus);
+    this.prefetch();
+    return refreshAfter(week.feed);
+  },
+
+  // --- the cache ------------------------------------------------------------
+
+  /**
+   * Fetch one week, remember it, and never ask for the same one twice at once.
+   *
+   * The de-duplication is not a micro-optimisation: `prefetch` and a keypress
+   * on `›` reach for the same neighbouring week constantly, and each miss is a
+   * `gcalcli agenda` subprocess on the far side of WSL.
+   */
+  load(offset) {
+    const already = this.inflight.get(offset);
+    if (already) return already;
+
+    const epoch = this.epoch;
+    const request = api
+      .get("/api/calendar", { date: api.today(), weeks: offset })
+      .then((week) => {
+        // Dropped on the floor if the calendar has been written to since this
+        // was asked for. What came back is the week as it was *before* the
+        // write, and putting that in the map is how a just-added event
+        // disappears again a second later.
+        if (epoch === this.epoch) this.weeks.set(offset, week);
+        return week;
+      })
+      .finally(() => {
+        // Only if it is still this request's slot. `forget` clears the map,
+        // and a newer request for the same offset may already have claimed it.
+        if (this.inflight.get(offset) === request) this.inflight.delete(offset);
+      });
+
+    this.inflight.set(offset, request);
+    return request;
+  },
+
+  /**
+   * Ask again for a week that was painted from the map, and redraw only if the
+   * answer moved.
+   *
+   * Unconditionally repainting would take the week out from under a screen
+   * someone is reading, five minutes at a time, to replace it with the same
+   * seven columns — which is exactly the flicker the loading placeholder was
+   * narrowed to avoid. What *does* always move is the `as of` stamp, and that
+   * is patched in place below rather than being a reason to redraw the grid.
+   */
+  revalidate(node, offset, held) {
+    this.load(offset)
+      .then((fresh) => {
+        if (this.offset !== offset || !node.isConnected) return;
+        if (!sameWeek(held, fresh)) return void this.paint(node, fresh);
+        const stamp = node.querySelector(".stamp");
+        if (stamp) stamp.replaceWith(feedStamp(fresh.feed) ?? stamp);
+      })
+      // A failed revalidation leaves what is on screen alone. It is a week
+      // that was fetched successfully once; an unreachable gcalcli is not a
+      // reason to replace it with an error card.
+      .catch(() => {});
+  },
+
+  /**
+   * Warm the weeks either side of the one on screen.
+   *
+   * Wider on the first pass than afterwards. The two extra calls at boot are
+   * paid while you are reading the week you asked for, and they are what makes
+   * stepping through a month feel like paging rather than loading; once that
+   * is done, one either side is enough to stay ahead of the arrows.
+   */
+  prefetch() {
+    const spread = this.warmed ? [-1, 1] : [-1, 1, -2, 2];
+    this.warmed = true;
+    for (const delta of spread) {
+      const offset = this.offset + delta;
+      if (this.weeks.has(offset) || this.inflight.has(offset)) continue;
+      // A neighbour that cannot be fetched is the neighbour's problem. It must
+      // never put an error card over a week that is already drawn — page onto
+      // it and the failure is reported then, loudly, by `render`.
+      this.load(offset).catch(() => {});
+    }
+  },
+
+  /**
+   * Throw the map away. Called after anything that writes to Google.
+   *
+   * `Feeds.add_calendar_event` already invalidates every cached window on the
+   * server; this is the same statement made on this side of the wire, and
+   * without it the client would faithfully redraw the week from before the
+   * event was added.
+   */
+  forget() {
+    this.weeks.clear();
+    this.inflight.clear();
+    this.epoch += 1;
+  },
+
+  /** Every key is an offset from *today*, so none of them survive midnight. */
+  expire() {
+    const today = api.today();
+    if (this.anchor === today) return;
+    this.anchor = today;
+    this.forget();
+  },
+
+  /** Draw a week that is already in hand. Synchronous, and the only painter. */
+  paint(node, week, focus = this.box.focusState()) {
+    const box = this.box;
     const start = parseISO(week.start);
     const days = [...Array(week.days)].map((_, i) => {
       const date = new Date(start);
@@ -367,9 +520,24 @@ export default {
     // blurs it — so a refresh that fired while you were typing would leave the
     // text in place and the caret nowhere.
     box.restoreFocus(focus);
-    return refreshAfter(week.feed);
   },
 };
+
+/**
+ * Whether two fetches of the same week say the same thing.
+ *
+ * Deliberately not a comparison of the whole payload: `feed.fetched_at` moves
+ * on every real fetch, so including it would make every revalidation a
+ * difference and every difference a redraw. What is compared is what is drawn.
+ */
+function sameWeek(a, b) {
+  return (
+    a.start === b.start &&
+    a.days === b.days &&
+    JSON.stringify(a.events) === JSON.stringify(b.events) &&
+    JSON.stringify(a.calendars) === JSON.stringify(b.calendars)
+  );
+}
 
 function header(panel, node, days) {
   const first = days[0];
@@ -828,6 +996,10 @@ function quickAdd(panel, node) {
       //
       // This render redraws the grid around the box rather than replacing it,
       // so the week does not blink out and back while the new events arrive.
+      // `forget` first, and it has to be first: a line can name any date, so
+      // the week that changed is not necessarily the week on screen, and every
+      // held week is now a week from before this write.
+      panel.forget();
       await panel.render(node);
       rerender("todo");
       input.focus();
