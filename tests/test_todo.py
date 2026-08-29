@@ -201,3 +201,67 @@ def test_a_key_that_collides_with_the_date_parser_is_refused():
 
     with pytest.raises(ValueError, match="single word"):
         TodoSettings(subjects={"real analysis": Subject(name="Real Analysis")})
+
+
+# --- someday ---------------------------------------------------------------
+
+
+def test_someday_writes_an_item_with_no_date():
+    """The exception to the day rule, and it is a word rather than a mode."""
+    line = read("fix the coffee table someday")
+    assert line.ok
+    assert line.undated
+    assert line.parsed is not None
+    # The word is stripped before `calparse` sees the line, exactly like the
+    # recurrence phrases -- otherwise it ends up in the title.
+    assert line.parsed.title == "Fix the coffee table"
+
+
+def test_an_undated_line_writes_to_no_day_at_all():
+    """`dates()` is what the write loops over, so empty here *is* no event."""
+    assert read("fix the coffee table someday").dates() == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "fix the coffee table someday",
+        "fix the coffee table some day",
+        "fix the coffee table sometime",
+        "fix the coffee table at some point",
+    ],
+)
+def test_every_spelling_of_someday(text):
+    line = read(text)
+    assert line.undated
+    assert line.parsed is not None and line.parsed.title == "Fix the coffee table"
+
+
+def test_someday_still_expands_aliases():
+    line = read("os reading someday")
+    assert line.undated
+    assert line.parsed is not None
+    assert line.parsed.title == "Operating Systems reading"
+    assert [h.key for h in line.hits] == ["os"]
+
+
+def test_someday_and_a_repeat_contradict_each_other():
+    """A thing with no day cannot happen every week, and there is no reading of
+    the line that rescues it -- so it is refused rather than resolved to one."""
+    line = read("water the plants every tuesday someday")
+    assert not line.ok
+    assert line.error is not None and "contradict" in line.error
+
+
+def test_someday_with_nothing_left_is_still_refused():
+    line = read("someday")
+    assert not line.ok
+    assert line.error == "nothing left for a title"
+
+
+def test_a_dateless_line_is_told_about_someday():
+    """The refusal has to name the way out, or the feature is undiscoverable —
+    there is nothing on the box that mentions it."""
+    line = read("fix the printer")
+    assert not line.ok
+    assert line.error is not None and "someday" in line.error

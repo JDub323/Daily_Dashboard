@@ -26,6 +26,7 @@ from ..models.common import (
     ChessOutcome,
     ChessStatus,
     Deck,
+    DrinkKind,
     EntrySource,
     Game,
     HealthMetric,
@@ -2222,6 +2223,45 @@ class Repository:
         ).fetchall()
         return [d.MealLog(**dict(r)) for r in rows]
 
+    def add_drink(
+        self,
+        date: dt.date,
+        hour: int,
+        kind: DrinkKind,
+        amount: float,
+    ) -> d.DrinkLog:
+        """Append one drink. `amount` is in drinks; see `DrinkLog`."""
+        row = self.conn.execute(
+            "INSERT INTO drink_log (date, hour, kind, amount) VALUES (?, ?, ?, ?) RETURNING *",
+            (_iso(date), hour, DrinkKind(kind).value, float(amount)),
+        ).fetchone()
+        return d.DrinkLog(**dict(row))
+
+    def delete_drink(self, entry_id: int) -> bool:
+        cur = self.conn.execute("DELETE FROM drink_log WHERE id = ?", (entry_id,))
+        return cur.rowcount > 0
+
+    def drinks_on(self, date: dt.date) -> list[d.DrinkLog]:
+        rows = self.conn.execute(
+            "SELECT * FROM drink_log WHERE date = ? ORDER BY hour, id", (_iso(date),)
+        ).fetchall()
+        return [d.DrinkLog(**dict(r)) for r in rows]
+
+    def drink_history(self, days: int = 60, before: dt.date | None = None) -> list[d.DrinkLog]:
+        """As `bathroom_history`, and windowed for the same reason -- more so:
+        this is the one of the three that runs to a dozen rows on a hot day."""
+        if before is None:
+            rows = self.conn.execute(
+                "SELECT * FROM drink_log ORDER BY date DESC, hour DESC LIMIT ?", (days * 16,)
+            ).fetchall()
+            return [d.DrinkLog(**dict(r)) for r in reversed(rows)]
+        start = before - dt.timedelta(days=days - 1)
+        rows = self.conn.execute(
+            "SELECT * FROM drink_log WHERE date BETWEEN ? AND ? ORDER BY date, hour, id",
+            (_iso(start), _iso(before)),
+        ).fetchall()
+        return [d.DrinkLog(**dict(r)) for r in rows]
+
     def daylog(self, date: dt.date) -> str | None:
         row = self.conn.execute("SELECT text FROM daylog WHERE date = ?", (_iso(date),)).fetchone()
         return row[0] if row else None
@@ -2397,8 +2437,8 @@ class Repository:
         raw: str,
         title: str,
         subject: str | None,
-        calendar: str,
-        due_date: dt.date,
+        calendar: str | None,
+        due_date: dt.date | None,
         start: dt.time | None,
         end: dt.time | None,
         series: str | None,
@@ -2412,22 +2452,29 @@ class Repository:
         the line goes back in the box with its error. The alternative -- a row
         marked pending -- means a list that shows work Google has never heard
         of, which is the failure mode this whole feature exists to avoid.
+
+        A `someday` item has no event, and so arrives here with no date and no
+        calendar. `event_deleted` is set from the date rather than passed,
+        because there is exactly one right answer and asking every caller for
+        it is asking to eventually be told the wrong one -- the schema's last
+        CHECK would then reject the row, which is a 500 in place of a todo.
         """
         row = self.conn.execute(
             "INSERT INTO todo (raw, title, subject, calendar, due_date, start_time,"
-            " end_time, series, event_id, event_url) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+            " end_time, series, event_id, event_url, event_deleted) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
             (
                 raw[:500],
                 title[:300],
                 subject,
                 calendar,
-                due_date.isoformat(),
+                due_date.isoformat() if due_date else None,
                 start.strftime("%H:%M") if start else None,
                 end.strftime("%H:%M") if end else None,
                 series,
                 event_id,
                 event_url,
+                1 if due_date is None else 0,
             ),
         ).fetchone()
         self.conn.commit()
@@ -2449,20 +2496,32 @@ class Repository:
         three weeks ago is still owed, and hiding it is how it stays owed.
         Finished ones are bounded, because their only remaining job is to show
         that the day had something in it.
+
+        An undated item has no `due_date` to bound either window by, so the
+        finished ones are windowed on `done_at` instead. Without that arm a
+        ticked "fix the coffee table" would vanish the instant it was ticked --
+        `NULL >= '2026-08-14'` is NULL, which is not true -- and the undo in
+        the done box would have nothing to undo.
+
+        `through` is deliberately left NULL-unsafe: an undated row is not due
+        by any date, so a caller asking "what is owed by Friday" should not be
+        handed one.
         """
         clauses = ["(done_at IS NULL"]
         params: list[Any] = []
         if include_done_since is not None:
-            clauses.append(" OR due_date >= ?")
-            params.append(include_done_since.isoformat())
+            clauses.append(" OR due_date >= ? OR (due_date IS NULL AND done_at >= ?)")
+            params += [include_done_since.isoformat()] * 2
         clauses.append(")")
         where = "".join(clauses)
         if through is not None:
             where += " AND due_date <= ?"
             params.append(through.isoformat())
         rows = self.conn.execute(
-            f"SELECT * FROM todo WHERE {where} ORDER BY due_date, start_time IS NULL,"
-            " start_time, id",
+            # Undated last, and NULLs sort first in SQLite -- hence the flag
+            # column rather than a bare `ORDER BY due_date`.
+            f"SELECT * FROM todo WHERE {where} ORDER BY due_date IS NULL, due_date,"
+            " start_time IS NULL, start_time, id",
             params,
         ).fetchall()
         return [_todo(row) for row in rows]

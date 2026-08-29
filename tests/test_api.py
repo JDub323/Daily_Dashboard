@@ -940,6 +940,54 @@ def test_a_line_with_no_day_in_it_is_refused(client, monkeypatch):
     assert "needs a day" in body["failed"][0]["error"]
 
 
+def test_someday_writes_an_item_and_no_event(client, monkeypatch):
+    """The one thing the box writes that Google never hears about.
+
+    An undated item is the dashboard's own: no day, so no event, so no
+    calendar and no handle to delete it by. The schema enforces those four
+    together; this checks the route agrees.
+    """
+    written = _no_gcalcli(monkeypatch)
+    body = client.post(
+        "/api/calendar/add", json={"text": "fix the coffee table someday", "today": DATE}
+    ).json()
+
+    assert written == {}  # gcalcli was never asked to add anything
+    assert body["events"] == 0
+    assert [line["title"] for line in body["written"]] == ["Fix the coffee table"]
+    assert body["written"][0]["undated"] is True
+    assert body["written"][0]["calendar"] is None
+
+    item = client.get("/api/todo", params={"date": DATE}).json()["items"][0]
+    assert item["due_date"] is None
+    assert item["calendar"] is None
+    assert item["event_id"] is None
+    # Nothing of it was ever in Google, so there is nothing outstanding to say
+    # is still standing -- the panel's "on calendar" warning must stay silent.
+    assert item["event_deleted"] is True
+
+
+def test_ticking_an_undated_item_asks_google_for_nothing(client, monkeypatch):
+    _no_gcalcli(monkeypatch)
+    called: list = []
+    monkeypatch.setattr(
+        feeds.Feeds, "delete_calendar_event", lambda self, **kw: called.append(kw)
+    )
+    client.post(
+        "/api/calendar/add", json={"text": "fix the coffee table someday", "today": DATE}
+    )
+    item = client.get("/api/todo", params={"date": DATE}).json()["items"][0]
+
+    body = client.post(
+        "/api/todo/done", json={"todo_id": item["id"], "done": True, "today": DATE}
+    ).json()
+    assert called == []
+    # And it is still in the panel afterwards, in the done box: an undated row
+    # has no `due_date` for the fortnight window to bound, so it is windowed on
+    # `done_at` instead. Without that it would vanish the moment it was ticked.
+    assert [i["done"] for i in body["items"]] == [True]
+
+
 def test_the_good_lines_commit_and_the_bad_ones_come_back(client, monkeypatch):
     """A forty-line paste must not be lost to one typo."""
     _no_gcalcli(monkeypatch)
@@ -947,7 +995,7 @@ def test_the_good_lines_commit_and_the_bad_ones_come_back(client, monkeypatch):
         "/api/calendar/add",
         json={
             "text": "fpm Thornhill Chapter 3 due thursday\n"
-                    "someday: fix the printer\n"
+                    "fix the printer\n"
                     "read ch4 friday",
             "today": DATE,
         },
@@ -958,7 +1006,10 @@ def test_the_good_lines_commit_and_the_bad_ones_come_back(client, monkeypatch):
         "US National Security Policy Making Thornhill Chapter 3",
         "Read ch4",
     ]
-    assert [line["raw"] for line in body["failed"]] == ["someday: fix the printer"]
+    # Was "someday: fix the printer", which is now a *writable* line -- see
+    # `todo._someday`. The bad line here has to be one with no day and no way
+    # to read one, which is what a bare title is.
+    assert [line["raw"] for line in body["failed"]] == ["fix the printer"]
 
 
 def test_an_alias_expands_as_a_word_not_as_a_substring(client, monkeypatch):
@@ -1619,6 +1670,56 @@ def test_a_meal_quality_outside_the_scale_is_a_422(client):
     assert response.status_code == 422
 
 
+def test_a_drink_comes_back_in_the_rebuilt_panel(client):
+    panel = client.post(
+        "/api/drink", json={"date": DATE, "hour": 9, "kind": "water", "amount": 1.4}
+    ).json()
+    assert [(e["at"], e["kind"], e["amount"]) for e in panel["drinks_today"]] == [
+        ("09:00", "water", 1.4)
+    ]
+
+
+def test_a_drink_of_nothing_is_a_422(client):
+    response = client.post(
+        "/api/drink", json={"date": DATE, "hour": 9, "kind": "water", "amount": 0}
+    )
+    assert response.status_code == 422
+    assert "amount" in response.text
+
+
+def test_a_misplaced_decimal_point_is_a_422_rather_than_a_500(client):
+    """The bound is on the table too. Refused here so the browser gets a
+    sentence naming the field, exactly as a stool without a solidity is."""
+    response = client.post(
+        "/api/drink", json={"date": DATE, "hour": 9, "kind": "water", "amount": 150}
+    )
+    assert response.status_code == 422
+
+
+def test_a_drink_nobody_has_defined_is_a_422(client):
+    response = client.post(
+        "/api/drink", json={"date": DATE, "hour": 9, "kind": "milk", "amount": 1}
+    )
+    assert response.status_code == 422
+
+
+def test_deleting_a_drink_removes_it(client):
+    panel = client.post(
+        "/api/drink", json={"date": DATE, "hour": 9, "kind": "coffee", "amount": 1}
+    ).json()
+    entry_id = panel["drinks_today"][0]["id"]
+    after = client.post(
+        "/api/drink/delete", json={"date": DATE, "entry_id": entry_id}
+    ).json()
+    assert after["drinks_today"] == []
+
+
+def test_deleting_a_drink_that_is_gone_is_a_404(client):
+    assert (
+        client.post("/api/drink/delete", json={"date": DATE, "entry_id": 999}).status_code == 404
+    )
+
+
 def test_the_quick_logs_are_quiet_until_they_have_history(client):
     """One meal and one visit say nothing at all.
 
@@ -1627,6 +1728,7 @@ def test_the_quick_logs_are_quiet_until_they_have_history(client):
     be wrong in the direction that reads as a problem.
     """
     client.post("/api/meal", json={"date": DATE, "hour": 12, "size": "large", "quality": 1})
+    client.post("/api/drink", json={"date": DATE, "hour": 21, "kind": "alcohol", "amount": 6})
     panel = client.post(
         "/api/bathroom",
         json={"date": DATE, "hour": 8, "kind": "urine", "color": "darker", "volume": "small"},
@@ -1637,6 +1739,11 @@ def test_the_quick_logs_are_quiet_until_they_have_history(client):
     assert derived["liquid_days"] is None
     assert derived["days_since_stool"] is None
     assert derived["dark_urine_days"] == 0
+    # Six drinks on the one day the log has ever been kept is not a week, and
+    # a zero here would be worse than the silence: it would read as a dry week.
+    assert derived["fluid_ml"] is None
+    assert derived["caffeine_drinks"] is None
+    assert derived["alcohol_week"] is None
 
 
 def test_sleep_hours_are_typed_like_any_other_scalar(client):

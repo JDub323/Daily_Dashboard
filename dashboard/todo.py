@@ -54,6 +54,27 @@ A line that does not name a day is refused. `calparse` reports this rather than
 enforcing it (see `Parsed.date_explicit`) because the two callers want opposite
 things: an event on the wrong day is one drag in Google, but a *due date* that
 nobody typed is a lie about when work is owed, and it is worse than no item.
+
+--- someday ----------------------------------------------------------------
+
+The rule above has one exception, and it is a word rather than a mode:
+
+    fix the coffee table someday
+
+`someday` (or `sometime`) says that the omission was deliberate. The line then
+writes a row and *no Google event* -- there is no day to put one on, and a
+calendar is not a place to keep things that are not happening at a time. So an
+undated item lives only here, which is the one thing in this feature that is
+not mirrored anywhere.
+
+A word and not a sigil for the same reason the rest of this module is a
+rewrite rather than a flag: the box has one grammar, you type a sentence into
+it, and "someday" is what that sentence already ends with when you mean this.
+It is stripped before `calparse` sees the line, like the recurrence phrases
+above it, and it is `RESERVED` so no alias can ever shadow it.
+
+Repeating something with no date is a contradiction rather than a shorthand,
+and is refused as one -- "every tuesday someday" has no reading.
 """
 
 from __future__ import annotations
@@ -85,7 +106,7 @@ RESERVED = (
     | set(calparse.MONTHS)
     | {"today", "tonight", "tomorrow", "tmrw", "overmorrow", "every", "other",
        "until", "due", "by", "weekly", "week", "day", "days", "weeks", "at",
-       "from", "on", "in", "all"}
+       "from", "on", "in", "all", "someday", "sometime"}
 )
 
 # `every other tuesday`, `every tuesday`, `every 2 weeks`, `weekly`.
@@ -97,6 +118,7 @@ EVERY = re.compile(
 WEEKLY = re.compile(r"\b(?:weekly|each\s+week)\b", re.I)
 FOR_N_WEEKS = re.compile(r"\bfor\s+(\d{1,2})\s+weeks?\b", re.I)
 UNTIL = re.compile(r"\buntil\s+(.+)$", re.I)
+SOMEDAY = re.compile(r"\b(?:someday|some\s+day|sometime|at\s+some\s+point)\b", re.I)
 
 
 class AliasHit(NamedTuple):
@@ -125,14 +147,24 @@ class Resolved(NamedTuple):
     hits: tuple[AliasHit, ...]
     recurrence: Recurrence | None
     error: str | None = None
+    undated: bool = False
+    """The line said `someday`. It has a title and no date, and it writes a row
+    without an event -- see the module docstring. `parsed` is still set, because
+    the title still had to be read out of the text; only its `date` is
+    meaningless and nothing may use it."""
 
     @property
     def ok(self) -> bool:
         return self.error is None and self.parsed is not None
 
     def dates(self) -> list[dt.date]:
-        """Every day this line writes to, first one first."""
-        if self.parsed is None:
+        """Every day this line writes to, first one first.
+
+        Empty for an undated line, and that emptiness is load-bearing: it is
+        what `_write_line` loops over, so "no days" is already "no events"
+        without a branch anywhere near Google.
+        """
+        if self.parsed is None or self.undated:
             return []
         first = self.parsed.date
         if self.recurrence is None:
@@ -214,6 +246,19 @@ def _horizon(text: str, today: dt.date, default_weeks: int) -> tuple[str, int]:
     return text, default_weeks
 
 
+def _someday(text: str) -> tuple[str, bool]:
+    """Pull `someday` off the line. Returns the text without it, and whether.
+
+    Only the first match is removed, and only ever one: two of them in a line
+    is a typo, not twice as undated, and cutting both would silently accept a
+    sentence nobody meant to write.
+    """
+    match = SOMEDAY.search(text)
+    if match is None:
+        return text, False
+    return _cut(text, match.span()), True
+
+
 def _recurrence(text: str) -> tuple[str, int | None]:
     """Rewrite the recurrence phrase away, keeping any weekday it named."""
     if match := EVERY.search(text):
@@ -250,17 +295,34 @@ def resolve(
         return Resolved(raw, None, (), None, "empty line")
 
     expanded, hits = expand(raw, subjects, pattern)
-    body, interval = _recurrence(expanded)
+    # Before the recurrence clauses and well before `calparse`, for the reason
+    # they are stripped too: a word left in the text becomes part of the title.
+    body, someday = _someday(expanded)
+    body, interval = _recurrence(body)
     weeks = default_weeks
     if interval is not None:
         body, weeks = _horizon(body, today, default_weeks)
 
     parsed = calparse.parse(body, today)
 
+    if someday:
+        if interval is not None:
+            return Resolved(
+                raw, None, tuple(hits), None,
+                "“someday” and a repeat contradict each other — a thing with no "
+                "day cannot happen every week",
+            )
+        if parsed.title == "(untitled)":
+            return Resolved(raw, None, tuple(hits), None, "nothing left for a title")
+        # `parsed` rides along for its title and nothing else. Its `date` is
+        # whatever today happened to be, and `dates()` refuses to hand it out.
+        return Resolved(raw, parsed, tuple(hits), None, undated=True)
+
     if not parsed.date_explicit:
         return Resolved(
             raw, None, tuple(hits), None,
-            "needs a day — add one, e.g. “thursday”, “oct 3”, “tomorrow”",
+            "needs a day — add one, e.g. “thursday”, “oct 3”, “tomorrow” — "
+            "or “someday” if it has none",
         )
     if parsed.title == "(untitled)":
         return Resolved(raw, None, tuple(hits), None, "nothing left for a title")

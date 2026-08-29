@@ -16,6 +16,7 @@ from .common import (
     BathroomKind,
     ChessStatus,
     Deck,
+    DrinkKind,
     EntrySource,
     HealthMetric,
     MathStatus,
@@ -669,6 +670,37 @@ class MealLog(Base):
         return f"{self.hour:02d}:00"
 
 
+class DrinkLog(Base):
+    """One drink: when, which, and how many.
+
+    `hour` is the browser's and rounded, as on both logs beside this one.
+
+    `amount` is in *drinks*, and a drink is twelve ounces of whatever the kind
+    is -- a can, roughly, so a 16.9oz bottle is 1.4 and a mug is about 0.8.
+    Decimals because the number is printed on the bottle: this is the one field
+    in either log that is measured rather than estimated, and bucketing a
+    measurement is throwing away accuracy nobody had to work for.
+
+    Alcohol is the exception and it is a real one. There the unit is the
+    standard drink -- a shot, a beer and a glass of wine are all 1 -- because
+    twelve ounces of spirits is not a quantity anybody means. The two units
+    share a column because they share a question ("how many"), and nothing
+    reads `amount` without first reading `kind`: see `health.DRINK_ML`, which
+    refuses to convert this kind to a volume at all.
+    """
+
+    id: int
+    date: dt.date
+    hour: int = Field(ge=0, le=23)
+    kind: DrinkKind
+    amount: float = Field(gt=0, le=20)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def at(self) -> str:
+        return f"{self.hour:02d}:00"
+
+
 class PrescribedBlock(Base):
     """One thing the plan asks for today -- as opposed to `TrainingSession`,
     which is one thing that happened.
@@ -822,9 +854,18 @@ class TodoItem(Base):
 
     title: str
     subject: str | None = None
-    calendar: str
 
-    due_date: dt.date
+    calendar: str | None = None
+    """Where the mirror was filed. Null exactly when there is no mirror — see
+    `due_date`."""
+
+    due_date: dt.date | None = None
+    """Null for a `someday` item: work that is owed but not on a day.
+
+    Those are the rows this dashboard owns outright. There is no Google event
+    behind one, so no calendar, no `event_id`, and nothing to delete when it is
+    ticked — the schema enforces all four together."""
+
     start: dt.time | None = None
     end: dt.time | None = None
 

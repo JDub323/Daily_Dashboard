@@ -1610,6 +1610,107 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX rating_event_date ON rating_event (track, date);
         """,
     ),
+    (
+        27,
+        """
+        -- What you drank, in drinks. One row per drink, like the two logs
+        -- beside it and for the same reason: the whole signal is the pattern
+        -- across a day, and a daily total would throw away the fact that all
+        -- of it arrived after six.
+        --
+        -- `amount` is the one field in this schema that is a typed number
+        -- rather than a bucket, and the exception is deliberate. `size` and
+        -- `volume` are buckets because nobody knows how big their lunch was;
+        -- a bottle has its ounces printed on the side, so the honest answer is
+        -- a number and bucketing it would be discarding precision that was
+        -- free.
+        --
+        -- The unit is a drink -- twelve ounces of it -- and *not* millilitres,
+        -- because one of the five kinds does not convert. For alcohol the unit
+        -- is a standard drink: a shot and a beer are both 1, and they are not
+        -- the same volume of liquid. One column cannot be both, so it holds the
+        -- count and `health.DRINK_ML` does the conversion for the four kinds
+        -- where a volume means anything -- in one place, named, where it can be
+        -- argued with. The same treatment `MEAL_KCAL` gets, for the same
+        -- reason.
+        --
+        -- The ceiling is 20 rather than absent, and it is a fat-finger guard
+        -- rather than a judgement: twenty in one entry is a decimal point in
+        -- the wrong place, and a row reading 150 would quietly move every
+        -- weekly mean this table feeds for a month.
+        CREATE TABLE drink_log (
+            id      INTEGER PRIMARY KEY,
+            date    TEXT NOT NULL
+                         CHECK (date IS strftime('%Y-%m-%d', date)),
+            hour    INTEGER NOT NULL CHECK (hour BETWEEN 0 AND 23),
+            kind    TEXT NOT NULL CHECK (kind IN (
+                        'water', 'electrolyte', 'gatorade', 'coffee', 'alcohol')),
+            amount  REAL NOT NULL CHECK (amount > 0 AND amount <= 20)
+        ) STRICT;
+
+        CREATE INDEX drink_log_date ON drink_log (date);
+        """,
+    ),
+    (
+        28,
+        """
+        -- Work that is owed but not on a day. "fix the coffee table" is a real
+        -- item and the box refused it outright: every row in this table
+        -- mirrored a Google event, an event has to happen somewhere, so
+        -- `due_date` was NOT NULL and a line without a day was an error.
+        --
+        -- An undated row mirrors nothing. There is no event, therefore no
+        -- calendar it was filed to and no handle to delete it by, and
+        -- `event_deleted` is 1 from the moment it is written because there has
+        -- never been anything of it in Google to take down. That is the whole
+        -- of the last CHECK below, and it is what keeps "undated" from drifting
+        -- into meaning "dated, but we lost the date": a row with no day is one
+        -- this dashboard owns outright, and the constraint says so.
+        --
+        -- SQLite cannot drop a NOT NULL in place, so the table is rebuilt and
+        -- copied. Dropping the old one takes its three indexes with it, which
+        -- is why they are recreated here under the same names.
+        CREATE TABLE todo_rebuilt (
+            id          INTEGER PRIMARY KEY,
+            created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+            raw         TEXT    NOT NULL,
+            title       TEXT    NOT NULL CHECK (length(title) BETWEEN 1 AND 300),
+            subject     TEXT,
+            calendar    TEXT,
+
+            due_date    TEXT    CHECK (due_date IS NULL
+                                       OR due_date IS strftime('%Y-%m-%d', due_date)),
+            start_time  TEXT    CHECK (start_time IS NULL OR length(start_time) = 5),
+            end_time    TEXT    CHECK (end_time IS NULL OR length(end_time) = 5),
+
+            series      TEXT,
+            event_id    TEXT,
+            event_url   TEXT,
+
+            done_at     TEXT,
+            event_deleted INTEGER NOT NULL DEFAULT 0 CHECK (event_deleted IN (0, 1)),
+
+            CHECK ((start_time IS NULL) = (end_time IS NULL)),
+            -- No day means no event, and everything that follows from that.
+            CHECK (due_date IS NOT NULL
+                   OR (calendar IS NULL AND event_id IS NULL
+                       AND event_url IS NULL AND event_deleted = 1))
+        ) STRICT;
+
+        INSERT INTO todo_rebuilt
+            SELECT id, created_at, raw, title, subject, calendar, due_date,
+                   start_time, end_time, series, event_id, event_url,
+                   done_at, event_deleted
+              FROM todo;
+
+        DROP TABLE todo;
+        ALTER TABLE todo_rebuilt RENAME TO todo;
+
+        CREATE INDEX todo_due ON todo (due_date);
+        CREATE INDEX todo_open ON todo (done_at, due_date);
+        CREATE INDEX todo_series ON todo (series) WHERE series IS NOT NULL;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

@@ -410,13 +410,41 @@ def _resolve_line(
     state: Any, cfg: Settings, resolved: todo.Resolved, picked: str | None
 ) -> api.ResolvedEvent:
     """One read line -> what the box draws, and what the write will do."""
+    parsed = resolved.parsed
+
+    if resolved.undated:
+        # The classifier is not consulted, and that is the point rather than an
+        # optimisation: there is no event, so there is no calendar to pick, and
+        # a preview naming one would promise a Google event that never arrives.
+        #
+        # `parsed.warning` is dropped on purpose. On one of these it is always
+        # "no day found; used today", which is the thing the line just declared
+        # on purpose -- printing it would be the preview arguing with the
+        # sentence. What replaces it is the one piece of typing an undated line
+        # genuinely throws away: a clock with no day to hang it on is not
+        # stored, and silently dropping it is how you find out in a fortnight.
+        warning = None
+        if parsed is not None and parsed.start is not None:
+            warning = "a time needs a day — the clock on this line is ignored"
+        return api.ResolvedEvent(
+            title=parsed.title if parsed else resolved.raw,
+            date=None,
+            calendar=None,
+            source="someday",
+            warning=warning,
+            raw=resolved.raw,
+            aliases=[api.AliasHit(key=h.key, name=h.name) for h in resolved.hits],
+            is_todo=True,
+            undated=True,
+            error=resolved.error,
+        )
+
     ranked: list[api.CalendarGuess] = []
     if picked == MODEL_PICK:
         calendar, source, ranked = _auto(state, resolved, cfg)
     else:
         calendar, source = _target(state, cfg, resolved, picked)
 
-    parsed = resolved.parsed
     return api.ResolvedEvent(
         title=parsed.title if parsed else resolved.raw,
         date=parsed.date if parsed else dt.date.today(),
@@ -455,6 +483,25 @@ def _write_line(
     series = uuid.uuid4().hex[:12] if resolved.recurrence else None
     subject = resolved.hits[0].name if resolved.hits else None
     written = 0
+
+    if resolved.undated:
+        # The one write in this file that never touches Google. `dates()` is
+        # already empty for these, so the loop below would do nothing at all --
+        # but "does nothing, therefore writes no event" is a thing to state
+        # rather than to leave the reader to work out from two files away.
+        repo.add_todo(
+            raw=resolved.raw,
+            title=parsed.title,
+            subject=subject,
+            calendar=None,
+            due_date=None,
+            start=None,
+            end=None,
+            series=None,
+            event_id=None,
+            event_url=None,
+        )
+        return 0
 
     for date in resolved.dates():
         when = (
@@ -1032,8 +1079,12 @@ def _register(app: FastAPI) -> None:
         # Recorded against what the box *would* have done, which has to be
         # recomputed: `line.calendar` is already the override, so comparing the
         # two would be comparing the choice with itself.
-        if body.calendar and body.calendar != MODEL_PICK and done:
-            resolved, line = done[0]
+        # The first *dated* line, not simply the first: a `someday` item was
+        # never filed anywhere, so it cannot be evidence about where the picker
+        # should have filed things.
+        dated = [(r, ln) for r, ln in done if not r.undated]
+        if body.calendar and body.calendar != MODEL_PICK and dated:
+            resolved, line = dated[0]
             predicted, source = _target(request.app.state, cfg, resolved, None)
             if predicted != body.calendar:
                 repo.record_calendar_correction(
@@ -1069,7 +1120,13 @@ def _register(app: FastAPI) -> None:
         way in the panel and can be retried.
         """
         item = repo.set_todo_done(body.todo_id, body.done)
-        if body.done and not item.event_deleted:
+        # An undated item has no event and never had one, so there is nothing
+        # here to take down. It arrives with `event_deleted` already set and
+        # would clear the guard on that alone; naming the case says why, and
+        # says it beside the two null fields the call below would otherwise
+        # reach for.
+        undated = item.due_date is None or item.calendar is None
+        if body.done and not item.event_deleted and not undated:
             try:
                 fetch.delete_calendar_event(
                     calendar=item.calendar,
@@ -1955,6 +2012,19 @@ def _register(app: FastAPI) -> None:
     def meal_delete(cfg: Cfg, repo: Repo, body: api.LogDeleteRequest) -> api.HealthPanel:
         if not repo.delete_meal(body.entry_id):
             raise LookupError(f"no meal {body.entry_id}")
+        return state.health_panel(cfg, repo, body.date)
+
+    @app.post("/api/drink")
+    def drink_add(cfg: Cfg, repo: Repo, body: api.DrinkRequest) -> api.HealthPanel:
+        """One drink. `amount` is in drinks; the bounds are the request
+        model's and the table's, which agree."""
+        repo.add_drink(body.date, body.hour, body.kind, body.amount)
+        return state.health_panel(cfg, repo, body.date)
+
+    @app.post("/api/drink/delete")
+    def drink_delete(cfg: Cfg, repo: Repo, body: api.LogDeleteRequest) -> api.HealthPanel:
+        if not repo.delete_drink(body.entry_id):
+            raise LookupError(f"no drink {body.entry_id}")
         return state.health_panel(cfg, repo, body.date)
 
     @app.post("/api/garmin/sync")

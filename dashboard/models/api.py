@@ -27,6 +27,7 @@ from .common import (
     Base,
     BathroomKind,
     ChessOutcome,
+    DrinkKind,
     EntrySource,
     HealthMetric,
     MathOutcome,
@@ -44,6 +45,7 @@ from .domain import (
     SENTENCES,
     BathroomLog,
     DayCompletion,
+    DrinkLog,
     Investigation,
     InvestigationDay,
     MathProblem,
@@ -403,6 +405,19 @@ class MealRequest(DateBody):
     """1 = as processed as it gets, 5 = whole ingredients."""
 
     note: str | None = Field(default=None, max_length=200)
+
+
+class DrinkRequest(DateBody):
+    """One drink. `amount` is in drinks -- see `DrinkLog` for what a drink is,
+    and for why alcohol counts differently."""
+
+    hour: int = Field(ge=0, le=23)
+    kind: DrinkKind
+    amount: float = Field(gt=0, le=20)
+    """The bounds are the table's, restated here so a typo comes back as a 422
+    naming the field rather than as a CHECK constraint in a 500. The panel
+    parses the box itself and will not post a number outside them, which makes
+    this the guard for everything that is not the panel."""
 
 
 class LogDeleteRequest(DateBody):
@@ -1059,6 +1074,21 @@ class HealthDerived(Base):
     diet_quality: float | None = None
     """Mean 1-5 over the week's meals: how whole the food was."""
 
+    fluid_ml: float | None = None
+    """Mean ml a day out of the drink log, alcohol excluded.
+
+    The same quantity `hydration_ml` reports and a better measurement of it:
+    that one is a glyph on a watch face you remember to tap, this one is the
+    thing you were going to log anyway. Both are carried so the hero can prefer
+    this and still say something on a week it was not kept."""
+
+    caffeine_drinks: float | None = None
+    """Mean drinks of coffee a day this week -- twelve ounces each."""
+
+    alcohol_week: float | None = None
+    """Standard drinks in the last seven days. A total, not a mean, and 0.0 is
+    a real answer that only exists when the log was being kept."""
+
 
 class GarminStatus(Base):
     """Whether the watch is talking to us, said plainly.
@@ -1145,10 +1175,11 @@ class HealthPanel(Base):
 
     bathroom_today: list[BathroomLog] = Field(default_factory=list)
     meals_today: list[MealLog] = Field(default_factory=list)
+    drinks_today: list[DrinkLog] = Field(default_factory=list)
     """Today only. The windows behind the derived block are read server-side
-    and stay there -- these two tables produce four to eight rows a day, and
-    a month of them crossing the wire on every boot to redraw one list would
-    be the largest thing in the payload by some margin."""
+    and stay there -- these three tables produce four to sixteen rows a day,
+    and a month of them crossing the wire on every boot to redraw one list
+    would be the largest thing in the payload by some margin."""
 
     garmin: GarminStatus = Field(default_factory=GarminStatus)
 
@@ -1484,12 +1515,19 @@ class ResolvedEvent(Base):
     """
 
     title: str
-    date: dt.date
+    date: dt.date | None = None
+    """Null only for a `someday` line, which has no day by construction."""
+
     start: str | None = None
     end: str | None = None
 
-    calendar: str
-    source: str = Field(pattern=r"^(rule|model|correction|fallback|subject|default|chosen)$")
+    calendar: str | None = None
+    """Null for a `someday` line. Nothing is filed anywhere, and naming a
+    calendar in the preview would promise a Google event that never arrives."""
+
+    source: str = Field(
+        pattern=r"^(rule|model|correction|fallback|subject|default|chosen|someday)$"
+    )
     """Which stage decided. Shown in the preview, because "why did it pick
     that" is the first question a wrong guess raises.
 
@@ -1527,6 +1565,10 @@ class ResolvedEvent(Base):
 
     is_todo: bool = False
     """Whether this becomes a tracked item as well as an event."""
+
+    undated: bool = False
+    """The line said `someday`. It becomes a tracked item and *no* event —
+    the one thing the box writes that Google never hears about."""
 
     recurrence: str | None = None
     """Human-readable, e.g. "every week × 12". Null for a one-off."""

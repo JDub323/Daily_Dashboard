@@ -238,8 +238,23 @@ body::before {
    obligations has no single point — and then the slot must take no room at
    all, or the grid starts a rhythm's worth of whitespace below the tab bar. */
 .pane[hidden] { display: none; }
-.hero { display: flex; flex-direction: column; gap: var(--s4); margin-bottom: var(--s4); }
-.hero:empty { display: none; }
+/* The same six columns as the grid below it, and for the same reason. This was
+   a flex column, which meant a hero was the full width or it was nothing —
+   fine while every hero wanted the full width, and wrong on the home tab, where
+   the year and what is due are each worth about half and stacking them left a
+   full-width card with an empty half beside it. A panel that declares no span
+   still takes all six, so every other tab is unchanged.
+
+   Scoped to the slot container — `.pane > .hero` — and that is not fussiness.
+   `hero` names two different things: the slot, and the cards in it, which carry
+   `class="panel hero"`. A bare `.hero` matches both, so declaring six columns
+   on it laid every hero *card* out as a six-column grid too, one letter of the
+   heading per line. It was harmless while this rule said `flex-direction:
+   column`, which is what a card looks like anyway. */
+.pane > .hero { display: grid; grid-template-columns: repeat(6, 1fr);
+                gap: var(--s4); margin-bottom: var(--s4); align-items: start; }
+.pane > .hero > .panel { grid-column: span var(--span, 6); }
+.pane > .hero:empty { display: none; }
 
 /* ---- the grid ----
    Six columns with a span declared per panel, replacing
@@ -271,6 +286,10 @@ body::before {
      carousel.js -- so it has to be named beside them wherever spans are
      decided, or it keeps a six-column span in a two-column grid. */
   .grid > .panel, .grid > .cyc { grid-column: span 1; }
+  /* Heroes stack rather than halving. Half of a 900px pane is 450px, and the
+     year heatmap alone is most of that by December. */
+  .pane > .hero { grid-template-columns: 1fr; }
+  .pane > .hero > .panel { grid-column: span 1; }
 }
 @media (max-width: 620px) {
   .grid { grid-template-columns: 1fr; }
@@ -1277,6 +1296,10 @@ textarea.cal-input.bad:focus { outline-color: var(--bad); }
   border-radius: var(--r-pill);
   padding: 1px var(--s2);
 }
+/* A `someday` line is filed nowhere, and the pill says so in the register of an
+   absence rather than of a target — same shape, none of the accent colour, so
+   it does not read as a calendar named "not on the calendar". */
+.cal-pill.none { border-color: var(--border); color: var(--faint); }
 /* Says this line becomes something you can tick off, not just an event. */
 .cal-kind {
   color: var(--gold-text);
@@ -1428,7 +1451,8 @@ select.cal-picker option { background: var(--panel2); color: var(--fg); }
   gap: var(--s2);
   width: 100%;
   /* Room for the check to sit in without reflowing the line when it arrives. */
-  padding: 2px 18px 2px 0;
+  /* Right for the check, left for the subject rail. */
+  padding: 2px 18px 2px var(--s2);
   position: relative;
   cursor: pointer;
   font-size: var(--t-body);
@@ -1453,18 +1477,44 @@ select.cal-picker option { background: var(--panel2); color: var(--fg); }
 .todo-row:hover::after, .todo-row:focus-visible::after { opacity: .8; }
 /* Already done, so the offer is the other direction. */
 .todo-row.done::after { content: "↩"; color: var(--dim); }
+
+/* The subject, as colour. Same `--hue` custom property and same twelve-hue
+   palette the week grid gives its calendars — one colouring scheme on the page,
+   not two, and gold stays reserved for "done". The rail is 2px rather than the
+   grid's 3px because it runs down a text row rather than a filled block. */
+.todo-row.has-subject { border-left: 2px solid hsl(var(--hue) 62% 62%); }
+.todo-row.has-subject:hover, .todo-row.has-subject:focus-visible {
+  background: hsl(var(--hue) 26% 17%);
+}
+.todo-row.done.has-subject { border-left-color: hsl(var(--hue) 20% 40%); }
+
 .todo-title { color: var(--fg); }
 .todo-row.done .todo-title { color: var(--faint); text-decoration: line-through; }
-.todo-subject {
+
+/* What you typed, not what it expanded to: `fpm`, three characters, beside a
+   title that no longer repeats the subject. The pill it replaced spelled the
+   whole course name out a second time on the same row. */
+.todo-key {
+  flex: none;
   font-size: var(--t-meta);
-  color: var(--gold-text);
-  border: 1px solid var(--gold-dim);
-  border-radius: var(--r-pill);
-  padding: 0 var(--s2);
+  letter-spacing: .06em;
+  color: hsl(var(--hue) 55% 74%);
 }
-.todo-at { font-size: var(--t-meta); color: var(--dim); font-variant-numeric: tabular-nums; }
+.todo-row.done .todo-key { color: var(--faint); }
+
+.todo-at { font-size: var(--t-meta); color: var(--dim); font-variant-numeric: tabular-nums;
+           margin-left: auto; flex: none; }
 /* Only ever drawn after a delete that failed, so it is allowed to be loud. */
 .todo-stuck { font-size: var(--t-meta); color: var(--bad); opacity: .85; }
+
+/* Work with no day, under a rule. The rule is the whole statement: above it the
+   list is sorted by when things are owed, below it nothing is, and a border is
+   a cheaper way to say that than a sentence would be. */
+.todo-someday {
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--border);
+}
 
 .todo-done-box { margin-top: var(--s3); }
 .todo-done-box summary { cursor: pointer; font-size: var(--t-meta); }

@@ -82,14 +82,17 @@ export function mountAll() {
   for (const def of registry.values()) {
     const card = el(`section.panel${def.hero ? ".hero" : ""}`, { id: `panel-${def.id}` });
 
-    // How many of the grid's six columns this card is worth. Set as a custom
-    // property rather than `grid-column` directly so the narrow-screen media
-    // queries can override it — an inline `grid-column` would beat them and
-    // there would be no way back but `!important`.
+    // How many of the six columns this card is worth. Set as a custom property
+    // rather than `grid-column` directly so the narrow-screen media queries can
+    // override it — an inline `grid-column` would beat them and there would be
+    // no way back but `!important`.
     //
-    // Hero panels ignore it: the hero is a flex column, and what a hero is
-    // worth is the whole width by definition.
-    if (!def.hero) card.style.setProperty("--span", def.span ?? 2);
+    // Heroes are on the same six columns as the grid below them, and default to
+    // all of them: a hero is the whole width unless it says otherwise. What
+    // says otherwise is the home tab, where the year and what is due are worth
+    // half each and stacking them left a hero-width card with an empty half
+    // beside it. The hero used to be a flex column and ignored this entirely.
+    card.style.setProperty("--span", def.span ?? (def.hero ? 6 : 2));
 
     // A panel may decline a heading, and then there is no <h2> at all rather
     // than an empty one holding its line-height open. The week grid is the case

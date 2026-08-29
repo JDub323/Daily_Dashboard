@@ -31,6 +31,7 @@ const GRAMMAR = [
   ["pset 4 due tomorrow", "today · tomorrow · a weekday · 3/14 · march 14"],
   ["every tuesday: reading", "twelve separate events, one per week"],
   ["every other tue: seminar", "the same, fortnightly"],
+  ["fix the coffee table someday", "no day, no event — a todo this app keeps itself"],
 ];
 
 const RULES = [
@@ -54,10 +55,18 @@ const RULES = [
     + "the training signal: the same phrasing stops being wrong.",
   ],
   [
-    "a todo must name its day",
+    "a todo must name its day, or say it has none",
     "an event with no day lands today, which is one drag to fix. a due date "
     + "nobody typed is a lie about when work is owed, so those lines are "
     + "refused with the reason printed under the box.",
+  ],
+  [
+    "someday is the exception",
+    "ending a line with `someday` (or `sometime`, or `at some point`) says the "
+    + "missing day was deliberate. it writes a todo and *no* google event — the "
+    + "one thing this box makes that google never hears about — and it lands "
+    + "under the rule at the bottom of the due list. a repeat cannot be "
+    + "undated, so “every tuesday someday” is refused.",
   ],
   [
     "aliases are whole words",

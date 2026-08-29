@@ -727,6 +727,8 @@ const SOURCE_LABEL = {
   subject: "subject",
   default: "default",
   chosen: "chosen",
+  // Nothing decided a calendar, because the line does not want one.
+  someday: "undated",
 };
 
 
@@ -782,9 +784,15 @@ function previewLine(line) {
     );
   }
 
-  const date = parseISO(line.date);
-  const day = `${DAY_NAMES[(date.getDay() + 6) % 7]} ${MONTHS[date.getMonth()]} ${date.getDate()}`;
-  const when = line.start ? `${line.start}–${line.end}` : "all day";
+  // A `someday` line has no date and no calendar, because it writes no event.
+  // Both halves are stated rather than left blank: "someday" where the day
+  // goes, and "not on the calendar" where the target does — a line that quietly
+  // showed neither would look like a line that had failed to parse.
+  const day = line.undated ? "someday" : (() => {
+    const date = parseISO(line.date);
+    return `${DAY_NAMES[(date.getDay() + 6) % 7]} ${MONTHS[date.getMonth()]} ${date.getDate()}`;
+  })();
+  const when = line.undated ? "no date" : line.start ? `${line.start}–${line.end}` : "all day";
 
   return el("div.cal-pv", null,
     // Whether an alias fired is drawn first and always, in one of two states.
@@ -794,7 +802,10 @@ function previewLine(line) {
     line.aliases.length
       ? el("span.cal-alias.hit", { text: line.aliases.map((a) => a.key).join(" ") })
       : el("span.cal-alias.miss", { text: "—", title: "no alias in this line" }),
-    el("span.cal-pill", { text: line.calendar }),
+    el("span.cal-pill", {
+      class: line.undated ? "none" : "",
+      text: line.calendar ?? "not on the calendar",
+    }),
     el("span.cal-pv-title", { text: line.title }),
     el("span.cal-pv-when", {
       text: line.recurrence ? `${day} · ${when} · ${line.recurrence}` : `${day} · ${when}`,

@@ -25,6 +25,7 @@ import checkin from "./panels/checkin.js";
 import chess from "./panels/chess.js";
 import daylog from "./panels/daylog.js";
 import deck from "./panels/deck.js";
+import drinks from "./panels/drinks.js";
 import games from "./panels/games.js";
 import health from "./panels/health.js";
 import investigate from "./panels/investigate.js";
@@ -84,13 +85,15 @@ const WATCHES = {
   checkin: ["health"],
   session: ["health"],
   plan: ["health"],
-  // The two quick logs read the same slice and write to it four to eight times
-  // a day. They watch it rather than redrawing themselves after their own POST
-  // for the same reason as the three above — and because the hero's hydration
-  // and energy-balance lines are computed off exactly these rows, so a meal
-  // logged here has to move a sentence up there in the same breath.
+  // The three quick logs read the same slice and write to it four to sixteen
+  // times a day. They watch it rather than redrawing themselves after their own
+  // POST for the same reason as the three above — and because the hero's
+  // hydration, caffeine and energy-balance lines are computed off exactly these
+  // rows, so a meal logged here has to move a sentence up there in the same
+  // breath.
   bathroom: ["health"],
   meals: ["health"],
+  drinks: ["health"],
 };
 
 /** Store keys whose writes make the cached /api/history fetch stale. */
@@ -115,6 +118,13 @@ const PANELS = [
   // `todo` sits directly under the week because it is the week's other half:
   // the grid says when things happen, this says what is owed and lets it be
   // ticked off. Both are filled from the same box.
+  //
+  // It shares that second row with the year rather than taking a row of its
+  // own. Neither fills the width, so stacked they were two cards each with an
+  // empty half beside it, and the year — the one you look at least — was what
+  // you had to scroll past. What is owed goes on the left of the pair: it is
+  // the half you can still act on, and the heatmap is a record of halves you
+  // cannot.
   calendar, todo, activity,
   // math — the problem is the hero; the trick and the deck are the two things
   // that make the next one easier.
@@ -134,15 +144,18 @@ const PANELS = [
   // on the left, which is the thing you read, and on the right one card that
   // takes turns being the four things you write into.
   //
-  // `plan` is registered first and therefore keeps the left half. The four
+  // `plan` is registered first and therefore keeps the left half. The five
   // after it all carry `host: "cyc"`, so the first of them builds the rotation
   // where it stands and the rest join it — which is why this list is still the
   // whole of the layout even though half of it is now one card.
   //
   // Their order in the rotation is the order the day asks for them: the
-  // check-in in the morning, the session in the evening, and the two logs that
-  // are answered on the way past in between.
-  health, plan, checkin, session, meals, bathroom,
+  // check-in in the morning, the session in the evening, and the three logs
+  // that are answered on the way past in between. Drinks sits between meals and
+  // in-and-out because that is the order the three are read in — what went in,
+  // what you drank, what came out — and because the two hydration panels being
+  // neighbours is the pairing the tab is for.
+  health, plan, checkin, session, meals, drinks, bathroom,
 ];
 
 async function loadConfig() {

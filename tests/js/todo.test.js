@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { groupByDay } from "../../web/app/panels/todo.js";
+import { groupByDay, shorten, undatedItems } from "../../web/app/panels/todo.js";
 
 const TODAY = "2026-08-27";
 
@@ -69,5 +69,53 @@ describe("groupByDay", () => {
 
   it("returns nothing rather than an empty overdue bucket", () => {
     assert.deepEqual(groupByDay([], TODAY), []);
+  });
+});
+
+describe("undatedItems", () => {
+  it("picks out the rows with no day at all", () => {
+    const items = [item("2026-08-28"), item(null), item(null)];
+    assert.deepEqual(undatedItems(items).map((i) => i.due_date), [null, null]);
+  });
+
+  it("leaves undated work out of the day groups", () => {
+    // The two lists are drawn from one payload, so an undated row appearing in
+    // both would be the same item shown twice — and `null < "2026-08-27"` is
+    // false, so without the explicit skip it becomes a day group headed "null".
+    const groups = groupByDay([item(null), item("2026-08-28")], TODAY);
+    assert.deepEqual(groups.map((g) => g.date), ["2026-08-28"]);
+  });
+
+  it("drops undated work that is already done", () => {
+    assert.deepEqual(undatedItems([item(null, { done: true })]), []);
+  });
+});
+
+describe("shorten", () => {
+  const FPM = "US National Security Policy Making";
+
+  it("takes the subject off the front of its own title", () => {
+    // The alias expands before the title is stored, so the subject *is* the
+    // first words of nearly every row — and the tag beside it said them again.
+    assert.equal(shorten(`${FPM}: quiz on the Civil War`, FPM), "Quiz on the Civil War");
+  });
+
+  it("eats the separator, whatever it is", () => {
+    for (const sep of [": ", " ", " — ", " - "]) {
+      assert.equal(shorten(`${FPM}${sep}Thornhill Chapter 4`, FPM), "Thornhill Chapter 4");
+    }
+  });
+
+  it("leaves a title that is only its subject alone", () => {
+    // An empty row is worse than a repeated one.
+    assert.equal(shorten(FPM, FPM), FPM);
+  });
+
+  it("only ever strips a prefix", () => {
+    assert.equal(shorten(`Notes on ${FPM}`, FPM), `Notes on ${FPM}`);
+  });
+
+  it("does nothing without a subject", () => {
+    assert.equal(shorten("Fix the coffee table", null), "Fix the coffee table");
   });
 });

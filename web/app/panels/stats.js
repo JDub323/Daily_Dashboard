@@ -235,6 +235,11 @@ export const activity = {
   tab: "home",
   slot: "hero",
   hero: true,
+  // Half the hero, sharing its row with what is owed. Three of six rather than
+  // four because the heatmap is the widest thing in here and it is only ~470px
+  // at a full year — past that `.hm-scroll` takes over, which is what it is
+  // for. See the note beside `calendar, todo, activity` in main.js.
+  span: 3,
 
   async render(node) {
     const { cells, labels, weeks, rows } = heatmap();
