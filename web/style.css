@@ -346,6 +346,30 @@ ul.clean li { margin: var(--s1) 0; }
 .answer { margin-top: var(--s2); }
 .hints > div { margin: var(--s1) 0; }
 
+/* The proof rubric — what a complete proof has to show, out of the book's own
+   printed solution. Indented and quiet: it is a checklist you read against
+   your write-up, not a second statement competing with the first. */
+.rubric { margin: var(--s2) 0; padding-left: var(--s2); border-left: 1px solid var(--border); }
+.rubric-line { display: flex; align-items: baseline; gap: var(--s2);
+               margin: var(--s1) 0; font-size: var(--t-meta); color: var(--dim); cursor: pointer; }
+/* `input, textarea` above sets width:100%, which is right for every text field
+   in the app and absurd for a checkbox — it rendered 834px wide and shoved its
+   own label to the far edge of the panel. */
+.rubric-line input { margin: 0; width: auto; flex: 0 0 auto; }
+
+/* Sunday. Three segments, one or two of them expected — so a finished one is
+   dimmed rather than removed: seeing what you skipped is the point of the
+   list, and the plan is a menu, not a queue. */
+.segment { margin: var(--s2) 0; padding-left: var(--s2);
+           border-left: 1px solid var(--border); }
+.segment-done { border-left-color: var(--ok); opacity: .55; }
+.segment-title { font-size: var(--t-meta); color: var(--dim); letter-spacing: .06em; }
+/* Selector written to outrank `.row > input:not([type="number"])`, which is
+   (0,2,1) and would otherwise stretch this to fill the row — turning a
+   one-word optional note into something that looks like a required field. */
+.row > input.skip-why { width: 14ch; flex: 0 0 auto;
+                        font-size: var(--t-meta); padding: 1px var(--s1); }
+
 /* The solve-time box. Narrow on purpose — it takes at most four digits, and a
    full-width input reads as a field you are expected to fill in, which this
    deliberately is not. The `.row > input` rule above already exempts

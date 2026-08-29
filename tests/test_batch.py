@@ -15,7 +15,17 @@ import pytest
 
 from dashboard import batch, content, llm
 
-from .conftest import TODAY
+from .conftest import TODAY as SUNDAY
+
+TODAY = SUNDAY + dt.timedelta(days=1)
+"""A Monday.
+
+Everything in this file is about the *compute* day's batch — a ladder of rungs,
+a rating, a do-not-repeat list. `conftest.TODAY` is a Sunday, and Sunday is the
+reading day now: it draws no problem and its context carries a study plan
+instead of a ladder. Shadowing the name keeps every assertion below reading as
+it did, on a day that still asks the question they are asking about.
+"""
 
 
 def rung(source: str, tier: str = "aime-late", **kw) -> dict:

@@ -128,6 +128,31 @@ function planTasks(s) {
   return out;
 }
 
+/**
+ * What ticks the day's required math, now that the week has four shapes.
+ *
+ * `status !== "open"` was the whole rule and it is wrong twice over on the new
+ * week. A reading day has no attempt at all, so `status` sits at its default
+ * and Sunday could never be ticked. A day-two-with-nothing-carried has no
+ * attempt either, and that day was *earned* by solving day one — leaving it
+ * unfinishable would make the reward cost a perfect day.
+ *
+ * `carried` counts as done deliberately. You did the day's work; the result
+ * lands tomorrow, and the problem is still yours. The thing that must not be
+ * ticked is a drawn problem you have not touched, which is exactly `open`.
+ */
+function mathDone(math) {
+  if (math.mode === "reading") return Boolean(math.plan?.started);
+  if (math.free_day) return true;
+  return Boolean(math.problem) && math.status !== "open";
+}
+
+function mathLabel(math) {
+  if (math.mode === "reading") return "reading";
+  if (math.mode === "proof-long") return math.day === 2 ? "proof, day 2" : "proof, day 1";
+  return math.mode === "compute" ? "math problem" : "proof";
+}
+
 function tasks() {
   const s = store.state;
   // Filtered at the end: a day with nothing drawn has no chip at all, rather
@@ -136,7 +161,7 @@ function tasks() {
   // is for the required ones. For the rest it is about the points: a total
   // whose maximum you cannot reach is a score against a moving target.
   return [
-    { id: "math", label: "math problem", done: s.math.status !== "open", panel: "math" },
+    { id: "math", label: mathLabel(s.math), done: mathDone(s.math), panel: "math" },
     {
       // Done means the *marked set* is submitted. The challenge is optional
       // and deliberately not part of this: a chip that only went gold when you

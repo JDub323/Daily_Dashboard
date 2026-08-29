@@ -17,7 +17,13 @@ from dashboard.models import api
 from dashboard.models import domain as d
 from dashboard.models.common import HealthMetric, Track
 
-from .conftest import TODAY
+from .conftest import TODAY as SUNDAY
+
+TODAY = SUNDAY + dt.timedelta(days=1)
+"""A Monday, for the same reason `test_batch.py` shadows the name: the math
+endpoints exercised here draw and mark a problem, and `conftest.TODAY` is the
+Sunday that draws none. Every other panel's tests are unaffected by which
+weekday this is."""
 
 DATE = TODAY.isoformat()
 
