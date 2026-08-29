@@ -100,7 +100,7 @@ function archiveEntry(body, entry) {
     statement,
     el("div.faint.small", null,
       entry.problem.area ? `${entry.problem.area} · ` : null,
-      `${entry.hints_revealed}/3 hints`,
+      `${entry.hints_revealed}/${entry.problem.hints.length} hints`,
       entry.score != null ? ` · scored ${entry.score}` : null,
       entry.minutes ? ` · ${entry.minutes} min ${priceLabel(entry.minutes, entry.par_minutes)}` : null,
     ),
@@ -118,12 +118,18 @@ function archiveEntry(body, entry) {
 /** `answer: 42 · full solution ↗` — the archive's whole reason to exist. */
 function answerBlock(entry) {
   const problem = entry.problem;
+  // A proof has no bare answer — the column holds the book's solution sketch —
+  // and a problem brought by hand has nothing at all. Dropped rather than
+  // printed as a label with nothing after it.
+  const label = problem.kind === "proof" ? "the book's solution: " : "answer: ";
   return el("div", null,
-    el("div.answer", null,
-      `answer: ${problem.answer} `,
-      problem.verified_url ? " · " : null,
-      problem.verified_url ? link(problem.verified_url, "full solution ↗") : null,
-    ),
+    problem.answer
+      ? el("div.answer", null,
+          `${label}${problem.answer} `,
+          problem.verified_url ? " · " : null,
+          problem.verified_url ? link(problem.verified_url, "full solution ↗") : null,
+        )
+      : null,
     problem.hints.length
       ? el("div.hints", null, ...problem.hints.map((h) => el("div.dim", { text: `▸ ${h}` })))
       : null,

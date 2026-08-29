@@ -31,7 +31,16 @@ from .config import Settings
 from .db.repository import ARGUMENT_AREA, PROOF_AREA, TRICK_AREA, Repository
 from .models import api
 from .models import domain as d
-from .models.common import DayMode, Deck, EntrySource, Game, HealthMetric, MathOutcome, Track
+from .models.common import (
+    DayMode,
+    Deck,
+    EntrySource,
+    Game,
+    HealthMetric,
+    MathOutcome,
+    ProblemKind,
+    Track,
+)
 
 HISTORY_LIMIT = 40
 """Rating events sent to the elo charts. The chart plots the last 40 anyway;
@@ -165,7 +174,15 @@ def math_archive(cfg: Settings, repo: Repository, today: dt.date) -> api.MathArc
                 score=attempt.score,
                 hints_revealed=attempt.hints_revealed,
                 minutes=attempt.minutes,
-                par_minutes=cfg.math.par_for(problem.tier),
+                # Read off the problem's kind rather than the day's mode: a
+                # proof is untimed whenever it is submitted, and a late box
+                # offering a speed bonus on one would price the thing the
+                # proof days exist to not price.
+                par_minutes=(
+                    None
+                    if problem.kind is ProblemKind.proof
+                    else cfg.math.par_for(problem.tier)
+                ),
                 delta=deltas.get(attempt.date),
                 late_eligible=attempt.date in eligible,
                 late_score_if_solved=(
