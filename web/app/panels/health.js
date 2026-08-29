@@ -49,9 +49,20 @@ const QUALITY_FLAG = 2.5;
  *  its job, outside it the buckets are wrong and saying so is the useful
  *  sentence. */
 const BALANCE_DISAGREEMENT = 1.0;
+/** Drinks of coffee a day, as a weekly mean, before it is worth a sentence.
+ *  Three twelve-ounce mugs — under that it is a habit, over it there is enough
+ *  of it landing after noon to be worth naming next to the sleep line. */
+const CAFFEINE_FLAG = 3.0;
+/** Standard drinks in seven days before the total is said out loud. Not a
+ *  limit and not advice: it is the point at which the number is likely to be
+ *  explaining something else already on this panel, and putting the two
+ *  sentences next to each other is the whole job here. */
+const ALCOHOL_WEEK_FLAG = 4.0;
 
 const one = (n) => n.toFixed(1);
 const whole = (n) => Math.round(n).toLocaleString();
+/** One decimal, and none when it is a whole number: `4`, `4.5`. */
+const trim = (n) => String(Math.round(n * 10) / 10);
 
 /**
  * The verdicts, in the order the questions matter.
@@ -144,14 +155,49 @@ function verdicts(d) {
   // -- hydration. Speaks only on a run, and only off days with enough
   //    readings to have thrown the first one away — see health.day_darkness.
   if (d.dark_urine_days >= DARK_DAYS) {
-    const water = d.hydration_ml != null
-      ? ` the watch has you at about ${whole(d.hydration_ml)} ml a day.`
-      : "";
+    // The drink log first and the watch second, because the two are answering
+    // the same question and only one of them is a measurement of what you
+    // drank. `hydration_ml` is a glyph you remember to tap; `fluid_ml` is the
+    // thing you were going to log anyway, and a day you did not tap the watch
+    // is indistinguishable from a day you drank nothing. The watch stays as
+    // the fallback rather than being dropped: on a week the drink log was not
+    // kept, a rough number beats silence.
+    const water = d.fluid_ml != null
+      ? ` you logged about ${whole(d.fluid_ml)} ml a day.`
+      : d.hydration_ml != null
+        ? ` the watch has you at about ${whole(d.hydration_ml)} ml a day.`
+        : "";
     lines.push([
       "bad",
       `urine has read dark ${d.dark_urine_days} days running, first of the morning `
       + `excluded.${water} that is the reading that matters while you are cutting: `
       + `it comes off the scale as progress and out of your legs as work.`,
+    ]);
+  }
+
+  // -- the other two things in the drink log, and both are here for the same
+  //    reason: they are the cheapest explanations for lines already above
+  //    them. A flat HRV week and a sleep score that does not match the hours
+  //    in bed both have a duller cause than overtraining more often than not,
+  //    and the panel is more useful for saying so than for another warning.
+  //
+  //    Neither speaks unless the log was being kept — the null does that, in
+  //    health.py — and neither says anything about a normal week.
+  if (d.caffeine_drinks != null && d.caffeine_drinks >= CAFFEINE_FLAG) {
+    lines.push([
+      "dim",
+      `coffee has run ${trim(d.caffeine_drinks)} drinks a day this week, twelve ounces each. `
+      + `it is the half of it after noon that shows up in the sleep score rather than `
+      + `in how awake you feel.`,
+    ]);
+  }
+
+  if (d.alcohol_week != null && d.alcohol_week >= ALCOHOL_WEEK_FLAG) {
+    lines.push([
+      "dim",
+      `${trim(d.alcohol_week)} standard drinks in the last seven days. `
+      + `it lands on hrv and on deep sleep for about two nights each, which is `
+      + `where to look for it if those are down.`,
     ]);
   }
 

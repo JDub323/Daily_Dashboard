@@ -775,3 +775,66 @@ def test_deleting_a_visit_reports_whether_there_was_one(repo):
     entry = repo.add_bathroom(TODAY, 8, "stool", "medium", solidity="liquid")
     assert repo.delete_bathroom(entry.id) is True
     assert repo.delete_bathroom(entry.id) is False
+
+
+def test_a_drink_keeps_its_decimal(repo):
+    """The one field in either log that is measured rather than bucketed, so
+    the whole point of it is that 1.4 comes back as 1.4."""
+    bottle = repo.add_drink(TODAY, 9, "water", 1.4)
+    assert bottle.amount == 1.4
+    assert bottle.at == "09:00"
+
+
+def test_drinks_are_appended_never_upserted(repo):
+    first = repo.add_drink(TODAY, 9, "water", 1.0)
+    second = repo.add_drink(TODAY, 9, "coffee", 1.0)
+    assert first.id != second.id
+    assert len(repo.drinks_on(TODAY)) == 2
+
+    assert repo.delete_drink(first.id) is True
+    assert repo.delete_drink(first.id) is False
+    assert [entry.kind for entry in repo.drinks_on(TODAY)] == ["coffee"]
+
+
+def test_drinks_come_back_in_time_order(repo):
+    repo.add_drink(TODAY, 21, "alcohol", 2.0)
+    repo.add_drink(TODAY, 7, "coffee", 1.0)
+    repo.add_drink(TODAY, 13, "gatorade", 1.5)
+    assert [entry.hour for entry in repo.drinks_on(TODAY)] == [7, 13, 21]
+
+
+def test_the_file_itself_refuses_a_drink_of_nothing(db):
+    """Zero is not a smaller drink, it is a row that says an event happened and
+    then describes nothing about it -- and it would drag every weekly mean
+    toward whatever number those rows are counted as."""
+    with pytest.raises(sqlite3.IntegrityError):
+        db.conn.execute(
+            "INSERT INTO drink_log (date, hour, kind, amount) "
+            "VALUES ('2026-07-26', 9, 'water', 0)"
+        )
+
+
+def test_the_file_itself_refuses_a_misplaced_decimal_point(db):
+    """The fat-finger guard. 150 is a legal number and not a legal answer, and
+    a single row of it would move the week's mean by more than a real day
+    could."""
+    with pytest.raises(sqlite3.IntegrityError):
+        db.conn.execute(
+            "INSERT INTO drink_log (date, hour, kind, amount) "
+            "VALUES ('2026-07-26', 9, 'water', 150)"
+        )
+
+
+def test_the_file_itself_refuses_a_drink_it_has_never_heard_of(db):
+    with pytest.raises(sqlite3.IntegrityError):
+        db.conn.execute(
+            "INSERT INTO drink_log (date, hour, kind, amount) "
+            "VALUES ('2026-07-26', 9, 'milk', 1)"
+        )
+
+
+def test_the_drink_window_is_clipped_to_the_browsers_today(repo):
+    for offset in (0, 3, 40):
+        repo.add_drink(TODAY - dt.timedelta(days=offset), 9, "water", 1.0)
+    got = repo.drink_history(28, before=TODAY)
+    assert [entry.date for entry in got] == [TODAY - dt.timedelta(days=3), TODAY]

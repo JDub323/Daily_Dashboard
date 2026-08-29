@@ -366,6 +366,88 @@ def test_hydration_mean_is_silent_under_three_readings():
     assert health.hydration_mean(points, TODAY) is None
 
 
+# -- what you drank ----------------------------------------------------------
+
+
+def drink(days_ago: int, hour: int, kind: str = "water", amount: float = 1.0) -> d.DrinkLog:
+    return d.DrinkLog(
+        id=days_ago * 100 + hour,
+        date=TODAY - dt.timedelta(days=days_ago),
+        hour=hour,
+        kind=kind,
+        amount=amount,
+    )
+
+
+def days_of_drinks(days: int, per_day: int = 6, kind: str = "water", amount: float = 1.0):
+    return [
+        drink(n, 8 + i, kind, amount) for n in range(days) for i in range(per_day)
+    ]
+
+
+def test_a_drink_is_twelve_ounces_of_it():
+    assert health.day_fluid_ml([drink(0, 9, "water", 2.0)]) == pytest.approx(710.0)
+
+
+def test_alcohol_is_not_fluid():
+    """The one kind whose `amount` is not a volume at all -- a shot and a beer
+    are both 1 -- so there is no honest number to add to the day's total."""
+    day = [drink(0, 20, "alcohol", 3.0), drink(0, 9, "water", 1.0)]
+    assert health.day_fluid_ml(day) == pytest.approx(health.DRINK_ML)
+
+
+def test_coffee_counts_as_fluid():
+    assert health.day_fluid_ml([drink(0, 7, "coffee", 1.0)]) == pytest.approx(health.DRINK_ML)
+
+
+def test_fluid_is_silent_until_the_log_was_being_kept():
+    """Four logged days out of seven is not a week's hydration, it is four
+    days you remembered. The same gate the gut read runs on."""
+    assert health.fluid_mean(days_of_drinks(4), TODAY) is None
+    assert health.fluid_mean(days_of_drinks(5), TODAY) is not None
+
+
+def test_a_day_of_nothing_but_beer_counts_as_a_dry_day():
+    """The opposite of what `daily_intake` does with meals, and deliberately.
+
+    A day with rows on it but no water is a day you drank no water -- which is
+    the day this reading exists to catch. Skipping it as "no data" would have
+    the mean quietly report the days you did drink.
+    """
+    # Six ordinary days, and a seventh with two beers on it and nothing else.
+    logs = [*days_of_drinks(6, per_day=6), drink(6, 21, "alcohol", 2.0)]
+    assert health.drink_logged_days(logs, TODAY) == 7
+    assert health.fluid_mean(logs, TODAY) == pytest.approx(6 * health.DRINK_ML * 6 / 7)
+
+
+def test_caffeine_is_a_mean_over_the_days_you_logged():
+    logs = [
+        *days_of_drinks(7, per_day=1, kind="water"),
+        *days_of_drinks(7, per_day=2, kind="coffee"),
+    ]
+    assert health.caffeine_mean(logs, TODAY) == pytest.approx(2.0)
+
+
+def test_alcohol_is_a_week_total_and_not_a_mean():
+    """Nobody counts alcohol per day, and a mean of 1.1 hides the Saturday
+    that is the whole of it."""
+    logs = [*days_of_drinks(7, per_day=3), drink(2, 21, "alcohol", 4.0)]
+    assert health.alcohol_week(logs, TODAY) == pytest.approx(4.0)
+
+
+def test_a_dry_week_reads_zero_rather_than_silence():
+    """Only once the log was kept. Zero is a real answer and it is the answer
+    most weeks; None is "nobody was writing it down", and the panel prints
+    nothing for that."""
+    assert health.alcohol_week(days_of_drinks(7), TODAY) == 0.0
+    assert health.alcohol_week(days_of_drinks(3), TODAY) is None
+
+
+def test_last_months_drinking_is_outside_the_week():
+    logs = [*days_of_drinks(7, per_day=3), drink(20, 21, "alcohol", 10.0)]
+    assert health.alcohol_week(logs, TODAY) == 0.0
+
+
 # -- the gut -----------------------------------------------------------------
 
 

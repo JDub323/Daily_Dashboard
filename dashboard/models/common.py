@@ -291,6 +291,31 @@ class Volume(StrEnum):
     large = "large"
 
 
+class DrinkKind(StrEnum):
+    """The five, and the cut between them is what each one does to you.
+
+    `electrolyte` and `gatorade` are separated on the sugar and nothing else --
+    a Gatorade Zero is electrolyte water by this definition, whatever is on the
+    bottle. It is the distinction that matters on a cut, where the salt is
+    wanted and the two hundred calories are the thing being counted.
+
+    `coffee` counts as fluid despite the folklore. The diuretic effect of
+    caffeine is real and smaller than the water it arrives in; it is here as
+    its own kind because the *caffeine* is worth counting, not because the
+    water in it is suspect.
+
+    `alcohol` is the odd one out twice over: it is the only kind whose unit is
+    not twelve ounces (see `DrinkLog.amount`), and the only one that does not
+    count toward the day's fluid at all.
+    """
+
+    water = "water"
+    electrolyte = "electrolyte"
+    gatorade = "gatorade"
+    coffee = "coffee"
+    alcohol = "alcohol"
+
+
 class MealSize(StrEnum):
     """Roughly calories, and deliberately not calories.
 

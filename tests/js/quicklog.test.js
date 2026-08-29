@@ -18,8 +18,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { STEPS as BATHROOM } from "../../web/app/panels/bathroom.js";
+import { STEPS as DRINKS } from "../../web/app/panels/drinks.js";
 import { STEPS as MEALS } from "../../web/app/panels/meals.js";
-import { applicableSteps } from "../../web/app/quicklog.js";
+import { applicableSteps, parseAmount } from "../../web/app/quicklog.js";
 
 const names = (steps) => steps.map((s) => s.name);
 
@@ -59,10 +60,68 @@ describe("the meal ladder", () => {
   });
 });
 
+describe("the drinks ladder", () => {
+  it("asks which, then how many, and nothing else", () => {
+    assert.deepEqual(names(applicableSteps(DRINKS, {})), ["kind", "amount"]);
+  });
+
+  it("answers the common case in two keystrokes", () => {
+    // `w` opens the card and answers the kind; the box arrives holding 1 with
+    // the text selected, so Enter logs one drink of water. That is the whole
+    // claim of this panel — the number is only typed when there is something
+    // to say — and a preset that was blank would cost a keystroke on every
+    // single entry to save one on the occasional 1.4.
+    const [, amount] = DRINKS;
+    assert.equal(parseAmount(amount.field.preset), 1);
+  });
+
+  it("keeps its first question on the keyboard", () => {
+    // The first step's keys are what open the card from the focus ring, and
+    // `panel.js` will not hand a panel any of these — so a kind bound to one
+    // would answer while the ladder was up and do nothing at a card sitting
+    // idle. `g` is the trap here: gatorade is `s` for exactly this reason.
+    const reserved = new Set(["h", "j", "k", "l", "i", "f", "g", "n"]);
+    for (const [key] of DRINKS[0].options) {
+      assert.ok(!reserved.has(key), `drinks ▸ kind binds ${key}, which never reaches the panel`);
+    }
+  });
+});
+
+describe("the amount box", () => {
+  it("takes the three spellings somebody actually types", () => {
+    assert.equal(parseAmount("1.5"), 1.5);
+    assert.equal(parseAmount(".5"), 0.5);
+    assert.equal(parseAmount("1 1/2"), 1.5);
+    assert.equal(parseAmount("3/4"), 0.75);
+    assert.equal(parseAmount("  2  "), 2);
+  });
+
+  it("rounds off a repeating fraction", () => {
+    // Otherwise a third of a bottle arrives as 0.3333333333333333 in a column
+    // that will be summed every day for a year.
+    assert.equal(parseAmount("1/3"), 0.33);
+  });
+
+  it("refuses everything that is not a quantity", () => {
+    for (const said of ["", "   ", "abc", "0", "-1", "1/0", null, undefined]) {
+      assert.equal(parseAmount(said), null, `parsed ${JSON.stringify(said)}`);
+    }
+  });
+
+  it("refuses a misplaced decimal point at the box that took it", () => {
+    // The table and the request model both carry this bound. Checked here as
+    // well so a typo is refused by the panel rather than by a toast a round
+    // trip later, with the ladder already torn down.
+    assert.equal(parseAmount("150"), null);
+    assert.equal(parseAmount("20"), 20);
+  });
+});
+
 describe("every step's keys", () => {
-  for (const [panel, steps] of [["bathroom", BATHROOM], ["meals", MEALS]]) {
+  for (const [panel, steps] of [["bathroom", BATHROOM], ["meals", MEALS], ["drinks", DRINKS]]) {
     it(`are unique within each ${panel} step`, () => {
       for (const step of steps) {
+        if (!step.options) continue;
         const keys = step.options.map(([key]) => key);
         assert.equal(
           new Set(keys).size,
@@ -77,10 +136,17 @@ describe("every step's keys", () => {
       // them would be unreachable in exactly the same silent way.
       const reserved = new Set(["-", "_", ",", "+", "=", "."]);
       for (const step of steps) {
-        for (const [key] of step.options) {
+        for (const [key] of step.options ?? []) {
           assert.ok(!reserved.has(key), `${panel} ▸ ${step.name} binds the hour key ${key}`);
         }
       }
+    });
+
+    it(`asks at most one typed question on ${panel}`, () => {
+      // The whole file assumes a step is answered with one key. A second text
+      // box on one panel would mean two Enters and a Tab between them, which
+      // is not a quick log any more — see the note at the top of quicklog.js.
+      assert.ok(steps.filter((step) => step.field).length <= 1);
     });
   }
 });

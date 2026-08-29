@@ -1,23 +1,41 @@
 // A panel you fill in with three keystrokes and then forget about.
 //
-// Two of the health tab's logs — what went in and what came out — are the same
-// shape: a handful of questions, each with three or four legal answers, asked
-// four to eight times a day. Nothing about that is hard, but the *cost* is the
-// whole design problem. A meal log that takes fifteen seconds and a mouse is a
-// meal log kept for nine days; the entries have to cost about as much as not
-// bothering, or the series ends up describing which weeks you had the patience
-// to log rather than which weeks you ate well.
+// Three of the health tab's logs — what went in, what you drank, and what came
+// out — are the same shape: a handful of questions, each with three or four
+// legal answers, asked four to sixteen times a day. Nothing about that is
+// hard, but the *cost* is the whole design problem. A meal log that takes
+// fifteen seconds and a mouse is a meal log kept for nine days; the entries
+// have to cost about as much as not bothering, or the series ends up
+// describing which weeks you had the patience to log rather than which weeks
+// you ate well.
 //
 // So the budget is one keystroke per question, and the last one commits.
 //
 //   m l 4        a large, fairly clean meal, now
 //   b s 2 m      a soft stool, medium, now
 //   b u 4 l      dark urine, large volume, now
+//   w ⏎          one drink of water, now
 //
-// Both panels are built from a list of steps, here, rather than being written
-// twice. They diverge in exactly one way that matters — bathroom branches on
-// its first answer, meals do not — and that is the `when` predicate below,
-// which is a smaller thing than either panel would have been on its own.
+// All three panels are built from a list of steps, here, rather than being
+// written three times. They diverge in exactly two ways — bathroom branches on
+// its first answer, and drinks asks for a number rather than for one of four
+// answers — and those are the `when` predicate and the `field` step below,
+// both of which are smaller things than any of the three panels would have
+// been on its own.
+//
+// --- the one question that is not a keystroke -------------------------------
+//
+// A `field` step is a text box: it is answered by typing and committed with
+// Enter, and it exists for exactly one situation — a quantity that is *printed
+// on the thing you are holding*. Sizes and volumes are buckets because nobody
+// knows how big their lunch was, and a five-point scale is an honest way to
+// say so. A bottle says 16.9 fl oz on the label, so bucketing it would be
+// throwing away accuracy that cost nothing, and a number is one keystroke over
+// budget rather than five.
+//
+// It is deliberately hard to reach for. Everything about the rest of this file
+// assumes a step is answered with one key, and a panel that asked two typed
+// questions would not be a quick log any more.
 //
 // --- the hour ---------------------------------------------------------------
 //
@@ -74,18 +92,61 @@ export const applicableSteps = (steps, draft) =>
   steps.filter((step) => !step.when || step.when(draft));
 
 /**
+ * What a `field` step's box will accept, as a number, or null.
+ *
+ * Three spellings, because all three are what somebody standing at a sink
+ * actually types: `1.5`, `.5`, and `1 1/2`. The fraction is not decoration —
+ * the unit here is a twelve-ounce drink and half of one is the commonest
+ * answer there is, and a box that took `1.5` but silently rejected `1/2` would
+ * be a box you learn to distrust rather than one you learn the grammar of.
+ *
+ * Null for anything else, including the empty string and `0`. The caller shows
+ * the box's own hint rather than a validation message: there is one rule, it
+ * is printed beside the box, and a red sentence explaining it a second time is
+ * a sentence that appears when you are already looking at the answer.
+ *
+ * `max` is the fat-finger guard the table and the request model both carry. It
+ * is checked here as well so a mistyped `15` — which is a legal number, just
+ * not a legal answer — is refused by the box that took it rather than by a
+ * toast a round trip later.
+ */
+export function parseAmount(text, max = 20) {
+  const said = String(text ?? "").trim();
+  if (!said) return null;
+  const mixed = said.match(/^(?:(\d+)\s+)?(\d+)\s*\/\s*(\d+)$/);
+  const value = mixed
+    ? Number(mixed[1] ?? 0) + Number(mixed[2]) / Number(mixed[3])
+    : Number(said);
+  if (!Number.isFinite(value) || value <= 0 || value > max) return null;
+  // Two places is past the precision anyone has about a bottle, and it is what
+  // stops a third of a drink arriving as 0.3333333333333333 in a table that
+  // will be summed for the rest of the year.
+  return Math.round(value * 100) / 100;
+}
+
+/**
  * Build one logging panel.
  *
  * `steps` is the ladder, in order: each is `{ name, options, when }` where
  * `options` is `[key, value, label]` triples and `when(draft)` decides whether
  * this step applies to the answers so far. A step whose `when` is false is
- * skipped on the way past, which is all the branching either panel needs.
+ * skipped on the way past, which is all the branching any of the panels needs.
+ *
+ * A step may instead carry `field: { unit, preset, max }`, and then it is a
+ * text box rather than a row of buttons: typed, committed with Enter, parsed
+ * by `parseAmount`. See the note at the top for when that is the right answer,
+ * which is rarely.
  *
  * The POST body is the answers plus the hour, verbatim — so a step's `name` is
- * the request field it fills, and adding a question to either panel is adding
- * a step here and a column there and nothing in between. `entries(state)` is
+ * the request field it fills, and adding a question to a panel is adding a
+ * step here and a column there and nothing in between. `entries(state)` is
  * today's rows out of the store and `describe(entry)` says one of them in a
  * few words.
+ *
+ * `help` is an optional `() => void` that opens a modal explaining what the
+ * answers mean. It draws a `?` beside the clock and nothing else — the rules
+ * belong behind it rather than on the card, which is the whole point: a panel
+ * whose job is to cost nothing cannot also be a page of definitions.
  */
 export function quickLog({
   id,
@@ -98,6 +159,7 @@ export function quickLog({
   entries,
   describe,
   empty,
+  help,
 }) {
   // --- state that outlives a render ---------------------------------------
   //
@@ -146,6 +208,11 @@ export function quickLog({
     draft = {};
     hour = new Date().getHours();
     cursor = at;
+    // Typed answers go back to their preset here rather than after the post,
+    // so an entry abandoned half-way does not leave its number lying in the
+    // box for the next one to inherit. Every entry starts from the same known
+    // default, which is what makes a bare Enter mean something you can predict.
+    handlers?.resetFields();
     handlers?.paint();
     take();
   }
@@ -161,9 +228,9 @@ export function quickLog({
     tab: "health",
     slot: "grid",
     span,
-    // Both quick logs ride in the rotation with the check-in and the session
-    // log. Their old argument for being last in the column — that you are
-    // never looking at them when you use them — is unchanged and is now
+    // All three quick logs ride in the rotation with the check-in and the
+    // session log. Their old argument for being last in the column — that you
+    // are never looking at them when you use them — is unchanged and is now
     // served better: they are reachable in two keystrokes from anywhere and
     // cost no height at all on the days nobody scrolls past them.
     host: "cyc",
@@ -185,7 +252,7 @@ export function quickLog({
     /**
      * A key pressed at the card, which opens it *and* answers with the same
      * press. This is the "one key to enter a cell" rule, and which keys count
-     * differs between the two logs because their first questions differ.
+     * differs between the logs because their first questions differ.
      *
      * On the meal log the first control is the hour, so `m`/`p`/`-`/`+` open
      * it standing on the hour with that shift already applied — `m` `m` is a
@@ -193,10 +260,17 @@ export function quickLog({
      * else opens it, which is what keeps `m` unambiguous: at the card it is
      * always minus, and by the time the size row asks, the hour is behind you.
      *
-     * On the in-and-out log the first control is the kind, so `s` and `u` open
-     * it already answered — that log has no global key of its own and is the
-     * one answered most often, so a hidden question in front of it would cost
+     * On the other two the first control is the kind, so `s` and `u` open the
+     * in-and-out log already answered and `w` `e` `s` `c` `a` do the same for
+     * drinks. Neither has a global key of its own, and both are answered more
+     * often than meals are, so a hidden question in front of either would cost
      * a keystroke on every entry to save one on a few.
+     *
+     * Whichever keys those are, `panel.js` will not offer this handler one it
+     * has reserved for going somewhere else — which is a constraint on the
+     * first step of a ladder and on nothing after it, since by then the
+     * capture is running and sees the keyboard first. `drinks.js` explains
+     * what that cost it.
      */
     onKey(e) {
       if (cursor !== null) return false;
@@ -206,7 +280,7 @@ export function quickLog({
         return Boolean(handlers?.onKey(e));
       }
       const first = applicableSteps(steps, {})[0];
-      if (!first?.options.some(([key]) => key === e.key)) return false;
+      if (!first?.options?.some(([key]) => key === e.key)) return false;
       start(0);
       return Boolean(handlers?.onKey(e));
     },
@@ -226,14 +300,73 @@ export function quickLog({
       const keyHint = el("span.faint");
       // Wrapped rather than left as two spans in a bare row: it is a step now,
       // and a step has to be able to light up.
-      const clockRow = el("div.scale-row.row.spread.gap", null, clock, keyHint);
+      //
+      // The `?` rides on the right of the hint rather than beside the card's
+      // title, because the title belongs to `panel.js` and this card's title
+      // is also its tab. One `?`, in the corner of the panel it explains,
+      // which is where the week grid keeps its own.
+      const clockRow = el("div.scale-row.row.spread.gap", null,
+        clock,
+        // `.inline` and not `.gap`: `.gap` is a vertical margin utility, and
+        // on a pair of things sitting inside a row it would push them off the
+        // clock's baseline for no reason anyone could see.
+        el("span.row.inline", null,
+          keyHint,
+          help
+            ? el("button.ghost", {
+                text: "?",
+                title: `what the answers mean — ${title}`,
+                "aria-label": `what the answers on the ${title} log mean`,
+                onclick: (e) => {
+                  e.currentTarget.blur();
+                  help();
+                },
+              })
+            : null,
+        ),
+      );
 
-      const rows = steps.map((step) =>
-        el("div.scale-row", null,
-          el("div.row.spread", null,
-            el("span.faint", { text: step.name }),
-            step.hint ? el("span.faint", { text: step.hint }) : null,
-          ),
+      /** The boxes of any `field` steps, by step name, so `paint` can reach
+       *  them without a query and `answer` can read them. */
+      const boxes = new Map();
+
+      const rows = steps.map((step) => {
+        const head = el("div.row.spread", null,
+          el("span.faint", { text: step.name }),
+          step.hint ? el("span.faint", { text: step.hint }) : null,
+        );
+        if (step.field) {
+          // `text` and not `number`: a number input brings spinners, a scroll
+          // wheel that changes the value, and a browser-owned idea of what
+          // counts as valid — none of which survive `1 1/2`. `inputMode`
+          // still gets the numeric keypad on a phone, which is the only part
+          // of `number` that was wanted.
+          const box = el("input.tiny.qlog-field", {
+            type: "text",
+            inputMode: "decimal",
+            autocomplete: "off",
+            spellcheck: false,
+            value: step.field.preset ?? "",
+            size: 4,
+            "aria-label": step.name,
+            onkeydown: (e) => {
+              if (e.key !== "Enter") return;
+              // The box owns Enter, and it has to: `keys.js` hands the whole
+              // keyboard to a focused text field, so nothing upstairs will
+              // ever see this one.
+              e.preventDefault();
+              commitField(step);
+            },
+          });
+          boxes.set(step.name, box);
+          return el("div.scale-row", null, head,
+            el("div.scale", null,
+              box,
+              el("span.faint", { text: step.field.unit ?? "" }),
+            ),
+          );
+        }
+        return el("div.scale-row", null, head,
           el("div.scale", null,
             ...step.options.map(([key, value, text]) =>
               el("button.tiny.keyed", {
@@ -252,8 +385,29 @@ export function quickLog({
               }),
             ),
           ),
-        ),
-      );
+        );
+      });
+
+      /**
+       * Read a `field` step's box and answer with it, or say why not.
+       *
+       * A refusal leaves the ladder exactly where it is, with the text still
+       * in the box and selected. That is the only behaviour that is not
+       * infuriating: the alternatives are dropping a half-finished entry
+       * because of a typo, or posting a number the server will reject after
+       * the card has already gone back to sleep.
+       */
+      function commitField(step) {
+        const box = boxes.get(step.name);
+        const value = parseAmount(box?.value, step.field.max);
+        if (value === null) {
+          message.textContent = `${step.name}: a number, ${step.field.unit ?? ""}`.trim();
+          box?.select();
+          return;
+        }
+        message.textContent = "";
+        answer(step, value);
+      }
 
       /** Answer one step, from a tap or from its key, and advance.
        *
@@ -306,6 +460,22 @@ export function quickLog({
           // you are declining, it is a question that was never asked.
           row.hidden = Boolean(step.when) && !list.includes(step);
           row.classList.toggle("on-row", step === current);
+          if (step.field) {
+            // Arriving at a typed step *is* focusing its box — there is no
+            // second gesture, and a highlighted row you then had to click into
+            // would be the one place in this panel where the keyboard stops
+            // working.
+            //
+            // Only on arrival, and only if it is not already ours: `paint`
+            // runs on every keystroke and every redraw, and a `select()` on
+            // each of those would fight the caret while you type.
+            const box = boxes.get(step.name);
+            if (step === current && box && document.activeElement !== box) {
+              box.focus();
+              box.select();
+            }
+            continue;
+          }
           // By index rather than by label: the buttons were built from
           // `options` in order and have not moved, so the two lists line up.
           const buttons = row.querySelector(".scale").children;
@@ -323,7 +493,13 @@ export function quickLog({
             ? (hourFirst ? "⏎ now · m p to shift" : "⏎ to log one")
             : cursor === HOUR
               ? "m earlier · p later · ⏎ accepts"
-              : "a key each · m p hour · esc";
+              : current?.field
+                // The hour keys are not offered here and must not be: the box
+                // has the keyboard, `.` is a decimal point and `m` is a letter
+                // you might be typing. Esc still leaves, because Esc is the
+                // one binding that outranks a text field.
+                ? "type it · ⏎ logs it · esc"
+                : "a key each · m p hour · esc";
       }
 
       function shift(by) {
@@ -343,7 +519,7 @@ export function quickLog({
         // own options are matched first and the hour keys only get what is
         // left over.
         const step = cursor === HOUR ? null : applicable()[cursor];
-        const hit = step?.options.find(([key]) => key === e.key);
+        const hit = step?.options?.find(([key]) => key === e.key);
         if (hit) {
           answer(step, hit[1]);
           return true;
@@ -376,10 +552,25 @@ export function quickLog({
       function onEnd() {
         cursor = null;
         draft = {};
+        // Out of the box as well as out of the ladder. Esc reaches here from
+        // inside a focused text field — that is the one gate in `keys.js` it
+        // is allowed through — and a cursor left blinking in a panel that has
+        // stopped listening is the state where every subsequent keystroke
+        // silently does nothing.
+        for (const box of boxes.values()) {
+          if (document.activeElement === box) box.blur();
+        }
         paint();
       }
 
-      handlers = { onKey, onEnd, paint };
+      function resetFields() {
+        for (const step of steps) {
+          if (step.field) boxes.get(step.name).value = step.field.preset ?? "";
+        }
+        message.textContent = "";
+      }
+
+      handlers = { onKey, onEnd, paint, resetFields };
 
       const today = entries(store.state);
       const logged = today.length

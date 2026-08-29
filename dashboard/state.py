@@ -678,10 +678,11 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
     hrv_base = health.scalar_baseline(hrv, today)
     rhr_base = health.scalar_baseline(rhr, today)
 
-    # Both logs windowed rather than read whole -- four to eight rows a day
-    # against the sessions table's one, and nothing here looks past a month.
+    # All three logs windowed rather than read whole -- four to sixteen rows a
+    # day against the sessions table's one, and nothing here looks past a month.
     visits = repo.bathroom_history(health.CHRONIC_DAYS, before=today)
     meals = repo.meal_history(health.CHRONIC_DAYS, before=today)
+    drinks = repo.drink_history(health.CHRONIC_DAYS, before=today)
 
     intake = health.intake_mean(meals, today)
     spend = health.expenditure_mean(calories, today)
@@ -693,6 +694,7 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
         sessions_today=repo.sessions_on(today),
         bathroom_today=repo.bathroom_on(today),
         meals_today=repo.meals_on(today),
+        drinks_today=repo.drinks_on(today),
         loads=sorted(loads.items()),
         derived=api.HealthDerived(
             acwr=health.acwr(sessions, today),
@@ -727,6 +729,9 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
                 health.implied_lb_per_week(balance) if balance is not None else None
             ),
             diet_quality=health.diet_quality(meals, today),
+            fluid_ml=health.fluid_mean(drinks, today),
+            caffeine_drinks=health.caffeine_mean(drinks, today),
+            alcohol_week=health.alcohol_week(drinks, today),
         ),
         plan=training_plan(cfg, today),
         garmin=garmin.status(cfg),

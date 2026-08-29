@@ -47,10 +47,10 @@ const pane = () => $(`#pane-${activeTab()}`);
  *
  * `offsetParent` alone was enough while everything off screen was off screen
  * by way of `display: none` — a hidden pane, a collapsed card. The logging
- * carousel stacks its four slides in one grid cell and hides three of them
+ * carousel stacks its five slides in one grid cell and hides four of them
  * with `visibility`, which keeps their layout (that is the point: the shell
  * stops resizing as it turns) and therefore keeps their `offsetParent`. Left
- * at the old test, `h`/`j`/`k`/`l` stopped on three cards nobody could see
+ * at the old test, `h`/`j`/`k`/`l` stopped on cards nobody could see
  * and `f` painted hints on their links.
  *
  * Checked on the node's own ancestors rather than the node alone, because
@@ -325,11 +325,16 @@ function activateItem() {
 // One letter per link also means a headline list is not capped at the six
 // letters that happened to be free.
 
-// Four letters short of the alphabet: c, l, m and p belong to the logging
+// Five letters short of the alphabet: c, d, l, m and p belong to the logging
 // carousel, which `f` also dispatches. Two meanings for one key inside one
 // layer is not a shortcut, and painting `c` on a headline while `c` also
 // jumped to the check-in is exactly that.
-const HINT_KEYS = "abdefghijknoqrstuvwxyz";
+//
+// This list and `carousel.TABS` have to agree, and nothing enforces it — a
+// letter added there and left here paints a hint that the dispatcher never
+// offers, so the link is simply unreachable and the panel looks fine. It is
+// checked in `tests/js/keys.test.js` for that reason.
+export const HINT_KEYS = "abefghijknoqrstuvwxyz";
 
 let hinted = [];
 /** The mode `f` was pressed from, so cancelling puts you back in it. */
@@ -346,7 +351,7 @@ export const inHints = () => mode === "hints";
  * Paint the hints and take the next key.
  *
  * It used to decline on a panel with no links, which was right when links
- * were the only thing this layer did. It now also carries the four letters
+ * were the only thing this layer did. It now also carries the five letters
  * that jump to a log — and those have to work from the maths tab, which has
  * no links on it at all — so an empty panel opens the layer with nothing
  * painted rather than swallowing the keypress.
@@ -371,7 +376,7 @@ export function hint(nudges = 0) {
   mode = "hints";
   const painted = hinted.length ? `a–${HINT_KEYS[hinted.length - 1]} · ` : "";
   const numbered = nudges > 0 ? ` · 1–${nudges}` : "";
-  $("#st-mode").textContent = `hints ${painted}c l m p${numbered}`;
+  $("#st-mode").textContent = `hints ${painted}c d l m p${numbered}`;
   return true;
 }
 

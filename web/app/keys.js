@@ -150,7 +150,7 @@ const BINDINGS = [
   {
     keys: ["f"],
     hint: "letter every link in this panel, then press its letter to open it "
-      + "· c l m p select one of the logging card's four tabs, which print "
+      + "· c d l m p select one of the logging card's five tabs, which print "
       + "their letter · a digit opens that numbered notification",
     match: (e) => e.key === "f",
     run: () => nav.hint(nudgeCount()),
@@ -360,7 +360,7 @@ export function initKeys() {
         openNudge(Number(key));
         return;
       }
-      // Four letters are the carousel rather than a link, and `nav` has been
+      // Five letters are the carousel rather than a link, and `nav` has been
       // told not to paint them, so the two can never mean the same key.
       // `focusPanel` rather than `quickStart`: `f c` is "show me the
       // check-in", and starting its ladder as well would be answering a

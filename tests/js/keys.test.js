@@ -15,7 +15,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { JUMPS } from "../../web/app/carousel.js";
 import { inEditor } from "../../web/app/keys.js";
+import { HINT_KEYS } from "../../web/app/nav.js";
 
 /** An element that knows which selectors it matches an ancestor for. */
 const node = (...matches) => ({
@@ -38,5 +40,36 @@ describe("inEditor", () => {
     assert.equal(inEditor({}), false);
     assert.equal(inEditor(null), false);
     assert.equal(inEditor(undefined), false);
+  });
+});
+
+// `f` dispatches two alphabets at once: a letter painted on a link, and a
+// letter that jumps to one of the logging card's tabs. They must not overlap,
+// and nothing at runtime notices when they do — keys.js checks `JUMPS` first,
+// so a letter in both lists paints a hint on a link that can never be reached
+// and the panel looks perfectly fine. This is the check that a tab added to
+// the carousel remembers to take its letter out of the hint alphabet.
+describe("the two alphabets under f", () => {
+  it("never spend the same letter twice", () => {
+    for (const key of Object.keys(JUMPS)) {
+      assert.ok(
+        !HINT_KEYS.includes(key),
+        `${key} jumps to ${JUMPS[key]} and is also painted on links`,
+      );
+    }
+  });
+
+  it("gives every carousel tab a single lower-case letter", () => {
+    // Upper case would need Shift, which `panelKey` and the hint layer both
+    // decline, and a digit is already "open that numbered notification".
+    for (const key of Object.keys(JUMPS)) {
+      assert.match(key, /^[a-z]$/, `${key} is not a letter f can dispatch`);
+    }
+  });
+
+  it("leaves enough letters to hint a headline list", () => {
+    // The news panels run to twenty links. A hint alphabet shorter than that
+    // silently truncates the list rather than failing.
+    assert.ok(HINT_KEYS.length >= 20, `only ${HINT_KEYS.length} hint letters left`);
   });
 });

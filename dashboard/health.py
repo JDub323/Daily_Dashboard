@@ -307,6 +307,35 @@ MIN_LOGGED_DAYS = 5
 """Out of the last seven, for the gut read. This is the "were you even
 logging" gate -- see the section note."""
 
+DRINK_ML = 355.0
+"""What one drink is worth in millilitres -- twelve US fluid ounces.
+
+The counterpart to `MEAL_KCAL` and meant to be read the same way: the drink
+log records a count, and this is the one line that turns counts into a volume.
+It applies to four of the five kinds. Alcohol is measured in standard drinks
+rather than in twelve-ounce servings -- a shot and a beer are both 1 -- so
+there is no volume to convert, which is why `HYDRATING` exists rather than
+this constant simply being multiplied through."""
+
+HYDRATING = frozenset({"water", "electrolyte", "gatorade", "coffee"})
+"""The kinds that count toward the day's fluid.
+
+Coffee is in, which surprises people. The diuretic effect of caffeine is real
+and it is smaller than the water the coffee arrives in; net, a mug hydrates.
+Alcohol is out for the opposite reason and also for a duller one: its unit is
+not a volume at all, so there is no honest number to add."""
+
+MIN_DRINK_DAYS = 5
+"""Out of seven, and the same gate the gut read uses. A week with two days of
+drinks logged has a mean, and the mean is a statement about which two days you
+remembered rather than about how much you drank."""
+
+# Deliberately absent: how much coffee is a lot, and how much alcohol is worth
+# mentioning. Both are editorial -- what is worth a sentence -- rather than
+# measurement, and those live in `panels/health.js` beside `SLEEP_FLOOR` and
+# `QUALITY_FLAG`, which are the same kind of number. This file computes; that
+# one decides what to say about it.
+
 LIQUID_DAYS_FLAG = 3
 LONG_GAP_DAYS = 3
 """Days without a stool row before the panel will mention it -- and only when
@@ -382,6 +411,79 @@ def hydration_mean(points: Sequence[tuple[dt.date, float]], today: dt.date) -> f
     start = today - dt.timedelta(days=ACUTE_DAYS - 1)
     values = [value for date, value in points if start <= date <= today]
     return statistics.fmean(values) if len(values) >= 3 else None
+
+
+# -- what you drank ----------------------------------------------------------
+#
+# The other half of the hydration reading, and the half that is yours to
+# change. `dark_urine_run` says what your body did with the water; this says
+# how much of it there was to work with. Neither is worth much alone -- a dark
+# week with nothing logged is a week you did not write down, and 3000ml a day
+# with the urine still reading dark is a salt problem rather than a water one.
+#
+# Every function here carries the same gate the gut read does, and for the
+# identical reason: the interesting readings are all statements about an
+# absence -- little water, no alcohol -- and an absence only means something if
+# you were writing things down.
+
+
+def drink_logged_days(logs: Sequence[d.DrinkLog], today: dt.date, days: int = ACUTE_DAYS) -> int:
+    """How many of the last `days` days have any drink row at all."""
+    return sum(1 for entries in _by_day(logs, today, days).values() if entries)
+
+
+def day_fluid_ml(logs: Sequence[d.DrinkLog]) -> float:
+    """One day's fluid, in ml. Alcohol contributes nothing -- see `HYDRATING`."""
+    return sum(entry.amount * DRINK_ML for entry in logs if str(entry.kind) in HYDRATING)
+
+
+def fluid_mean(logs: Sequence[d.DrinkLog], today: dt.date) -> float | None:
+    """Mean ml a day over the week, or None if the log was not being kept.
+
+    Days with rows but no *hydrating* rows count as zero rather than being
+    skipped, which is the opposite of what `daily_intake` does with meals. The
+    difference is what the silence means: a day with two beers logged and
+    nothing else is a day you drank no water, and it is precisely the day this
+    reading exists to catch. A day with nothing at all on it is a day you
+    forgot, and that one is dropped by the gate above rather than counted low.
+    """
+    if drink_logged_days(logs, today) < MIN_DRINK_DAYS:
+        return None
+    days = [
+        day_fluid_ml(entries) for entries in _by_day(logs, today, ACUTE_DAYS).values() if entries
+    ]
+    return statistics.fmean(days) if days else None
+
+
+def caffeine_mean(logs: Sequence[d.DrinkLog], today: dt.date) -> float | None:
+    """Mean drinks of coffee a day this week.
+
+    Over logged days rather than over all seven, so a weekend away does not
+    read as two days of abstinence you did not actually manage.
+    """
+    if drink_logged_days(logs, today) < MIN_DRINK_DAYS:
+        return None
+    days = [
+        sum(entry.amount for entry in entries if entry.kind == "coffee")
+        for entries in _by_day(logs, today, ACUTE_DAYS).values()
+        if entries
+    ]
+    return statistics.fmean(days) if days else None
+
+
+def alcohol_week(logs: Sequence[d.DrinkLog], today: dt.date) -> float | None:
+    """Standard drinks in the last seven days, or None if the log was sparse.
+
+    A total rather than a mean, because that is the unit the number is thought
+    about in -- nobody counts alcohol per day -- and because a mean of 1.1
+    hides the Saturday that is the whole of it.
+    """
+    if drink_logged_days(logs, today) < MIN_DRINK_DAYS:
+        return None
+    start = today - dt.timedelta(days=ACUTE_DAYS - 1)
+    return sum(
+        entry.amount for entry in logs if entry.kind == "alcohol" and start <= entry.date <= today
+    )
 
 
 # -- the gut -----------------------------------------------------------------

@@ -1,4 +1,4 @@
-// Four logging panels in one slot, showing one at a time.
+// Five logging panels in one slot, showing one at a time.
 //
 // The health tab had five cards under the hero — the check-in, the plan, the
 // session log, the meals and the in-and-out — and four of them were empty for
@@ -7,7 +7,7 @@
 // the plan, which is the thing you actually read, was below the fold behind
 // three boxes waiting to be filled in later.
 //
-// So the four take turns. The plan keeps the left half and stays still; the
+// So they take turns. The plan keeps the left half and stays still; the
 // right half is one card that changes every three seconds, in the shape of the
 // news strip in a Windows taskbar — which is the reference for a reason. That
 // strip works because it never asks anything of you: it cycles in the corner
@@ -40,7 +40,7 @@
 //
 // A tab bar, and the same one the sections use: `.tab`, with its key printed
 // on it and its active state lit. Four dots and a pair of chevrons answered
-// "which of the four is showing" only for somebody who already knew the
+// "which of them is showing" only for somebody who already knew the
 // order, and they made picking a particular one a matter of stepping past the
 // ones you did not want. `f` then the tab's letter goes straight there, from
 // anywhere in the app. The arrow keys still step to the neighbour once the
@@ -70,25 +70,27 @@ import { activeTab } from "./tabs.js";
  *
  * Three rather than five, which is what the tab bar buys. A dwell has to be
  * long enough to finish reading in only while the slide that turned away is
- * gone until the rotation brings it back; with the four named on a bar and one
- * keystroke away, missing one costs a keypress. Twelve seconds for the full
- * turn is also about the longest a thing can take to come round and still read
- * as cycling, rather than as a card that changes when you are not looking.
+ * gone until the rotation brings it back; with all five named on a bar and one
+ * keystroke away, missing one costs a keypress. Fifteen seconds for the full
+ * turn is about the longest a thing can take to come round and still read as
+ * cycling, rather than as a card that changes when you are not looking — and
+ * it is the number that decides how many slides this widget can hold. A sixth
+ * would be the one that broke it.
  */
 const DWELL_MS = 3000;
 
 /**
- * The four, and how to address one.
+ * The five, and how to address one.
  *
  * `key` is the letter `f` waits for, and it is printed on the tab — the same
  * argument as the digit on a section tab, that a shortcut you have to look up
  * is one you never learn.
  *
- * `c`heck-in, `l`og a session, `m`eals, `p`lumbing — the last of which is the
- * only one that is not the first letter of its title, because `i` is taken by
- * insert mode and "in and out" has no other free letter. `m` agrees with the
- * global meal binding on purpose: the same letter means the same panel from
- * either direction.
+ * `c`heck-in, `l`og a session, `m`eals, `d`rinks, `p`lumbing — the last of
+ * which is the only one that is not the first letter of its title, because `i`
+ * is taken by insert mode and "in and out" has no other free letter. `m`
+ * agrees with the global meal binding on purpose: the same letter means the
+ * same panel from either direction.
  *
  * Letters and not digits, though these are painted as the same control as the
  * section tabs and those are digits. Under `f` a digit already means "open
@@ -96,12 +98,12 @@ const DWELL_MS = 3000;
  * carry an alphabet and a numbering at once is that the two never overlap.
  *
  * `label` is not the panel's own title. A title is a line at the top of a card
- * — "morning check-in", "log a session" — and four of those in a row is a
+ * — "morning check-in", "log a session" — and five of those in a row is a
  * stack of headlines rather than a tab bar.
  *
  * `task` names the entry in the day's list (chips.js) that speaks for this
- * tab, and it is what the dot beside the label reports. Three of the four have
- * one and the fourth deliberately does not:
+ * tab, and it is what the dot beside the label reports. Three of the five have
+ * one and two of them deliberately do not:
  *
  *   check-in  its own required task — weight and the questionnaire both.
  *   session   `training`, which is the plan's prescribed blocks all logged.
@@ -111,9 +113,16 @@ const DWELL_MS = 3000;
  *             On a rest day the task does not exist and the dot is absent,
  *             which is the correct thing for it to say.
  *   meals     three logged.
+ *   drinks    nothing, and this is the one where the call was close. There is
+ *             a defensible number of drinks of water a day and it would have
+ *             been easy to invent one — but a hydration target you hit by
+ *             logging rather than by drinking is a target that teaches you to
+ *             log, and the panel already has a measurement of whether it
+ *             worked: `dark_urine_days`, two tabs over, which is your body's
+ *             answer rather than your own.
  *   in & out  nothing. It is a report with no target — there is no number of
  *             times a day you are supposed to have gone — and inventing an
- *             obligation for it so that all four tabs could carry a dot would
+ *             obligation for it so that every tab could carry a dot would
  *             be the tail wagging the dog. An absent dot means this card asks
  *             nothing of today, which is a true and useful third state.
  */
@@ -121,6 +130,7 @@ const TABS = [
   { key: "c", id: "checkin", label: "check-in", task: "checkin" },
   { key: "l", id: "session", label: "session", task: "training" },
   { key: "m", id: "meals", label: "meals", task: "meals" },
+  { key: "d", id: "drinks", label: "drinks" },
   { key: "p", id: "bathroom", label: "in & out" },
 ];
 
@@ -151,7 +161,7 @@ function held() {
   // in the background. Turning anyway is not harmful so much as pointless —
   // and it is actively wrong for the one thing the rotation is for, which is
   // being seen out of the corner of an eye. Coming back to health should show
-  // the card the rotation left off on, not the fourth one it turned to while
+  // the card the rotation left off on, not the last one it turned to while
   // the maths tab was up.
   //
   // It also stops the dwell from being a lie. Browsers throttle timers in a
@@ -176,7 +186,7 @@ function held() {
  * Show slide `index` and hide the rest.
  *
  * `visibility` rather than the `hidden` attribute, and the difference is the
- * whole reason this card no longer moves. The four slides are stacked in one
+ * whole reason this card no longer moves. The slides are stacked in one
  * grid cell (see `.cyc-track`), so the shell is always as tall as the tallest
  * of them — and a hidden-by-`display:none` slide contributes no height, which
  * meant the card was 505px on the check-in and 300px on the meal log and
@@ -302,7 +312,7 @@ export function slot(gridNode) {
  * Rotation order and tab order are both the order of these calls — which is
  * the order the panels are listed in main.js — so the bar reads left to right
  * in the order the card turns, and there is no second table anywhere saying
- * which of the four comes first.
+ * which of them comes first.
  *
  * `TABS` supplies the short label and the letter; the panel's own `title` is
  * the fallback and the tooltip, so a fifth hosted panel added without an entry
@@ -331,7 +341,7 @@ export function addSlide(id, card, title) {
 }
 
 /**
- * Say which of the four today still wants, from the day's task list.
+ * Say which of them today still wants, from the day's task list.
  *
  * Called by `renderChips`, which already runs on every store change and is
  * already where `markDone` turns a finished panel gold — so this is the same
@@ -342,7 +352,7 @@ export function addSlide(id, card, title) {
  * The point of it is that the card shows one slide at a time. Everything else
  * on the page can be read by looking at it; this cell could only be read by
  * waiting for it, and "have I done my check-in" is not a question worth twelve
- * seconds. The dot answers all four at once, from any one of them.
+ * seconds. The dot answers all five at once, from any one of them.
  *
  * Gold and filled is done, hollow is owed, absent is not asked — which is the
  * app's own gold-means-finished rule, and the reason the tabs themselves are
@@ -380,7 +390,7 @@ export function startCarousel() {
  * widget you are not looking at is a key that appears to do nothing.
  *
  * Stepping to the neighbour, and nothing more. Picking a particular one of the
- * four is the tab bar's job and `f`'s: arrowing past two cards to reach the
+ * one is the tab bar's job and `f`'s: arrowing past two cards to reach the
  * third was never a way to choose a card, it was a way to be shown the two you
  * had not asked for.
  */
