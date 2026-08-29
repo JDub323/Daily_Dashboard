@@ -310,6 +310,46 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   box-shadow: inset 0 -1px 0 rgba(223,230,242,.14), inset 0 2px 6px rgba(0,0,0,.55);
   transform: translateY(1px);
 }
+/* The typed amount's button. Secondary to the six caps above it — the box is
+   the fourth case now, not the first — so it is sized to match the field
+   beside it and not to compete with them. */
+.go.small { padding: 0 var(--s4); font-size: 9px; color: var(--dim);
+            border-color: rgba(92,207,230,.24);
+            background: linear-gradient(180deg, rgba(223,230,242,.07), rgba(0,0,0,.18)); }
+
+/* The commit. Full width at the foot of the panel, because it is the one
+   control that writes and it should not be mistaken for another answer. */
+.go.commit {
+  display: block;
+  width: 100%;
+  margin-top: var(--s5);
+  min-height: 52px;
+  font-size: 11px;
+  letter-spacing: .2em;
+}
+/* Not yet, or nothing to do. Still occupies its place — a button that appears
+   when you finish is one you have to notice; one that has been greyed the
+   whole time you were answering is a progress line you never have to read. */
+.go.commit:disabled,
+.go.commit.quiet {
+  color: var(--faint);
+  border-color: var(--border);
+  background: linear-gradient(180deg, rgba(223,230,242,.03), rgba(0,0,0,.18));
+  box-shadow: none;
+  cursor: default;
+}
+.go.commit:disabled { transform: none; }
+
+/* --- the amount caps ---
+   A number and the thing it stands for. The unit is a twelve-ounce drink,
+   which is right to store and hopeless to be asked for — nobody knows their
+   bottle in twelfths of a gallon — so the caption carries the question and the
+   number carries the answer. See AMOUNTS in app.js for the six and why. */
+.opt.amt { display: flex; flex-direction: column; align-items: center; justify-content: center;
+           gap: 1px; padding: var(--s1) 2px; }
+.amt-n { font-size: var(--t-lede); font-weight: 700; letter-spacing: .02em; line-height: 1.1; }
+.amt-for { font-size: 8px; letter-spacing: .12em; color: var(--faint); }
+.opt.amt.on .amt-for { color: var(--gold-text); opacity: .85; }
 
 /* --- what is logged today -------------------------------------------------- */
 

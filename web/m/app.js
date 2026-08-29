@@ -215,12 +215,21 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
     render() {
       const asked = applicableSteps(steps, answers);
 
+      const ready = asked.every((step) => answers[step.name] != null);
+
       const commit = async () => {
+        if (!ready) return;
         const body = { hour, ...answers };
         answers = {};
         await send(path, body, label);
       };
 
+      // Answering only ever changes the selection. It used to *post* the moment
+      // the last question was filled, which made the fastest possible entry —
+      // two taps — also the easiest thing to do by accident: a stray thumb on
+      // `quality 3` while scrolling wrote a meal, and the only way to find out
+      // was to notice the row appear. A wrong tap is now free, and the write is
+      // a deliberate second thing.
       const answer = (name, value) => {
         answers = { ...answers, [name]: value };
         // A branch can strip a question that was already answered — picking
@@ -228,8 +237,7 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
         // along into the body, because the table will refuse the row.
         const live = new Set(applicableSteps(steps, answers).map((s) => s.name));
         for (const key of Object.keys(answers)) if (!live.has(key)) delete answers[key];
-        if (applicableSteps(steps, answers).every((s) => answers[s.name] != null)) commit();
-        else draw();
+        draw();
       };
 
       return [
@@ -237,6 +245,15 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
           step.field
             ? amountRow(step, answers, answer)
             : stepRow(step, answers, answer)),
+        // Disabled rather than hidden while the entry is incomplete: a button
+        // that appears when you finish is a button you have to notice, and one
+        // that is greyed the whole time you are answering is a progress
+        // indicator you never have to read.
+        el("button.go.commit", {
+          text: ready ? `log ${label}` : `pick ${asked.filter((s) => answers[s.name] == null).length} more`,
+          disabled: !ready,
+          onclick: commit,
+        }),
         entryList(rows(), describe, empty, { remove }),
       ];
     },
@@ -253,15 +270,58 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
  * opening a keyboard to type it is the tax this row would otherwise charge
  * every time.
  */
+/**
+ * How much, as six buttons and a container each one stands for.
+ *
+ * The unit is a twelve-ounce drink, which is the right unit to *store* and a
+ * poor one to be asked for: nobody knows their bottle in twelfths of a gallon,
+ * so every entry started with arithmetic and ended with a keyboard covering
+ * half the screen. On a log whose entire claim is that it costs nothing, that
+ * was the one row that cost something.
+ *
+ * So the numbers carry the thing they measure. The caption is what makes this
+ * work — the answer to "how much did I drink" is *a bottle*, and the number is
+ * the translation, which is the machine's problem rather than yours.
+ *
+ * The six are container sizes rounded to something a thumb can aim at:
+ *
+ *   0.5  half   a half glass, a short pour
+ *   1    can    12oz — a can, a mug, a pint glass of water; also one standard
+ *               drink, so it is what a beer, a shot and a glass of wine all are
+ *   1.5  bottle 16.9oz is 1.4 and a US pint is 1.33 — both round here
+ *   2    24oz   a big cup, two cans
+ *   3    flask  a 32oz Nalgene is 2.67, a 40oz flask is 3.33
+ *   4    jug    48oz, or the half-litres you stop counting individually
+ *
+ * The precision lost by rounding a Nalgene from 2.67 to 3 is precision this
+ * log never had: it exists to show the shape of a day's hydration, and being
+ * a third of a drink out on one entry does not move that. Being unable to
+ * face logging it does.
+ *
+ * The box stays, underneath and quiet, because `parseAmount` reads `1 1/2` and
+ * `.5` and there will be a bottle these six do not cover. It is the fourth
+ * case now rather than the first.
+ */
+const AMOUNTS = [
+  [0.5, "half"],
+  [1, "can"],
+  [1.5, "bottle"],
+  [2, "24oz"],
+  [3, "flask"],
+  [4, "jug"],
+];
+
 function amountRow(step, answers, answer) {
   const { unit, preset, max } = step.field;
+  const chosen = answers[step.name];
+
   const box = el("input.amount", {
     type: "text",
     inputmode: "decimal",
-    value: answers[step.name] ?? preset,
+    value: chosen ?? preset,
     "aria-label": unit,
   });
-  const commit = () => {
+  const typed = () => {
     const value = parseAmount(box.value, max);
     if (value == null) return void box.classList.add("bad");
     answer(step.name, value);
@@ -271,18 +331,24 @@ function amountRow(step, answers, answer) {
   return el("div.q", null,
     el("div.q-head", null,
       el("span.q-name", { text: step.name }),
-      // The three spellings `parseAmount` actually takes, in its words rather
-      // than in a paraphrase of them — a hint that promises a format the box
-      // then refuses is worse than no hint.
-      el("span.q-hint", { text: `${unit}, 12oz each · 1.5 · .5 · 1 1/2` }),
+      el("span.q-hint", { text: `${unit} · 12oz each` }),
     ),
     el("div.opts", null,
-      // The three that cover a can, a mug and a bottle. Each is one tap and
-      // commits, so the box below is for the fourth case rather than the first.
-      ...["0.5", "1", "1.5"].map((n) =>
-        el("button.opt", { text: n, onclick: () => answer(step.name, Number(n)) })),
+      ...AMOUNTS.map(([n, what]) =>
+        el("button.opt.amt", {
+          class: chosen === n ? "on" : "",
+          "aria-pressed": chosen === n,
+          "aria-label": `${n} ${unit} — ${what}`,
+          onclick: () => answer(step.name, n),
+        },
+          el("span.amt-n", { text: String(n) }),
+          el("span.amt-for", { text: what }),
+        )),
     ),
-    el("div.row", null, box, el("button.go", { text: "log", onclick: commit })),
+    // The escape hatch, and it looks like one. `.5`, `1 1/2` and `2.25` all
+    // read; the hint says so only here, where it is the answer to a question
+    // you are already asking.
+    el("div.row", null, box, el("button.go.small", { text: "set", onclick: typed })),
   );
 }
 
@@ -381,19 +447,37 @@ function checkinLog() {
         return stored ? toShown(key, stored) : null;
       };
 
+      // Tapping an answer only ever records it locally. It used to post as soon
+      // as the fifth was filled, which meant the morning was written by a tap
+      // that looked exactly like the four before it — no confirmation, nothing
+      // on screen that said the row had gone, and no way to change your mind
+      // about question three without writing again.
       const answer = (key, shown) => {
-        const next = { ...held, [key]: toStored(key, shown) };
-        setDraft(next);
-        const complete = CHECKIN_ITEMS.every(([k]) => next[k] ?? saved?.[k]);
-        if (complete) {
-          const body = {};
-          for (const [k] of CHECKIN_ITEMS) body[k] = next[k] ?? saved[k];
-          setDraft({});
-          send("/api/readiness", body, "check-in");
-        } else {
-          draw();
-        }
+        setDraft({ ...held, [key]: toStored(key, shown) });
+        draw();
       };
+
+      const answered = CHECKIN_ITEMS.filter(([k]) => (held[k] ?? saved?.[k]) != null);
+      const ready = answered.length === CHECKIN_ITEMS.length;
+      // Whether anything on screen differs from the row in the database. This
+      // is the question the panel was silent about: with a morning already
+      // logged, every answer is *shown* as selected whether it came from the
+      // table or from a tap ten seconds ago, and the two are not the same thing.
+      const dirty = CHECKIN_ITEMS.some(([k]) => held[k] != null && held[k] !== saved?.[k]);
+
+      const save = () => {
+        if (!ready || !dirty) return;
+        const body = {};
+        for (const [k] of CHECKIN_ITEMS) body[k] = held[k] ?? saved[k];
+        setDraft({});
+        send("/api/readiness", body, "check-in");
+      };
+
+      const status = !ready
+        ? `${CHECKIN_ITEMS.length - answered.length} still to answer`
+        : dirty
+          ? "not saved yet"
+          : "saved";
 
       return [
         measure("weight", "lb", "weight"),
@@ -415,6 +499,16 @@ function checkinLog() {
                 })),
             ),
           );
+        }),
+        // The whole row goes at once — the request model wants all five,
+        // because a `score` summed over three of them is a number that means
+        // nothing. So this is one button rather than five, and it says which of
+        // the three states the morning is in.
+        el("button.go.commit", {
+          class: !ready || !dirty ? "quiet" : "",
+          text: ready ? (dirty ? "save check-in" : "saved") : status,
+          disabled: !ready || !dirty,
+          onclick: save,
         }),
       ];
     },
