@@ -127,10 +127,68 @@ class Deck(StrEnum):
     commons, base-rate neglect. Rated into the investigate track."""
 
 
+class DayMode(StrEnum):
+    """What a given weekday asks of you, from `[math.week]` in the config.
+
+    The week used to have one shape -- a calibrated problem, every day, with
+    Saturday swapped for a famous one by a constant in `content.py`. Five days
+    of that converged on a single tier: the ladder is centred on the rating and
+    the nearest rung is served, which is a thermostat, and a thermostat's whole
+    job is to remove variance. Every batch generated between 2026-08-20 and
+    2026-08-28 offered the same three tiers.
+
+    So the week is now the unit, and its shape is config rather than code.
+    """
+
+    compute = "compute"
+    """A calibrated ladder with a numeric answer -- the old behaviour, kept for
+    Monday and Tuesday. Still a thermostat, and that is fine at two days a week
+    rather than five."""
+
+    proof = "proof"
+    """One proof problem from the proof textbook, on the easier side: enough
+    ingenuity to need playing with, not enough to eat the evening."""
+
+    proof_long = "proof-long"
+    """The two-day problem. Day one has no hints at all; day two has two, the
+    second of which more or less gives it away. Solving it on day one is worth
+    a large multiple of an ordinary result -- see `scoring.EARLY_SOLVE_BONUS`."""
+
+    proof_showcase = "proof-showcase"
+    """A famous proof, chosen on elegance and not on the rating."""
+
+    reading = "reading"
+    """No problem at all. A reading plan in half-hour segments, of which you
+    are expected to do one or two -- unrated, and ticked by doing any of it."""
+
+    @property
+    def is_proof(self) -> bool:
+        return self in (DayMode.proof, DayMode.proof_long, DayMode.proof_showcase)
+
+
 class MathStatus(StrEnum):
     open = "open"
     solved = "solved"
     failed = "failed"
+
+    partial = "partial"
+    """A proof with the idea in it and a gap somewhere. Scores 0.5 before
+    hints.
+
+    Only reachable on a proof day, and it exists because the binary the compute
+    days use is a bad description of a proof: "did you get 137" has an answer,
+    "did you prove it" mostly has three. The rubric the batch writes from the
+    book's own solution is what keeps this from being a mood -- the checkpoints
+    are on screen when the button is pressed."""
+
+    carried = "carried"
+    """Day one of a two-day problem, rolled to tomorrow. Unscored and unrated:
+    the result lands once, on day two.
+
+    Reached by pressing "keep going tomorrow", and also by doing nothing at all
+    -- `reconcile_math_lapses` carries an unmarked day-one attempt rather than
+    lapsing it, because forgetting to press a button should not cost a full
+    result on a problem you were meant to still be holding."""
 
     lapsed = "lapsed"
     """Drawn but never marked, and the day is over. Scored as a failure --
@@ -147,6 +205,14 @@ class MathOutcome(StrEnum):
 
     solved = "solved"
     failed = "failed"
+
+    partial = "partial"
+    """Proof days only; see `MathStatus.partial`. Rejected on a compute day at
+    the API boundary rather than silently scored, because a numeric answer that
+    is half right is just wrong."""
+
+    carried = "carried"
+    """Day one of a two-day problem, ending the day without a result."""
 
 
 class ChessOutcome(StrEnum):

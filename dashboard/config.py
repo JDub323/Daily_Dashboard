@@ -23,7 +23,7 @@ from typing import ClassVar
 
 from pydantic import Field, field_validator, model_validator
 
-from .models.common import Base, Rating, Url
+from .models.common import Base, DayMode, Rating, Url
 from .models.domain import Link
 from .todo import RESERVED as _RESERVED_ALIASES
 
@@ -100,6 +100,13 @@ class PathSettings(Base):
     absence is the normal case -- a fresh clone has none and the panel says so.
 
     Validated below as *not* living under `static`, which would publish it."""
+
+    proofbook: str = "proofbook.json"
+    """The proof textbook's contents, parsed once by `dashboard.proofbook`.
+
+    Tracked in git; the PDF it describes is not. Optional in practice -- a
+    missing index means the proof days cannot name a page range, which the
+    batch reports at 3am rather than the dashboard failing at 8."""
 
 
 class ModelPricing(Base):
@@ -183,9 +190,69 @@ def week_index(date: dt.date) -> int:
     return date.toordinal() // 7
 
 
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+"""`date.weekday()` order, and the keys `[math.week]` must use."""
+
+
+class ProofSettings(Base):
+    """Where the proof days get their problems, and which book that is."""
+
+    enabled: bool = True
+
+    pdf: str = "textbooks/Putnam_and_beyond.pdf"
+    """Read by the overnight generator, never by the server. Relative to the
+    project root, so one path works from both Windows and WSL."""
+
+    tiers: dict[str, list[str]] = Field(default_factory=dict)
+    """[math.week] mode -> the tiers that mode may ask for.
+
+    A separate table from `[math.anchors]` and pointing into it: Wednesday's
+    problem and Thursday's come from the same book and the same section, and
+    the only thing that distinguishes them is how hard the rung is allowed to
+    be. Validated against the anchors below, since a tier named here that does
+    not exist there is a mode that can never be generated for.
+    """
+
+    sections: dict[str, str] = Field(default_factory=dict)
+    """rotation topic -> the section of the book it is drawn from, as a number
+    like `2.2.4`.
+
+    Hand-written and hand-checked against the contents page, which is exactly
+    what makes it worth having: the automatic fallback in `proofbook` matched
+    "polynomial roots, Vieta, and symmetric functions" to *Equations with
+    Functions as Unknowns*, a real section about something else. A topic absent
+    from this table falls back to that matcher and then to its area's chapter,
+    so the table may be partial and a new rotation entry is not an error.
+    """
+
+
+class ReadingSettings(Base):
+    """Sunday: read, and do many easy problems. No rating, no timer."""
+
+    enabled: bool = True
+
+    segments: int = Field(default=3, ge=1, le=6)
+    segment_minutes: int = Field(default=30, ge=5, le=120)
+    """Three half-hours generated, one or two expected.
+
+    The over-generation is the point and it is not waste: how much of a week's
+    topic is already familiar varies enormously by topic, so the plan offers
+    more than the day asks for and you take the segments that are new. Which
+    ones you skipped, and why, go back into the next generation -- otherwise
+    every month opens with the same introduction.
+    """
+
+
 class MathSettings(Base):
     topic_of_week: str = Field(min_length=1)
     """Used only when `rotation` is empty."""
+
+    week: dict[str, DayMode] = Field(default_factory=dict)
+    """weekday name -> what that day asks for. Empty means every day is
+    `compute`, which is what this was before the week had a shape."""
+
+    proof: ProofSettings = Field(default_factory=ProofSettings)
+    reading: ReadingSettings = Field(default_factory=ReadingSettings)
 
     rotation: list[str] = Field(default_factory=list)
     rotation_start: dt.date | None = None
@@ -241,9 +308,93 @@ class MathSettings(Base):
             raise ValueError("[math.par_minutes] values must be positive")
         return self
 
-    def par_for(self, tier: str) -> int | None:
-        """The reference time for a tier, or None if it has no configured one."""
+    def par_for(self, tier: str, mode: DayMode | None = None) -> int | None:
+        """The reference time for a tier, or None if it has no configured one.
+
+        None on every proof day, whatever the tier's par says. A reference time
+        is the thing the speed bonus is measured against, and there is no
+        honest reference time for a proof: the two-day problem is *designed* to
+        be sat with, and pricing it by the clock would pay for hurrying through
+        the one day of the week that exists for not hurrying.
+
+        Enforced here rather than by leaving the proof tiers out of
+        `[math.par_minutes]`, because those same tiers are reachable on a
+        compute day -- an `olympiad-easy` rung on a Tuesday is timed, and the
+        same tier read off a Thursday is not. The mode is what decides, so the
+        mode has to be the argument.
+        """
+        if mode is not None and mode.is_proof:
+            return None
         return self.par_minutes.get(tier)
+
+    @model_validator(mode="after")
+    def _week_names_real_days(self) -> MathSettings:
+        if not self.week:
+            return self
+        unknown = sorted(set(self.week) - set(WEEKDAYS))
+        if unknown:
+            raise ValueError(f"[math.week] names {unknown}; expected {list(WEEKDAYS)}")
+        missing = [d for d in WEEKDAYS if d not in self.week]
+        if missing:
+            raise ValueError(f"[math.week] is missing {missing}")
+        return self
+
+    @model_validator(mode="after")
+    def _proof_tiers_are_real_tiers(self) -> MathSettings:
+        """Every tier a mode may ask for has to have an anchor to rate against.
+
+        Checked in both directions here, unlike `[math.par_minutes]`: a mode
+        with no tiers at all cannot be generated for, and a mode that is in the
+        week but not in this table would fail at 3am with nothing to say.
+        """
+        for mode, tiers in self.proof.tiers.items():
+            if mode not in set(DayMode):
+                raise ValueError(f"[math.proof.tiers] names mode {mode!r}, which is not a day mode")
+            unknown = [t for t in tiers if t not in self.anchors]
+            if unknown:
+                raise ValueError(
+                    f"[math.proof.tiers].{mode} names {unknown} — not tier(s) in "
+                    f"[math.anchors] ({sorted(self.anchors)})"
+                )
+        wanted = {m for m in self.week.values() if m.is_proof}
+        absent = sorted(m.value for m in wanted if not self.proof.tiers.get(m.value))
+        if self.proof.enabled and absent:
+            raise ValueError(
+                f"[math.proof.tiers] has no tiers for {absent}, which [math.week] uses"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _proof_sections_are_real_topics(self) -> MathSettings:
+        """A section override for a topic that is not in the rotation is dead
+        config -- almost always a typo in a topic string, which is long enough
+        to typo and never loud enough to notice."""
+        if not self.rotation:
+            return self
+        unknown = [t for t in self.proof.sections if t not in self.rotation]
+        if unknown:
+            raise ValueError(
+                f"[math.proof.sections] names {len(unknown)} topic(s) not in the rotation: "
+                f"{unknown[0]!r} and others"
+                if len(unknown) > 1
+                else f"[math.proof.sections] names {unknown[0]!r}, which is not in the rotation"
+            )
+        return self
+
+    def mode_for(self, date: dt.date) -> DayMode:
+        """What this day asks for. `compute` when the week has no shape."""
+        if not self.week:
+            return DayMode.compute
+        return self.week[WEEKDAYS[date.weekday()]]
+
+    def section_for(self, date: dt.date) -> str | None:
+        """The proof-textbook section this week is pinned to, if one is."""
+        return self.proof.sections.get(self.topic_for(date))
+
+    def tiers_for(self, mode: DayMode) -> list[str]:
+        """The tiers a mode may ask for, easiest first."""
+        tiers = self.proof.tiers.get(mode.value, [])
+        return sorted(tiers, key=lambda t: self.anchors[t])
 
     @model_validator(mode="after")
     def _rotation_is_anchored_to_a_sunday(self) -> MathSettings:
@@ -574,7 +725,6 @@ class InvestigateSettings(Base):
     moved -- a bulk re-file of a directory of your own prose, decided by a
     model, is not something this should do without being asked each time.
     """
-
 
 
 class MarketSettings(Base):

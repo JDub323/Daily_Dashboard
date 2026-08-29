@@ -230,6 +230,98 @@ def math_score(outcome: MathOutcome, hints_revealed: int) -> float:
     return round(1.0 - HINT_PENALTY * hints_revealed, 4)
 
 
+PROOF_HINT_COSTS = (0.30, 0.60)
+"""What each of a proof problem's two hints costs, cumulatively.
+
+Two hints rather than three, and unequal rather than flat, because they are
+different objects. The first is a nudge -- the observation you would have made
+in another twenty minutes -- and costs what any hint costs. The second is
+written to unlock the argument, so taking it means the mathematics was handed
+to you and the writing-up is what is left.
+
+The ladder is therefore 1.0 / 0.70 / 0.10, landing a fully-hinted proof exactly
+where a fully-hinted compute problem lands. That is the intended symmetry: 0.1
+is "you did the writing", and it is worth more than nothing and not much more.
+"""
+
+PARTIAL_SCORE = 0.5
+"""A proof with the idea in it and a gap in it, before hints.
+
+Exactly half, matching `theorem_score`'s two halves and `chess_score`'s middle
+button -- the same self-report shape used everywhere a result is genuinely not
+binary. What keeps it from being a mood is the rubric: the batch writes three
+or four checkpoints from the book's own printed solution, and they are on
+screen when the button is pressed.
+"""
+
+
+def proof_score(outcome: MathOutcome, hints_revealed: int) -> float:
+    """Score for a proof attempt: the three-way self-report, minus hints.
+
+    Clamped at zero, unlike `math_score`, and the difference is not an
+    inconsistency. The compute ladder runs its penalty to 0.1 from a base of
+    1.0 and can never go under; here the base can be 0.5, and 0.5 minus a
+    0.9 giveaway is negative -- a number the `score` column's CHECK forbids and
+    which would mean "worse than not doing it", which is not what a partial
+    proof with both hints is.
+    """
+    outcome = MathOutcome(outcome)
+    if outcome is MathOutcome.failed:
+        return 0.0
+    if not 0 <= hints_revealed <= len(PROOF_HINT_COSTS):
+        raise ValueError(f"hints_revealed out of range for a proof: {hints_revealed}")
+    base = PARTIAL_SCORE if outcome is MathOutcome.partial else 1.0
+    return round(max(0.0, base - sum(PROOF_HINT_COSTS[:hints_revealed])), 4)
+
+
+EARLY_SOLVE_BONUS = 3.0
+"""K multiplier for solving a two-day problem on day one, unhinted.
+
+The one place in this app where a result is worth a multiple of itself for
+*when* it happened rather than for what it was. Thursday's problem is pitched
+at a tier you are not expected to beat and comes with no hints at all, so
+finishing it inside the first day is a genuinely rare event, and rating it like
+an ordinary solve would say it was not.
+
+Chosen to land near +60. Against a `putnam-early` anchor 250 above the proofs
+rating the expected score is 0.19, so a mature K of 24 gives 24 x 3 x 0.81 =
++58; early on the track `K_BONUS_CEILING` caps it and it is +78. That is the
+whole justification for the number, and it is a number rather than a fixed
+delta because `rating_after - rating_before == k * (score - expected)` has to
+keep holding for every row in the log.
+
+Worth being honest about the asymmetry it creates. Elo is symmetric in K but
+not in outcome: failing that same problem over two days costs about -5, because
+you were expected to lose. So the two-day problem is cheap to fail and
+lucrative to solve -- deliberately, since the point is to make hard problems
+worth attempting, but it does mean the proofs rating drifts up over time and is
+not a skill estimate.
+"""
+
+K_BONUS_CEILING = K_SCALE
+"""The highest K the early-solve bonus may produce.
+
+The bonus scales K, and K is *already* at its largest when a track is new, so
+an uncapped 3.0 would make the first Thursday on the proofs track worth +230 --
+"high variance early" turned into a number nobody could read afterwards.
+
+`K_SCALE` because that is the most any result has ever been worth: the bonus
+can lift a mature result to what a first-ever result gets, and no further.
+
+Deliberately *not* applied inside `timed_elo` to every multiplier. That was the
+first attempt and it was wrong: an area bucket with no history is a fresh track
+at K=96, so a global ceiling would have silently dropped the speed bonus from
+the area row while the pooled row kept it, and one result would have moved its
+two ratings by different amounts. The ceiling belongs to the bonus that needs
+it, not to the mechanism.
+"""
+
+
+def early_solve_multiplier(n: int) -> float:
+    """`EARLY_SOLVE_BONUS`, capped so the applied K stays under the ceiling."""
+    return min(EARLY_SOLVE_BONUS, K_BONUS_CEILING / k_factor(n))
+
+
 LATE_MULTIPLIER = 0.4
 """What a late submission keeps of what it would have been worth on the day.
 

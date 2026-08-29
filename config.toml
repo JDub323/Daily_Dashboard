@@ -138,6 +138,34 @@ rotation = [
     "functional equations",
 ]
 
+# What each day of the week asks for.
+#
+# Every day used to ask for the same thing: a ladder centred on the rating,
+# nearest rung served. That is a thermostat, and it converged exactly as a
+# thermostat should -- every batch generated between 2026-08-20 and 2026-08-28
+# offered the identical three tiers, and the middle one was served. Five days a
+# week of AIME problems is not a difficulty problem, it is a variance problem,
+# and no prompt fixes it because the selection rule is what removes the
+# variance.
+#
+# So the week has a shape now. Two calibrated days, four days out of a proof
+# textbook, one day of reading. The thermostat stays where it belongs -- on the
+# two days whose job is to be calibrated.
+#
+#   compute         the ladder, nearest rung. A numeric answer.
+#   proof           one proof problem, easier end. Needs ingenuity, not an evening.
+#   proof-long      the two-day problem. Thursday has no hints; Friday has two.
+#   proof-showcase  a famous proof, picked on elegance, rating ignored.
+#   reading         no problem at all -- half-hour segments, unrated.
+[math.week]
+sunday    = "reading"
+monday    = "compute"
+tuesday   = "compute"
+wednesday = "proof"
+thursday  = "proof-long"
+friday    = "proof-long"
+saturday  = "proof-showcase"
+
 # Fixed elo anchors per problem tier. The LLM picks a tier, never a number,
 # so the math rating scale cannot drift.
 # topic -> broad area, the bucket its results rate into. Validated against
@@ -200,6 +228,82 @@ amc = 10
 "putnam-early" = 40
 "olympiad-hard" = 45
 "putnam-late" = 60
+
+# ---------------------------------------------------------------------------
+# The proof days. Wednesday through Saturday, all from one book.
+#
+# The book is on disk and the generator reads it. It is never asked to recall
+# a problem from it -- see dashboard/proofbook.py for the failure that
+# prevents, and `proofbook.json` for the index that makes it possible.
+[math.proof]
+enabled = true
+pdf = "textbooks/Putnam_and_beyond.pdf"
+
+# What each proof day is allowed to reach for, as tiers from [math.anchors].
+#
+# Wednesday tops out below where Thursday starts, which is the whole
+# distinction between them: Wednesday is a problem you should finish in a
+# sitting and Thursday is one you should not. Saturday shares Thursday's band
+# because a famous problem is usually a hard one, and its rung is chosen on
+# fame rather than on the rating anyway.
+[math.proof.tiers]
+proof = ["olympiad-easy", "putnam-early"]
+"proof-long" = ["putnam-early", "olympiad-hard", "putnam-late"]
+"proof-showcase" = ["putnam-early", "olympiad-hard", "putnam-late"]
+
+# rotation topic -> the section of the book its proof problems come from.
+#
+# Hand-checked against the contents page, one at a time, and that is the point:
+# the automatic matcher in `proofbook` sent "polynomial roots, Vieta, and
+# symmetric functions" to *3.4 Equations with Functions as Unknowns*, which is
+# a real section about something else entirely. Nine of twenty-five went wrong
+# that way, and none of them looked wrong.
+#
+# All twenty-five are pinned, and the twenty-fifth is why. "digits, base
+# representations, and floor functions" is served by *5.1.3 The Greatest
+# Integer Function*, and the matcher sent it to *3.2.1 Functions* -- a section
+# in the analysis chapter, matched on the word "functions". A topic left out of
+# this table still works (matcher, then the area's chapter); it just may not
+# work on the topic you meant.
+[math.proof.sections]
+"generating functions"                                        = "6.4.2"  # Generating Functions
+"limits and recursive sequences"                              = "3.1.3"  # Limits of Sequences
+"polynomial roots, Vieta, and symmetric functions"            = "2.2.4"  # Viete's Relations
+"bijections, inclusion-exclusion, and double counting"        = "6.4.4"  # Inclusion-Exclusion
+"modular arithmetic and congruences"                          = "5.2.3"  # Modular Arithmetic
+"analytic and vector geometry in the plane"                   = "4.1.2"  # Coordinate Geometry
+"infinite series - convergence, telescoping, rearrangement"   = "3.1.6"  # Telescopic Series
+"determinants and matrix manipulation"                        = "2.3.2"  # Determinants
+"linear recurrences and difference equations"                 = "3.1.2"  # Linear Recursive Sequences
+"divisibility, primes, and factorization"                     = "5.2.1"  # Factorization and Divisibility
+"discrete probability and expected value"                     = "6.5.1"  # Equally Likely Cases
+"definite-integral technique"                                 = "3.2.9"  # Definite Integrals
+"polynomial identities, divisibility, and irreducibility"     = "2.2.7"  # Irreducible Polynomials
+"pigeonhole and extremal arguments"                           = "1.3"    # The Pigeonhole Principle
+"convexity, lattice points, and area arguments"               = "3.2.7"  # Convex Functions
+"inequalities - AM-GM, Cauchy-Schwarz, Jensen, rearrangement" = "2.1.5"  # AM-GM
+"eigenvalues, characteristic polynomials, and matrix powers"  = "2.3.6"  # Eigenvalues, Eigenvectors
+"combinatorial games and invariants"                          = "1.5"    # Invariants and Semi-Invariants
+"multiplicative order, primitive roots, Fermat/Euler"         = "5.2.4"  # Fermat's Little Theorem
+"continuity, IVT, and the mean value theorems"                = "3.2.6"  # The Mean Value Theorem
+"vector spaces, rank, and linear independence"                = "2.3.5"  # Vector Spaces
+"derivatives, Taylor expansion, and extrema"                  = "3.2.12" # Taylor and Fourier Series
+"finite group theory - orders, Lagrange, group actions"       = "2.4.2"  # Groups
+"functional equations"                                        = "3.4.1"  # Functional Equations
+"digits, base representations, and floor functions"           = "5.1.3"  # The Greatest Integer Function
+
+# ---------------------------------------------------------------------------
+# Sunday. Read, and do many easy problems.
+#
+# Three half-hour segments generated, one or two expected. The over-generation
+# is deliberate: how much of a week's topic is already familiar varies hugely
+# by topic, so the plan offers more than the day asks for and you take what is
+# new. Which segments you skipped -- and why -- go into the next generation, or
+# every month opens with the same introduction.
+[math.reading]
+enabled = true
+segments = 3
+segment_minutes = 30
 
 # One theorem a day, sampled from the deck you curate. The weight of a card is
 # (days since it last appeared - cooldown_days) ** recency_exponent, and zero
