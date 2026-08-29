@@ -3,11 +3,19 @@
 # math problem and the day's trick, so the dashboard never has to pay for
 # either.
 #
-#   ./batch.sh --context                  what the math generator needs
+#   ./batch.sh --week                     the whole coming week, Sunday first
+#   ./batch.sh --context                  one day of it
 #   ./batch.sh --validate FILE            the server's checks, at 3am not 8am
+#   ./batch.sh --validate-reading FILE    the same, for Sunday's reading plan
 #
 #   ./batch.sh --trick-context            tonight's trick set: topic, bands, callback
 #   ./batch.sh --validate-trick FILE      the same, for a generated trick set
+#
+# The math job is weekly now and the trick's is still nightly, and the split is
+# not arbitrary. What the week asks for is week-shaped -- Sunday's reading is
+# what the proof days are meant to make use of, the two-day problem spans two
+# nights whatever the schedule does, and the four proof days read one section of
+# one book. A trick is a day's object and has no such coupling.
 #
 # The trick is the one job here with nothing at all behind it -- the math
 # problem has a curated pool. The panel used to offer the same prompt to carry
