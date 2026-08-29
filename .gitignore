@@ -38,3 +38,7 @@ proxy.txt
 positions.csv
 Portfolio_Positions*.csv
 
+
+# textbooks — copies of PDFs read by the overnight generator. Large, and not
+# ours to redistribute; the config names the path, git never carries the file.
+textbooks/

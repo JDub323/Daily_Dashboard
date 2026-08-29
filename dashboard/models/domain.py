@@ -579,9 +579,7 @@ class Readiness(Base):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def score(self) -> int:
-        return (
-            self.sleep_quality + self.fatigue + self.soreness + self.stress + self.motivation
-        )
+        return self.sleep_quality + self.fatigue + self.soreness + self.stress + self.motivation
 
 
 class TrainingSession(Base):
@@ -834,6 +832,77 @@ class TopicInfo(Base):
     topic: str
     textbook: Link
     theorems: list[Link] = Field(min_length=1, max_length=8)
+
+
+# --- the proof textbook ----------------------------------------------------
+#
+# Parsed once from the PDF's contents pages and committed as `proofbook.json`;
+# see `dashboard/proofbook.py` for why the index is in git and the book is not.
+# Nothing here is generated content -- it is a description of a printed object,
+# which is precisely what makes it worth having.
+
+
+class ProofSection(Base):
+    """One leaf of the contents -- the unit a week's problems are drawn from.
+
+    Leaves only: a section with subsections is represented by its subsections
+    and not by itself. Six pages of "Viète's Relations" is a week's worth of
+    proof problems; the seventeen pages of "Polynomials" that contain it are a
+    chapter's worth, and pointing the generator at the coarser one is how a
+    week on symmetric functions comes back with a problem about irreducibility.
+    """
+
+    number: str = Field(pattern=r"^\d+\.\d+(\.\d+)?$")
+    title: str
+    parent: str | None = None
+    """The enclosing section's title, where there is one. Carried because the
+    leaf title alone is often not enough to know what it is about -- "Some
+    General Problems" means nothing without "Integer-Valued Sequences and
+    Functions" above it."""
+
+    page: int = Field(gt=0)
+    end_page: int = Field(gt=0)
+    """The printed page numbers, as the contents give them."""
+
+    pdf_page: int = Field(gt=0)
+    pdf_end_page: int = Field(gt=0)
+    """The same span as 1-based PDF pages -- which is what a reader actually
+    opens, and not the printed number plus a constant.
+
+    Both are stored because the difference is not a constant. It is 15 at the
+    start of this book and 10 by the solutions: pages the printing counts are
+    missing from the scan. A single offset applied to a printed number would
+    land five pages off in the back half, which is the exact failure the index
+    exists to prevent, so the offset is measured per page and the answer is
+    written down rather than recomputed.
+    """
+
+    first_problem: int | None = None
+    last_problem: int | None = None
+    """The span of problem numbers printed in this section, or None where the
+    scan found none it believed. None is a usable answer: the generator is
+    given the page range either way, and the numbers are a narrowing, not a
+    prerequisite."""
+
+
+class ProofChapter(Base):
+    number: str = Field(pattern=r"^\d+$")
+    title: str
+    page: int = Field(gt=0)
+    solutions_pdf_page: int | None = None
+    solutions_pdf_end_page: int | None = None
+    """Where this chapter's printed solutions live, in PDF pages. The hints and
+    the rubric are written from those pages rather than from the model's own
+    solution, which is the whole reason the index bothers to find them."""
+
+    sections: list[ProofSection] = Field(default_factory=list)
+
+
+class ProofBook(Base):
+    title: str
+    pdf: str
+    pages: int = Field(gt=0)
+    chapters: list[ProofChapter] = Field(min_length=1)
 
 
 # --- the todo list ---------------------------------------------------------
