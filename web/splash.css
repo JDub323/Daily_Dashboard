@@ -1,0 +1,159 @@
+/* The title screen.
+
+   Shared by the dashboard and the phone log, which show the same one: same
+   markup in both index.html files, same `app/splash.js` driving it, and now
+   the same stylesheet rather than a copy that would drift the first time
+   either was touched.
+
+   It needs the display face and the grain keyframes, so it imports the chrome
+   rather than assuming a load order. Both are idempotent — a stylesheet
+   imported twice is applied once. */
+@import url("chrome.css");
+
+/* ==========================================================================
+   The title screen
+   ==========================================================================
+   Full-bleed, above everything including the modal and the toast, and opaque:
+   while it is up the dashboard is not merely invisible, it is covered.
+
+   The texture stack — grain, vignette, scanlines — lives here and only here.
+   It is what makes the screen read as a cartridge boot rather than as a web
+   page, and it is also exactly what you must not put over 14px body copy, so
+   the dashboard proper gets the palette and the plating without the veil. */
+#splash {
+  position: fixed; inset: 0; z-index: 100; overflow: hidden;
+  background: var(--bg); outline: none;
+  opacity: 1; transition: opacity .42s ease;
+}
+/* Dismissed. Kept in the flow for one transition, then `hidden` by splash.js. */
+body:not(.booting):not(.splash-up) #splash { opacity: 0; pointer-events: none; }
+/* First paint only: the shell has never been mounted, so there is nothing
+   behind the curtain worth compositing. A re-entry mid-session deliberately
+   leaves the dashboard up underneath — the panels keep their timers and their
+   half-typed inputs. */
+body.booting #shell, body.booting #bg, body.booting #statusline { display: none; }
+body.booting, body.splash-up { overflow: hidden; }
+
+/* ---- the art slot ----
+   Everything in `.sp-art` is placeholder for real animated art later. It is a
+   single layer so replacing it is replacing one element. */
+.sp-art { position: absolute; inset: 0; overflow: hidden; }
+.sp-glow {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 62% 34% at 50% 80%, rgba(92,207,230,.14), transparent 70%);
+}
+.sp-stars, .sp-stars2 { position: absolute; inset: -30% 0; }
+.sp-stars  { animation: spDrift 62s linear infinite; }
+.sp-stars2 { animation: spDrift 104s linear infinite; opacity: .55; }
+@keyframes spDrift { from { transform: translateY(0); } to { transform: translateY(22%); } }
+
+/* The grid recedes to a horizon rather than tiling flat: the perspective is
+   the whole difference between "retro game" and "wireframe". */
+.sp-horizon {
+  position: absolute; left: -70%; right: -70%; bottom: -48%; height: 98%;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 5.9%, rgba(92,207,230,.16) 5.9% 6%),
+    repeating-linear-gradient(0deg,  transparent 0 5.9%, rgba(92,207,230,.14) 5.9% 6%);
+  transform: perspective(300px) rotateX(75deg);
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 64%);
+          mask-image: linear-gradient(180deg, transparent, #000 64%);
+  animation: spCrawl 6s linear infinite;
+}
+@keyframes spCrawl { from { background-position: 0 0, 0 0; } to { background-position: 0 0, 0 6%; } }
+
+/* ---- the wordmark ---- */
+.sp-frame {
+  position: absolute; inset: 0; z-index: 6; display: grid;
+  grid-template-rows: 1fr auto 1fr; justify-items: center; align-items: center;
+}
+.sp-run .sp-logo { animation: spLogoIn 1500ms cubic-bezier(.16,.9,.24,1) both; }
+@keyframes spLogoIn {
+  from { opacity: 0; transform: scale(1.24); filter: blur(7px); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+/* Plated rather than filled: hard gradient stops make an edge where a smooth
+   ramp makes a smudge, and the dark band at 47–51% is the bevel the eye reads
+   as thickness. Only works at size — see --plate-* in the token block for the
+   two places in the dashboard that are big enough to take it. */
+#splash h1 {
+  margin: 0; font-size: clamp(46px, 11vw, 138px); line-height: .92; font-weight: 700;
+  letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; text-align: center;
+  background: var(--plate);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 3px 0 #05070c) drop-shadow(0 0 28px rgba(232,180,88,.24));
+}
+.sp-rule {
+  height: 2px; margin-top: var(--s4);
+  background: linear-gradient(90deg, transparent, var(--gold-dim) 18% 82%, transparent);
+}
+.sp-sub {
+  margin-top: var(--s3); text-align: center;
+  font-size: var(--t-meta); letter-spacing: .42em; color: var(--faint);
+}
+.sp-run .sp-sub { animation: spFade 900ms 1400ms both; }
+
+.sp-press {
+  align-self: start; margin-top: var(--s7); color: var(--fg);
+  font-size: var(--t-meta); letter-spacing: .34em;
+  text-shadow: 0 0 14px rgba(223,230,242,.45);
+}
+.sp-run .sp-press { animation: spFade 400ms 2000ms both, spBlink 1.15s 2000ms step-end infinite; }
+
+/* The save-file line. Absent rather than zeroed until /api/state lands. */
+.sp-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+  display: flex; justify-content: space-between; padding: var(--s3) var(--s5);
+  font-size: var(--t-meta); letter-spacing: .16em; color: var(--faint);
+}
+.sp-run .sp-bar { animation: spFade 800ms 1800ms both; }
+#sp-file { color: var(--faint); }
+
+@keyframes spFade  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes spBlink { 0%,44% { opacity: 1; } 50%,94% { opacity: 0; } 100% { opacity: 1; } }
+
+/* ---- the texture stack ----
+   Grain, vignette and scanlines, in that order underneath to on top.
+
+   These are the reason the title screen reads as a boot sequence, and they are
+   also deliberately confined to it. A 3px scanline period over 14px monospace
+   is measurably harder to read, it degrades KaTeX's hairline rules, and every
+   text colour in this file was raised to clear AA against an *unveiled*
+   surface — dropping .34-alpha bars and a noise field over the whole app puts
+   all of those ratios back under the floor the redline audit lifted them over.
+   So: full strength here, and in the dashboard only on chrome that carries no
+   sustained reading. */
+.sp-scan, .sp-vig, .sp-grain { position: absolute; inset: 0; pointer-events: none; }
+.sp-scan {
+  z-index: 9;
+  background: repeating-linear-gradient(180deg, rgba(0,0,0,.34) 0 1px, transparent 1px 3px);
+}
+.sp-vig {
+  z-index: 7;
+  background: radial-gradient(ellipse 78% 68% at 50% 46%, transparent 30%, rgba(0,0,0,.88) 100%);
+}
+.sp-grain {
+  inset: -50%; z-index: 8; opacity: .05;
+  background-image: var(--grain);
+  animation: spGrain 700ms steps(4) infinite;
+}
+@keyframes spGrain {
+  0%   { transform: translate(0,0); }
+  25%  { transform: translate(-3%,2%); }
+  50%  { transform: translate(2%,-3%); }
+  75%  { transform: translate(-2%,-2%); }
+}
+
+/* A still title screen is still a title screen. The entrance lands on its end
+   state via the global reduce rule above; these are the loops, which are the
+   part that would actually bother someone. */
+@media (prefers-reduced-motion: reduce) {
+  .sp-stars, .sp-stars2, .sp-horizon, .sp-grain { animation: none !important; }
+  .sp-press { animation: none !important; opacity: 1 !important; }
+}
+
+/* The title screen's wordmark moves to the display face with everything else —
+   it is the same mark as the one in the top bar, and two faces for one word is
+   the kind of thing you notice without being able to say why. */
+#splash h1 { font-family: var(--font-display); font-weight: 900; letter-spacing: .08em; }
+.sp-sub, .sp-bar, .sp-press { font-family: var(--font-display); font-weight: 500; }
+

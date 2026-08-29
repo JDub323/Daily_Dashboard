@@ -38,6 +38,11 @@ import {
   RPE_ANCHOR, SESSION_KINDS, toShown, toStored,
 } from "../app/logs.js";
 import { applicableSteps, parseAmount } from "../app/quicklog.js";
+// The dashboard's own title screen, not a copy of it: same module, same
+// markup in index.html, same stylesheet. It imports nothing but `dom.js`,
+// which imports nothing at all — so bringing it here costs exactly the splash
+// and none of the store, the panel harness or the nav ring.
+import { initSplash, paintSplash } from "../app/splash.js";
 import { enqueue, flush, onQueueChange, pendingOn } from "./queue.js";
 import { clock, dayLabel, nowHour, today } from "./when.js";
 
@@ -642,5 +647,20 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+// The title screen goes up first and comes down on a tap, exactly as it does
+// on the dashboard — `initSplash` builds the starfield, binds the dismissal and
+// raises it. Everything below carries on behind it: the shell is hidden rather
+// than absent, so the first log is already drawn when the curtain lifts.
+initSplash();
+
 draw();
-flush().then((got) => { if (got) panel = got; return load(); }).then(draw);
+flush()
+  .then((got) => { if (got) panel = got; return load(); })
+  .then(() => {
+    draw();
+    // FILE 01 · DAY 172, and the fight date along the foot. `HealthPanel`
+    // already carries the plan, so the phone's title screen says the same
+    // thing the laptop's does without a second request for it. Absent when
+    // there is no camp on, which `paintSplash` renders as silence.
+    if (panel?.plan) paintSplash(panel.plan);
+  });

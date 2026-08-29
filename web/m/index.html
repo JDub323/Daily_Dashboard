@@ -7,8 +7,6 @@
        indicator on any iPhone since the X and the row you tap most is the row
        you cannot tap. -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <!-- Stops iOS zooming the page when a number field takes focus, which it
-       does by default on inputs under 16px and never zooms back out from. -->
   <meta name="format-detection" content="telephone=no">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0a0c12">
@@ -18,33 +16,66 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="log">
-  <title>log</title>
+  <meta name="apple-mobile-web-app-title" content="sharpness">
+  <title>sharpness — log</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
-  <header class="top">
-    <div class="top-day">
-      <span id="day">—</span>
-      <!-- The hour every entry is filed against, and the only control on this
-           screen that is not a log. It is here rather than inside each log
-           because it is the same answer for all five and because the case it
-           exists for — noticing at three that lunch never got entered — is one
-           you are in before you have chosen which log to open. -->
-      <button id="hour" class="hour" aria-label="the hour being logged against">—</button>
+<body class="booting">
+
+<!-- The title screen, and it is the dashboard's own rather than one that looks
+     like it: same markup, same `app/splash.js`, same `splash.css`. The ids are
+     load-bearing — `paintSplash` writes into all three by id, and `initSplash`
+     builds the starfield into the two `.sp-stars` layers. -->
+<div id="splash" tabindex="-1" role="dialog" aria-label="sharpness — press enter to begin">
+  <div class="sp-art" aria-hidden="true">
+    <div class="sp-glow"></div>
+    <div class="sp-stars"></div>
+    <div class="sp-stars2"></div>
+    <div class="sp-horizon"></div>
+  </div>
+  <div class="sp-frame">
+    <div></div>
+    <div class="sp-logo">
+      <h1>Sharpness</h1>
+      <div class="sp-rule"></div>
+      <div class="sp-sub" id="sp-sub">FIGHT CAMP</div>
     </div>
-    <div id="net" class="net" aria-live="polite"></div>
+    <div class="sp-press">PRESS ENTER</div>
+  </div>
+  <div class="sp-bar" aria-hidden="true">
+    <span id="sp-file">FILE 01</span>
+    <span id="sp-fight"></span>
+  </div>
+  <div class="sp-grain" aria-hidden="true"></div>
+</div>
+
+<div id="shell">
+  <!-- The top bar is the dashboard's, shortened. `h1` carries the plated
+       wordmark through the same `#topbar h1` rule the desktop uses. -->
+  <header id="topbar">
+    <h1>sharpness</h1>
+    <div class="sub" id="day">—</div>
   </header>
 
-  <main id="view"></main>
+  <!-- The hour every entry is filed against, and the only control here that is
+       not a log. It sits above the tabs rather than inside one because it is
+       the same answer for all five, and because the case it exists for —
+       noticing at three that lunch never got entered — is one you are in
+       before you have chosen which log to open. -->
+  <div id="hourbar">
+    <button id="hour" class="hour" aria-label="the hour being logged against">—</button>
+    <div id="net" class="net" aria-live="polite"></div>
+  </div>
+
+  <main id="view" class="panel"></main>
 
   <nav class="tabs" id="tabs" aria-label="which log"></nav>
-
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</div>
 
-  <script type="module" src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

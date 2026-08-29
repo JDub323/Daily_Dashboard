@@ -28,7 +28,7 @@
 // does not appear, which is the same symptom `StaticAssets` was written to
 // prevent on the desktop and is worth remembering here for the same reason.
 
-const VERSION = "log-v1";
+const VERSION = "log-v2";
 
 const SHELL = [
   "./",
@@ -37,9 +37,18 @@ const SHELL = [
   "./queue.js",
   "./when.js",
   "./style.css",
+  // The theme, the device layer and the title screen, all shared with the
+  // dashboard. `style.css` imports them, and an @import is a separate request
+  // the browser makes on its own — a cached shell that omitted them would open
+  // offline as unstyled markup, which is worse than not opening.
   "../tokens.css",
+  "../chrome.css",
+  "../splash.css",
+  "../vendor/orbitron/orbitron-latin.woff2",
   "../app/logs.js",
   "../app/quicklog.js",
+  "../app/splash.js",
+  "../app/dom.js",
   "./icon.svg",
   "./manifest.webmanifest",
 ];

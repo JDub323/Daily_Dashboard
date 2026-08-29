@@ -1,0 +1,72 @@
+/* The cartridge, as a device rather than as a layout.
+
+   Everything here describes the *screen* — the face it is set in, the CRT veil
+   over the whole viewport, the vignette that pools light in the middle. None of
+   it mentions a panel, a tab or a column, which is exactly why it lives in its
+   own file: the dashboard and the phone log at /m are two completely different
+   layouts that have to feel like one machine, and this is the half they share.
+
+   Imported by `style.css` and by `m/style.css`. Tokens come first in both —
+   the values here are built out of them. */
+@import url("tokens.css");
+
+/* The vignette is the cheapest half of the effect and the one with no cost:
+   it lives at the edges, where there is no text, and it makes the content
+   column sit in a pool of light rather than on a flat sheet. */
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(ellipse 92% 80% at 50% 42%, transparent 46%, rgba(0,0,0,.55) 100%);
+}
+
+@font-face {
+  font-family: "Orbitron";
+  src: url("/vendor/orbitron/orbitron-latin.woff2") format("woff2");
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* Display only — never body copy. Orbitron is a geometric face with wide
+     counters and no lowercase character to speak of; it is superb for a number
+     you read at a glance and punishing for a paragraph. Cascadia keeps
+     everything you actually read. */
+  --font-display: "Orbitron", "Cascadia Code", Consolas, monospace;
+
+  /* The CRT veil, as two dials rather than a magic number in one rule. The
+     scanline is the one that costs legibility: .34 is what the title screen
+     uses and it is far too strong to read a feed through, .13 is where the
+     bars are still visibly there and 14px monospace still resolves. */
+  --crt-scan: .13;
+  --crt-grain: .035;
+
+  /* The corner bracket's arm. */
+  --bracket: 11px;
+}
+
+/* ---- the CRT ----
+   One layer over the entire app, the modal included, because a CRT that stops
+   at the edge of a dialog is a texture rather than a screen. Fixed, inert, and
+   below the title screen so the boot sequence keeps its own stronger veil.
+
+   On <html> rather than a new element: it has no other pseudo-elements, it is
+   the one box guaranteed to be the size of the viewport, and it saves a div
+   whose only job is to be painted over. */
+html::after, html::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 90;
+}
+html::after {
+  background: repeating-linear-gradient(
+    180deg, rgba(0,0,0,var(--crt-scan)) 0 1px, transparent 1px 3px);
+}
+html::before {
+  inset: -50%;
+  background-image: var(--grain);
+  opacity: var(--crt-grain);
+  /* Overlay rather than plain alpha: grain that is composited straight on top
+     lightens black, which is how the tab bar went grey. Overlay modulates what
+     is already there and leaves the black alone. */
+  mix-blend-mode: overlay;
+  animation: spGrain 700ms steps(4) infinite;
+}
+@media (prefers-reduced-motion: reduce) { html::before { animation: none !important; } }

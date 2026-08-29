@@ -1,16 +1,24 @@
 /* The phone log.
 
-   The theme is the dashboard's, imported rather than restated: same palette,
-   same six-step type scale, same 4px spacing, same monospace. That is the whole
-   reason `tokens.css` was pulled out of `style.css` — a second copy of forty
-   custom properties is a second copy that drifts, and "same theme" has to mean
-   the same values rather than the same intention.
+   The dashboard's look, at thumb scale. Three things are imported rather than
+   restated, and between them they are most of what "the same app" means:
 
-   What is *not* shared is every layout rule in `style.css`, and that is the
-   point of the split. This is a one-column screen with 48px hit targets and a
-   thumb-reachable tab bar; that is a six-column grid with an 11px label on
-   every card and a keyboard ring. The tokens are the agreement between them. */
+     tokens.css   the palette, the six-step type scale, the 4px spacing
+     chrome.css   the display face, the CRT veil, the vignette — the device
+     splash.css   the title screen, which is literally the same screen
+
+   What is *not* shared is layout, and that is the point of the split. The
+   dashboard is a six-column grid with a keyboard ring; this is one column of
+   48px targets with a tab bar under your thumb. The vocabulary is shared, the
+   arrangement is not.
+
+   Everything below is either that vocabulary applied to a control the desktop
+   does not have, or a size that had to change for a finger. Where the desktop
+   already has a rule — the plate, the key-cap, the sunk field — it is reused by
+   wearing the same class, not re-declared. */
 @import url("../tokens.css");
+@import url("../chrome.css");
+@import url("../splash.css");
 
 * { box-sizing: border-box; }
 
@@ -25,8 +33,7 @@ body {
   background: var(--bg);
   color: var(--fg);
   font: var(--t-body)/1.5 "Cascadia Code", Consolas, "JetBrains Mono", monospace;
-  /* Room for the fixed tab bar plus whatever the home indicator wants. */
-  padding: 0 0 calc(76px + env(safe-area-inset-bottom));
+  padding: 0 0 calc(78px + env(safe-area-inset-bottom));
   min-height: 100vh;
   /* The rubber-band overscroll on iOS shows the page behind this one, which in
      a standalone app is nothing at all — a white flash on a dark screen. */
@@ -34,106 +41,180 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* --- the top line ---------------------------------------------------------
-   The day, the hour every entry is filed against, and whether anything is
-   waiting to be sent. Sticky rather than fixed: it is worth its 44px while you
-   are choosing an hour and not worth them while you are reading a list. */
+/* While the title screen is up the app underneath is covered, not merely
+   invisible — same rule the dashboard uses, same reason. */
+body.booting #shell, body.splash-up #shell { visibility: hidden; }
 
-.top {
-  position: sticky;
-  top: 0;
-  z-index: 2;
+/* --- the top bar ----------------------------------------------------------
+   The dashboard's, shortened to what fits: the plated wordmark and the day.
+   `#topbar h1` and `#topbar .sub` are styled by chrome.css and by the desktop
+   sheet respectively — the wordmark rule is in `chrome.css` because the plate
+   is a property of the machine, and the two lines below are the sizes a 375px
+   screen wants rather than a 1240px one. */
+
+#topbar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: calc(var(--s3) + env(safe-area-inset-top)) var(--s4) var(--s2);
+}
+#topbar h1 {
+  margin: 0;
+  /* --t-head rather than --t-display: the plate needs size before its bands
+     stop landing inside two pixels of each other, and 21px is the smallest
+     that still reads as machined on a phone. */
+  font-size: var(--t-head);
+  font-family: var(--font-display);
+  font-weight: 900;
+  letter-spacing: .12em;
+  text-transform: lowercase;
+}
+#topbar .sub {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 9px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+/* --- the hour -------------------------------------------------------------
+   A key-cap like every other button, but gold rather than cyan: what it says
+   is which hour you are writing into, and gold is what this app means by
+   "written down". The one control worth colouring differently from the rest. */
+
+#hourbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--s3);
-  padding: calc(var(--s3) + env(safe-area-inset-top)) var(--s4) var(--s3);
-  background: var(--bg);
-  border-bottom: 1px solid var(--border-soft);
+  padding: 0 var(--s4) var(--s3);
+  border-bottom: 1px solid rgba(92,207,230,.18);
 }
-.top-day { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
-#day {
-  font-size: var(--t-meta);
-  color: var(--faint);
-  letter-spacing: .06em;
-  text-transform: lowercase;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* The hour is the one control up here, so it is styled as one: gold, because
-   what it says is which hour you are writing into, and getting that wrong is
-   the mistake this screen exists to make cheap to fix. */
 .hour {
-  font: inherit;
+  font-family: var(--font-display);
+  font-weight: 700;
   font-size: var(--t-lede);
+  letter-spacing: .12em;
+  text-transform: uppercase;
   color: var(--gold-text);
-  background: var(--panel2);
   border: 1px solid var(--gold-dim);
-  border-radius: var(--r-pill);
-  padding: var(--s1) var(--s4);
-  min-height: 36px;
+  border-radius: 0;
+  padding: var(--s2) var(--s4);
+  min-height: 40px;
+  background: linear-gradient(180deg, rgba(232,180,88,.16), rgba(232,180,88,.02));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 1px 0 rgba(0,0,0,.5);
   cursor: pointer;
+  touch-action: manipulation;
 }
-.hour.open { background: var(--raised); }
-
-.net { font-size: var(--t-meta); color: var(--faint); text-align: right; }
+.hour.open {
+  border-color: var(--gold);
+  box-shadow: inset 0 -2px 0 var(--gold), inset 0 1px 0 rgba(255,255,255,.12);
+}
+.net {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 9px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--faint);
+  text-align: right;
+}
 .net.waiting { color: var(--gold-text); }
 
 /* --- the hour strip -------------------------------------------------------
-   Twenty-four chips on one scrolling row, opened from the button above. A
-   native <select> would be less markup and the wrong control: the answer is
-   almost always within two of now, and a wheel makes "an hour ago" cost the
-   same as "eleven hours ago". */
+   Twenty-four caps on one scrolling row. A native <select> would be less markup
+   and the wrong control: the answer is almost always within two of now, and a
+   wheel makes "an hour ago" cost the same as "eleven hours ago". */
 
 .hours {
   display: flex;
   gap: var(--s2);
   overflow-x: auto;
-  padding: var(--s3) var(--s4);
-  margin-bottom: var(--s2);
-  background: var(--panel);
+  padding: var(--s3) 0;
+  margin-bottom: var(--s3);
   border-bottom: 1px solid var(--border-soft);
   scrollbar-width: none;
 }
 .hours::-webkit-scrollbar { display: none; }
 .hourchip {
   flex: none;
-  font: inherit;
-  font-size: var(--t-body);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
   color: var(--dim);
-  background: var(--panel2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
+  border: 1px solid rgba(92,207,230,.28);
+  border-radius: 0;
   padding: var(--s2) var(--s3);
   min-height: 40px;
+  background: linear-gradient(180deg, rgba(223,230,242,.07), rgba(0,0,0,.18));
+  box-shadow: inset 0 1px 0 rgba(223,230,242,.12), 0 1px 0 rgba(0,0,0,.5);
   cursor: pointer;
+  touch-action: manipulation;
 }
-.hourchip.on { color: var(--bg); background: var(--gold); border-color: var(--gold); }
+.hourchip.on {
+  color: var(--gold-text);
+  border-color: rgba(232,180,88,.40);
+  background: linear-gradient(180deg, rgba(232,180,88,.18), rgba(232,180,88,.03));
+  box-shadow: inset 0 -2px 0 var(--gold), inset 0 1px 0 rgba(255,255,255,.10);
+}
 
-/* --- a question ------------------------------------------------------------ */
+/* --- the plate ------------------------------------------------------------
+   `#view` wears `.panel`, so it gets the desktop's machined surface: square
+   corners, the lit top edge, the cyan-tinted border and the two corner
+   brackets. Those all come from `style.css` on the desktop and are restated
+   here because this page does not load that sheet — it is the one piece of
+   duplication in the file, and it is nine declarations rather than the two
+   thousand lines that carry them. */
 
-main { padding: var(--s3) var(--s4) 0; }
+.panel {
+  position: relative;
+  margin: 0 var(--s4) var(--s5);
+  padding: var(--s4);
+  border: 1px solid rgba(92,207,230,.14);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(223,230,242,.045), transparent 38%),
+    var(--panel);
+  box-shadow: inset 0 1px 0 rgba(223,230,242,.10);
+}
+/* Brackets at the diagonal rather than all four: four is a box, two is a mark. */
+.panel::before, .panel::after {
+  content: ""; position: absolute; width: var(--bracket); height: var(--bracket);
+  pointer-events: none; border: 0 solid var(--bracket-color, rgba(92,207,230,.34));
+}
+.panel::before { top: -1px; left: -1px; border-top-width: 2px; border-left-width: 2px; }
+.panel::after { bottom: -1px; right: -1px; border-bottom-width: 2px; border-right-width: 2px; }
+
+/* --- a question ----------------------------------------------------------- */
 
 .q { margin-bottom: var(--s5); }
+.q:last-child { margin-bottom: 0; }
+
+/* A machine label, exactly as a panel heading is on the desktop: display face,
+   uppercase, wide tracking, and a rule that fades out to the right rather than
+   running the full width. */
 .q-head {
   display: flex;
   align-items: baseline;
   gap: var(--s3);
-  margin-bottom: var(--s2);
   flex-wrap: wrap;
+  margin-bottom: var(--s3);
+  padding-bottom: var(--s2);
+  background: linear-gradient(90deg, var(--border) 0 38%, transparent) bottom / 100% 1px no-repeat;
 }
 .q-name {
-  font-size: var(--t-meta);
+  font-family: var(--font-display);
   font-weight: 700;
-  color: var(--dim);
-  text-transform: lowercase;
-  letter-spacing: 1.2px;
+  font-size: 10px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--faint);
 }
-/* `min-width: 0` and the wrap on `.q-head` together: without both, a long hint
-   is one unbreakable flex item that runs off the right edge rather than moving
-   to its own line. */
 .q-hint { font-size: var(--t-meta); color: var(--faint); min-width: 0; }
 .q-hint.queued { color: var(--gold-text); }
 
@@ -141,85 +222,125 @@ main { padding: var(--s3) var(--s4) 0; }
    last item on its own line at a different width from its neighbours, which on
    a row of three sizes reads as one of them being special. Equal columns,
    always, and 48px tall — the size a thumb hits without aiming, which is the
-   entire specification of this screen. */
+   one measurement on this screen that is not the desktop's. */
 .opts { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s2); }
 .opts-10 { grid-template-columns: repeat(5, 1fr); }
 
+/* The desktop's key-cap, at thumb size: square, bevelled, lit along the top
+   edge, labelled in the display face, and sinking a pixel when pressed. */
 .opt {
-  font: inherit;
-  font-size: var(--t-body);
-  color: var(--fg);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  min-height: 48px;
-  padding: var(--s2);
-  cursor: pointer;
-  /* A 200ms delay before every tap registers, on a screen built around taps. */
-  touch-action: manipulation;
-}
-.opt:active { background: var(--raised); }
-/* Chosen. Gold means "this is answered" here exactly as it means "this is done"
-   on the dashboard — the one colour in the palette that is about completion. */
-.opt.on {
-  color: var(--bg);
-  background: var(--gold);
-  border-color: var(--gold);
+  font-family: var(--font-display);
   font-weight: 700;
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--fg);
+  border: 1px solid rgba(92,207,230,.28);
+  border-radius: 0;
+  min-height: 48px;
+  padding: var(--s2) 2px;
+  background: linear-gradient(180deg, rgba(223,230,242,.07), rgba(0,0,0,.18));
+  box-shadow: inset 0 1px 0 rgba(223,230,242,.12), 0 1px 0 rgba(0,0,0,.5);
+  cursor: pointer;
+  /* Without this every tap waits 200ms before it registers, on a screen whose
+     entire premise is that a tap costs nothing. */
+  touch-action: manipulation;
+  transition: border-color .12s, color .12s, background .12s, box-shadow .12s;
 }
-/* Five and ten of them respectively, so they can be square and dense. */
-.opt.num { font-size: var(--t-lede); }
+.opt:active {
+  /* Pressed: the lit edge moves to the bottom and the cap sinks. */
+  box-shadow: inset 0 -1px 0 rgba(223,230,242,.14), inset 0 2px 6px rgba(0,0,0,.55);
+  transform: translateY(1px);
+}
+/* Answered. Gold means "this is done" here exactly as it does on the
+   dashboard — the one colour in the palette that is about completion. */
+.opt.on {
+  color: var(--gold-text);
+  border-color: rgba(232,180,88,.45);
+  background: linear-gradient(180deg, rgba(232,180,88,.20), rgba(232,180,88,.04));
+  box-shadow: inset 0 -2px 0 var(--gold), inset 0 1px 0 rgba(255,255,255,.10);
+}
+/* Five of them, or ten. Orbitron's digits are the reason it is in this app —
+   wide, flat-sided, evenly weighted — so the numeric rows get them at size. */
+.opt.num { font-size: var(--t-lede); letter-spacing: .04em; }
 
-/* --- a typed answer -------------------------------------------------------- */
+/* --- a typed answer -------------------------------------------------------
+   A field is the inverse of a key-cap: sunk, not raised. Same logic, opposite
+   sign, which is what makes a form legible before you have read a word of it. */
 
-.row { display: flex; gap: var(--s2); margin-top: var(--s2); }
+.row { display: flex; gap: var(--s2); margin-top: var(--s3); }
 .amount {
   flex: 1;
-  font: inherit;
+  font-family: "Cascadia Code", Consolas, monospace;
   /* 16px exactly, and it is not on the type scale by accident: iOS zooms the
      page when a field under 16px takes focus and never zooms back out. This is
-     the one place in either stylesheet where the browser picks the size. */
+     the one place in any of these stylesheets where the browser picks a size. */
   font-size: 16px;
   color: var(--fg);
-  background: var(--panel2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
+  border: 1px solid rgba(92,207,230,.20);
+  border-radius: 0;
   min-height: 48px;
   padding: 0 var(--s3);
+  background: #070910;
+  box-shadow: inset 0 2px 5px rgba(0,0,0,.55);
 }
-.amount:focus { outline: none; border-color: var(--accent-dim); }
+.amount:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: inset 0 2px 5px rgba(0,0,0,.55), 0 0 0 1px rgba(92,207,230,.35);
+}
 .amount.bad { border-color: var(--bad); }
 .go {
-  font: inherit;
-  font-size: var(--t-body);
-  color: var(--bg);
-  background: var(--gold);
-  border: 0;
-  border-radius: var(--r-sm);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--gold-text);
+  border: 1px solid rgba(232,180,88,.45);
+  border-radius: 0;
   min-height: 48px;
   padding: 0 var(--s5);
-  font-weight: 700;
+  background: linear-gradient(180deg, rgba(232,180,88,.20), rgba(232,180,88,.04));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 1px 0 rgba(0,0,0,.5);
   cursor: pointer;
   touch-action: manipulation;
 }
-.go:active { background: var(--gold-text); }
+.go:active {
+  box-shadow: inset 0 -1px 0 rgba(223,230,242,.14), inset 0 2px 6px rgba(0,0,0,.55);
+  transform: translateY(1px);
+}
 
 /* --- what is logged today -------------------------------------------------- */
 
-.empty { color: var(--faint); font-size: var(--t-meta); margin: var(--s4) 0 var(--s6); }
+.empty {
+  font-family: var(--font-display);
+  font-size: 9px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: var(--s5) 0 0;
+}
 
-.entries { list-style: none; margin: var(--s5) 0 var(--s6); padding: 0; }
+.entries { list-style: none; margin: var(--s5) 0 0; padding: 0; }
 .entry {
   display: flex;
   align-items: center;
   gap: var(--s3);
   padding: var(--s2) 0;
-  border-top: 1px solid var(--border-soft);
+  /* A ticked rule rather than a hairline — the same mark the title screen's
+     scale uses, and the dashboard's `.divider`. */
+  background: repeating-linear-gradient(90deg, var(--border) 0 3px, transparent 3px 7px)
+              top / 100% 1px no-repeat;
 }
 .entry-at {
   flex: none;
-  width: 5.5ch;
-  font-size: var(--t-meta);
+  width: 6ch;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
   color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
@@ -227,17 +348,27 @@ main { padding: var(--s3) var(--s4) 0; }
 /* Written here, not there yet. Dimmed rather than badged in red: it is the
    normal state of an entry made in a gym, not a failure. */
 .entry.queued .entry-what { color: var(--dim); }
-.entry-tag { font-size: var(--t-meta); color: var(--gold-text); }
+.entry-tag {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--gold-text);
+  border: 1px solid rgba(232,180,88,.30);
+  padding: 1px var(--s2);
+  background: rgba(232,180,88,.06);
+}
 .del {
   flex: none;
-  font: inherit;
+  font-family: var(--font-display);
   font-size: var(--t-lede);
   color: var(--faint);
   background: none;
   border: 0;
   /* 44px square even though the glyph is 8px wide — a delete you hit by
-     accident is worse than one you have to aim at, so it is the target that is
-     generous and the mark that is quiet. */
+     accident is worse than one you have to aim at, so the target is generous
+     and the mark is quiet. */
   width: 44px;
   height: 44px;
   cursor: pointer;
@@ -246,34 +377,44 @@ main { padding: var(--s3) var(--s4) 0; }
 .del:active { color: var(--bad); }
 
 /* --- the tab bar ------------------------------------------------------------
-   Fixed to the bottom, which is where a thumb is. The dashboard puts its tabs
-   at the top because a mouse is equidistant from everything; a phone is not. */
+   The dashboard's segmented bar, moved to the bottom, which is where a thumb
+   is. A mouse is equidistant from everything on screen; a thumb is not. The
+   cyan hairline is the title screen's horizon doing the same job one storey
+   down — separating the fixed furniture from the thing that scrolls. */
 
 .tabs {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: 0; right: 0; bottom: 0;
   z-index: 3;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 1px;
-  background: var(--border-soft);
+  background: linear-gradient(180deg, #12161f, #0b0e15);
+  border-top: 1px solid rgba(92,207,230,.18);
   padding-bottom: env(safe-area-inset-bottom);
-  border-top: 1px solid var(--border);
 }
 .tab {
-  font: inherit;
-  font-size: var(--t-meta);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
   color: var(--faint);
-  background: var(--panel);
-  border: 0;
-  min-height: 56px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 0;
+  min-height: 58px;
   padding: var(--s2) 2px;
   cursor: pointer;
   touch-action: manipulation;
 }
-.tab.on { color: var(--gold-text); background: var(--panel2); box-shadow: inset 0 2px 0 var(--gold); }
+.tab.on {
+  color: var(--gold-text);
+  border-color: rgba(232,180,88,.30);
+  background: linear-gradient(180deg, rgba(232,180,88,.14), rgba(232,180,88,.02));
+  /* Underline on top here rather than beneath: the bar is at the foot of the
+     screen, so the edge that faces the content is the one that should light. */
+  box-shadow: inset 0 2px 0 var(--gold), inset 0 -1px 0 rgba(255,255,255,.08);
+}
 
 /* --- the toast --------------------------------------------------------------
    Above the tab bar rather than over it: the one thing it ever says is that a
@@ -282,16 +423,15 @@ main { padding: var(--s3) var(--s4) 0; }
 
 .toast {
   position: fixed;
-  left: var(--s4);
-  right: var(--s4);
-  bottom: calc(76px + env(safe-area-inset-bottom));
+  left: var(--s4); right: var(--s4);
+  bottom: calc(78px + env(safe-area-inset-bottom));
   z-index: 4;
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  background: linear-gradient(180deg, rgba(223,230,242,.07), rgba(0,0,0,.28)), var(--raised);
+  border: 1px solid rgba(92,207,230,.28);
   padding: var(--s3) var(--s4);
   font-size: var(--t-meta);
   color: var(--fg);
+  box-shadow: inset 0 1px 0 rgba(223,230,242,.12);
   opacity: 0;
   transform: translateY(8px);
   transition: opacity .18s ease, transform .18s ease;
@@ -299,12 +439,11 @@ main { padding: var(--s3) var(--s4) 0; }
 }
 .toast.up { opacity: 1; transform: none; }
 
-/* A tablet, or a phone in landscape. The column stops growing — a 700px-wide
-   row of three buttons is three buttons you have to reach across — and the
-   whole thing centres instead. */
+/* A tablet, or a phone in landscape. The column stops growing — a 700px row of
+   three buttons is three buttons you have to reach across — and centres. */
 @media (min-width: 560px) {
-  main, .top { max-width: 520px; margin-inline: auto; }
-  .tabs { max-width: 520px; margin-inline: auto; }
+  #topbar, #hourbar, .panel, .tabs { max-width: 520px; margin-inline: auto; }
+  .tabs { left: 0; right: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -88,6 +88,29 @@ function stamp(iso) {
 
 // --- showing and dismissing ------------------------------------------------
 
+/**
+ * Print whichever of the two ways in this device actually has.
+ *
+ * `pointer: coarse` is the primary input being a finger. A touchscreen laptop
+ * reports `fine` and keeps "press enter", which is right — it has both and one
+ * of them is faster.
+ *
+ * Called every time the screen goes up rather than once at startup, and that is
+ * not defensiveness: the answer can change after boot. A tab opened at desktop
+ * width and later handed to a phone — or, more prosaically, a viewport that
+ * finishes resolving after the module runs — would otherwise keep whichever
+ * label it happened to be built with, and tell you to press a key that is not
+ * there.
+ */
+function sayHowToDismiss(splash) {
+  const touch = matchMedia("(pointer: coarse)").matches;
+  $(".sp-press").textContent = touch ? "TAP TO START" : "PRESS ENTER";
+  splash.setAttribute(
+    "aria-label",
+    touch ? "sharpness — tap to begin" : "sharpness — press enter to begin",
+  );
+}
+
 export function showSplash(why = "wake") {
   if (open) return;
   open = true;
@@ -97,6 +120,7 @@ export function showSplash(why = "wake") {
 
   const splash = $("#splash");
   splash.hidden = false;
+  sayHowToDismiss(splash);
   // Two classes rather than one: `booting` is the first-paint state that
   // index.html ships with, and it is the only one that also hides the shell.
   // A re-entry mid-session leaves the dashboard mounted underneath, so that
@@ -269,13 +293,7 @@ export function initSplash() {
     dismiss();
   });
 
-  // Say which of the two it is. `pointer: coarse` is the primary input being a
-  // finger — a touchscreen laptop still reports `fine` and still reads "press
-  // enter", which is right, because it has both and one of them is faster.
-  if (matchMedia("(pointer: coarse)").matches) {
-    $(".sp-press").textContent = "TAP TO START";
-    splash.setAttribute("aria-label", "sharpness — tap to begin");
-  }
+  sayHowToDismiss(splash);
 
   watchForReturn();
   showSplash("boot");
