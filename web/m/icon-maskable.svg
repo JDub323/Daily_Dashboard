@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <!-- Same mark inside the maskable safe zone: Android crops this to whatever
+       shape the launcher uses, and anything outside the middle 80% can go. -->
+  <rect width="192" height="192" fill="#0a0c12"/>
+  <rect x="48" y="58" width="96" height="11" rx="5.5" fill="#e8b458"/>
+  <rect x="48" y="91" width="96" height="11" rx="5.5" fill="#dfe6f2"/>
+  <rect x="48" y="124" width="56" height="11" rx="5.5" fill="#5ccfe6"/>
+</svg>

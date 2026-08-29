@@ -1777,3 +1777,23 @@ def test_the_sync_endpoint_says_so_when_the_feature_is_off(client):
     response = client.post("/api/garmin/sync", json={"date": DATE})
     assert response.status_code == 409
     assert "config.toml" in response.json()["error"]
+
+
+def test_the_health_panel_can_be_asked_for(client):
+    """The phone log's one read.
+
+    Every write already returns this panel, so the dashboard has never needed
+    to ask -- it gets it in the boot payload and keeps it fresh from its own
+    responses. `/m` opens straight onto one of the five logs, and pulling the
+    whole of `/api/state` to draw a list of today's meals would be a page of
+    maths problems, feeds and ratings for four rows.
+    """
+    client.post("/api/meal", json={"date": DATE, "hour": 13, "size": "large", "quality": 4})
+    panel = client.get("/api/health", params={"date": DATE}).json()
+    assert [m["hour"] for m in panel["meals_today"]] == [13]
+
+
+def test_the_health_panel_read_takes_the_browsers_date(client):
+    """[Invariant 1]: the server never decides what day it is, and this is the
+    one GET on the health tab that could have been tempted to."""
+    assert client.get("/api/health").status_code == 422

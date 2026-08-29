@@ -1934,6 +1934,19 @@ def _register(app: FastAPI) -> None:
     # back one row would leave the browser to recompute three numbers it has
     # deliberately never been taught to compute.
 
+    @app.get("/api/health")
+    def health_panel(cfg: Cfg, repo: Repo, date: Today) -> api.HealthPanel:
+        """The health tab's payload, on its own.
+
+        Every write below already returns this, so the browser has never needed
+        to *ask* for it -- the dashboard gets it in the boot payload and keeps
+        it fresh from its own responses. The phone log at `/m` is the client
+        that does need to ask: it opens on one of the five logs, and the whole
+        of `/api/state` is a page of maths problems, feeds and ratings to
+        redraw a list of what you have eaten today.
+        """
+        return state.health_panel(cfg, repo, date)
+
     @app.post("/api/health")
     def health_log(cfg: Cfg, repo: Repo, body: api.HealthLogRequest) -> api.HealthPanel:
         repo.log_health(body.metric, body.date, body.value, body.source)

@@ -27,35 +27,12 @@
 // see `health.implied_lb_per_week`, which exists to make that comparison
 // impossible to avoid noticing.
 
+import { MEAL_STEPS } from "../logs.js";
 import { quickLog } from "../quicklog.js";
 
-/**
- * `[key, value, label]`. Sizes go by first letter and there is no collision to
- * resolve — `s`, `m`, `l` mean the same thing here that they mean on the
- * bathroom panel's volume row, which is the point of using them twice.
- */
-const SIZE = [
-  ["s", "small", "small"],
-  ["m", "medium", "medium"],
-  ["l", "large", "large"],
-];
-
-/** 1–5, and the ends are printed beside the row. A scale whose direction you
- *  have to remember is one you will eventually answer backwards — the same
- *  argument the check-in makes at greater length. */
-const QUALITY = [
-  ["1", 1, "1"],
-  ["2", 2, "2"],
-  ["3", 3, "3"],
-  ["4", 4, "4"],
-  ["5", 5, "5"],
-];
-
-/** Two questions, no branch — the whole difference from the bathroom log. */
-export const STEPS = [
-  { name: "size", hint: "roughly, in calories", options: SIZE },
-  { name: "quality", hint: "1 processed · 5 whole food", options: QUALITY },
-];
+/** The questions live in `logs.js`, because the phone at `/m` asks the same
+ *  ones. Re-exported under the name the tests and the other panels use. */
+export const STEPS = MEAL_STEPS;
 
 export default quickLog({
   id: "meals",

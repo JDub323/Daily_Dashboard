@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <!-- The wordmark's two colours on the page's own ground, which is all an
+       icon at 48px can carry. Gold for the mark because gold is what this app
+       means by "written down". -->
+  <rect width="192" height="192" rx="42" fill="#0a0c12"/>
+  <rect x="34" y="46" width="124" height="12" rx="6" fill="#e8b458"/>
+  <rect x="34" y="90" width="124" height="12" rx="6" fill="#dfe6f2"/>
+  <rect x="34" y="134" width="72" height="12" rx="6" fill="#5ccfe6"/>
+</svg>

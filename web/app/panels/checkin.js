@@ -43,47 +43,18 @@
 import * as api from "../api.js";
 import { beginCapture, captureLabel, endCapture } from "../capture.js";
 import { el, mount } from "../dom.js";
+import { CHECKIN_ITEMS, toShown, toStored } from "../logs.js";
 import { rerender } from "../panel.js";
 import { put, store } from "../store.js";
 
-/**
- * `[key, label, what 1 means, what 5 means]`, in the order the ladder walks
- * them. The two ends are printed beside every row, because a scale whose
- * direction you have to remember is one you will eventually answer backwards.
- *
- * Motivation sits second, straight after the night it follows from, rather
- * than last. Last is the worst seat in a five-item questionnaire: it is the
- * one answered while you are already reaching for the next thing, and of the
- * five this is the answer that most deserves a moment — the other three are
- * readings off the body, which you either are or are not sore, and this one
- * is the only question about the day ahead rather than the night behind.
- *
- * Reordering is free. The row is stored by key, so the five columns are
- * untouched, `score` is the same sum it was, and every morning logged before
- * this is still comparable with every morning after it.
- */
-const ITEMS = [
-  ["sleep_quality", "sleep quality", "slept badly", "slept well"],
-  ["motivation", "motivation", "dreading it", "keen"],
-  ["fatigue", "fatigue", "fresh", "wiped out"],
-  ["soreness", "soreness", "loose", "wrecked"],
-  ["stress", "stress", "calm", "frazzled"],
-];
-
-/**
- * The three the panel shows upside down from how the table stores them.
- *
- * Membership here is the entire difference between the two directions. Adding
- * an item to the questionnaire whose words count up in something bad — a
- * `pain` scale, say — means adding its key here and nothing else.
- */
-const INVERTED = new Set(["fatigue", "soreness", "stress"]);
-
-/** What a tap on `n` means to the database. */
-export const toStored = (key, shown) => (INVERTED.has(key) ? 6 - shown : shown);
-
-/** What a stored value means on screen. Its own inverse — 6-(6-n) is n. */
-export const toShown = (key, stored) => (INVERTED.has(key) ? 6 - stored : stored);
+// The five questions, which of them the table stores upside down, and the pair
+// of functions that flip them, all live in `logs.js`. The phone at `/m` asks
+// the same five and has to agree about the direction — and disagreeing about
+// *that* would not throw, it would quietly file the good mornings as the bad
+// ones. Re-exported because the rest of the health tab imports them from here,
+// which is where they used to be.
+const ITEMS = CHECKIN_ITEMS;
+export { toShown, toStored };
 
 /** Today's reading for one metric, or null. The series is oldest-first, so
  *  the last point is today's only if its date says so — which is the whole
@@ -176,7 +147,7 @@ async function save() {
 export default {
   id: OWNER,
   title: "morning check-in",
-  // In the rotation rather than in the grid. This is the first of the four
+  // In the rotation rather than in the grid. This is the first of the five
   // registered, so it is the one whose position builds the shell — the plan
   // is registered before it and therefore keeps the left half.
   host: "cyc",

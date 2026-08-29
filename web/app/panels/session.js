@@ -30,27 +30,15 @@
 import * as api from "../api.js";
 import { beginCapture, captureLabel, endCapture } from "../capture.js";
 import { el, mount } from "../dom.js";
+import { RPE_ANCHOR, SESSION_KINDS } from "../logs.js";
 import { leaveCell } from "../nav.js";
 import { put, store } from "../store.js";
 
-/** `kind: key`. Alphabetical collision resolved once, here: sparring is `s`,
- *  so strength — the one you reach for less often — is `t`. */
-const KINDS = {
-  boxing: "b",
-  sparring: "s",
-  roadwork: "r",
-  strength: "t",
-  conditioning: "c",
-  other: "o",
-};
+// The six kinds and the ten RPE anchors live in `logs.js`, because the phone
+// at `/m` offers the same six and prints the same ten.
+const KINDS = SESSION_KINDS;
 
 const BY_KEY = new Map(Object.entries(KINDS).map(([kind, key]) => [key, kind]));
-
-/** The anchors that stop RPE 7 drifting into RPE 5 over a long camp. */
-const RPE_ANCHOR = {
-  1: "nothing", 2: "very easy", 3: "easy", 4: "comfortable", 5: "moderate",
-  6: "working", 7: "hard", 8: "very hard", 9: "near maximal", 10: "everything",
-};
 
 const OWNER = "session";
 

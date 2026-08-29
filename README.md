@@ -21,13 +21,31 @@ If the page says **"didn't send any data"**, something else already owns the por
 - **The week grid is clamped to 8am20138pm** and does not widen for outliers. It used to, and the page therefore got *longer* the busier the week was 2014 one 11:30pm event made every day on screen sixteen hours tall and pushed the year-so-far heatmap under the fold. Events lying wholly outside the window are not dropped: they go to a one-line strip above or below the grid, keeping their title and their time and giving up only their height. An event that merely straddles an edge stays in the grid and is clipped by it. `CLAMP` at the top of `calendar.js` turns the whole thing off and restores the old widening. The add box folds to a single line when nothing is being typed into it 2014 focus, hover or any text in it brings the picker, the buttons and the preview back.
 - **Calendar**: runs gcalcli directly as an argv list (prefixed with `wsl -e` when the server is on Windows), so gcalcli must be authed in WSL. stdin is closed on every call — gcalcli drops to an interactive menu whenever a subcommand cannot resolve its target calendar, and with stdin inherited that menu *hangs* until the timeout instead of failing. Every write names its `--calendar`, for the same reason.
 - **Quick add**: the box on the home hero takes one line per item ("fpm Thornhill Chapter 3 due thursday"), and a whole pasted list at once — Ctrl+Enter commits, the lines that could not be written stay behind with their errors while the rest disappear. `calparse.py` resolves the title, day and span locally; `todo.py` expands aliases and reads recurrence before it; `calclass.py` picks the calendar with a scikit-learn model fitted at boot on the account's own history — an event's calendar is its label, so the training set costs nothing. `POST /api/calendar/preview` resolves every line without writing, which is what the preview under the box shows.
-- **A line with no day in it is refused.** `calparse` still resolves one onto today — that is what makes it usable for an event — but it reports `date_explicit`, and the box rejects the line rather than inventing a due date. This is the one rule the todo layer adds and it applies to everything the box writes.
+- **A line with no day in it is refused, unless it says `someday`.** `calparse` still resolves a dateless line onto today — that is what makes it usable for an event — but it reports `date_explicit`, and the box rejects the line rather than inventing a due date. The exception is a word, not a mode: `fix the coffee table someday` (also `sometime`, `at some point`) says the omission was deliberate and writes **a todo and no Google event** — the one thing the box makes that Google never hears about. Those have no day, so no calendar and nothing to delete, and the schema enforces all four together. They land under the rule at the foot of the due list. A repeat cannot be undated, so `every tuesday someday` is refused.
 - **Aliases** (`[todo.subjects]` in `config.toml`) are whole-word substitutions, like variables: `os` → `Operating Systems` fires in "new os homework" and never in "buy banjos". Keys must be one word and are refused at load if they collide with a word the date parser reads (`sat`, `may`). Whether one fired is drawn on every previewed line and on the box's own border, because a subject you *forgot* to abbreviate looks exactly like ordinary text otherwise. The circled `?` lists them.
-- **Todo or event is decided by the target calendar**, not by a mode or a sigil — `[todo].todo_calendars` names the ones that mean work, and those get a row in the due list with a checkbox. The picker beside the box defaults to `auto`, which is *not* the classifier: it is the subject's own calendar, then `calclass`'s tests rule, then Homework, because nineteen dated lines in twenty are homework. `learned` is the model, one Tab away, and choosing any calendar explicitly is stored in `calendar_correction` and refitted at a heavier weight. Only writable calendars are offered — a `reader` calendar is drawn in the grid and can never be written to. Expect `learned` to be right about 66% of the time and to hold the answer in its top two about 92% (5-fold CV, 338 titles, 56.5% majority baseline); the ceiling is label noise, not the model, since `Homework` holds six birthdays and "do taxes".
+- **Todo or event is decided by the target calendar**, not by a mode or a sigil — `[todo].todo_calendars` names the ones that mean work, and those get a row in the due list. The picker beside the box defaults to `auto`, which is *not* the classifier: it is the subject's own calendar, then `calclass`'s tests rule, then Homework, because nineteen dated lines in twenty are homework. `learned` is the model, one Tab away, and choosing any calendar explicitly is stored in `calendar_correction` and refitted at a heavier weight. Only writable calendars are offered — a `reader` calendar is drawn in the grid and can never be written to. Expect `learned` to be right about 66% of the time and to hold the answer in its top two about 92% (5-fold CV, 338 titles, 56.5% majority baseline); the ceiling is label noise, not the model, since `Homework` holds six birthdays and "do taxes".
 - **Recurrence is materialised**, because `gcalcli add` has no flag for it: "every tuesday" writes twelve events and twelve rows. That is also what makes deleting one week's reading leave the other weeks standing. `for N weeks` and `until <date>` bound it; `[todo].recur_weeks` is the default and 40 occurrences is the cap.
 - **Ticking an item deletes its Google event**, and the delete is the careful half. gcalcli has no delete-by-id — `delete` takes a search string and `--iamaexpert` removes everything it matches without asking — so `feeds.delete_calendar_event` runs the search itself first and only proceeds when one calendar, one day and an exact title match leave exactly one event, whose id matches the one recorded at write time. The id comes from `add --details url`, which prints the event's htmlLink; its `eid` is base64 of "<event id> <calendar id>". Anything ambiguous is left alone and said out loud. The tick itself is local and commits first, so an unreachable Google cannot stop you marking homework done — the item then shows "on calendar" and can be retried.
 - **gcalcli's calendar cache goes stale and is load-bearing**: it is written once and never expires, so a calendar deleted in Google keeps being queried and Google answers 404, which fails the *whole* agenda call. `feeds.gcalcli` recognises that one signature and retries once after `--refresh`. Panels are shown the last line of gcalcli's traceback rather than the first 200 characters, which were always `sys.exit(main())`.
 - **Log**: `dashboard.log`, rotating. Panels show one line; the traceback is here.
+
+## The phone log — `/m`
+
+The five logs off the health tab — check-in, session, meals, drinks, in-and-out — as a screen you can use one-handed, standing up, with the laptop shut. Same server, same endpoints, same questions: `web/app/logs.js` holds what each log asks and both clients import it, so a step added there grows on both. It is *not* the desktop cell made narrow — that cell is a keyboard ladder (`m` `l` `4` is a large clean meal) and none of that argument survives a touchscreen, so the ladder is unrolled into rows of 48px buttons answered in any order.
+
+The theme is identical by construction rather than by eye: `web/tokens.css` was pulled out of `style.css` and both stylesheets import it.
+
+**Every write is queued first and flushed when the server is reachable.** This is the part that makes it work from a gym, and it is nearly free because of [Invariant 1] — every request already carries the browser's own date, and the three quick logs carry the hour, so a meal logged at 13:00 on Tuesday and flushed at 21:00 on Wednesday still lands at 13:00 on Tuesday. The server never consults its own clock. Queued entries are drawn on screen immediately, marked `queued`, alongside the ones the server already has. The queue drains oldest-first and stops at the first write it cannot send; a 4xx is dropped rather than retried forever, because an entry the server will never accept otherwise blocks everything behind it. There is **no de-duplication**: if the server commits a write and the response is lost, the flush retries and the row lands twice. The fix is one tap on the entry; the cure would be an idempotency column on four tables.
+
+**Getting your phone to it** is the actual work, and none of it is in this repo. The server binds `127.0.0.1` and has no auth, which is correct for what it is.
+
+1. **Tailscale** — the recommended answer. Phone and laptop join a private mesh; nothing is exposed publicly and there is no port forwarding. `tailscale serve` puts it on HTTPS under a real `*.ts.net` name, and that matters for more than tidiness: service workers require a secure context, so **over a plain `http://192.168.x.x` address the app cannot install as a PWA or open offline**. Everything else — the queue included — works either way.
+2. **`[server].host = "0.0.0.0"` on your own wifi** — one line, works immediately, LAN-only, no offline install, and an unauthenticated dashboard on the network. Fine for twenty minutes of deciding whether the thing is worth using.
+3. Public exposure — no.
+
+Then open `/m` and use the browser's *add to home screen*. `display: standalone` in the manifest is what drops the address bar.
+
+**`web/m/sw.js` caches the shell and has a hand-bumped `VERSION`.** Change any file it lists and bump it, or the phone keeps the old copy until the cache is evicted — an edit that does not appear, which is the same failure `StaticAssets`'s `no-cache` exists to prevent on the desktop. The API is deliberately never cached: a stale `GET /api/health` is yesterday's meals presented as today's, and "the server is unreachable" already has an honest answer on that screen.
 
 `run.cmd` and `.claude/launch.json` both call `run.sh`, so there is one launch path. The port lives only in `config.toml` — `.claude/launch.json` has to repeat it so the preview tool knows where to connect, and a test fails if the two drift apart.
 
@@ -37,7 +55,7 @@ If the page says **"didn't send any data"**, something else already owns the por
 PY=~/.local/share/daily-dashboard/venv/bin; $PY/python -m pytest && npm test && $PY/ruff check . && $PY/ruff format --check .
 ```
 
-897 Python tests and 113 JavaScript ones; none touch the network, the API, `dashboard.db`, or `state.json`. The JS runner is node's built-in `node --test`, so there is nothing to `npm install`.
+1038 Python tests and 171 JavaScript ones; none touch the network, the API, `dashboard.db`, or `state.json`. The JS runner is node's built-in `node --test`, so there is nothing to `npm install`.
 
 The suite is weighted toward the code that was hardest to check by hand: the elo curve, the hint penalty, the theorem draw, streaks, the LaTeX-in-JSON repair, the cache's exception policy and staleness flag, the day-rollover guards, the double-submit guards, and the `state.json` importer's PROVENANCE/PRESERVE rules.
 
@@ -63,7 +81,9 @@ dashboard/            the server
 
 web/                  the front end — native ES modules, no build step
   index.html
-  style.css     the design tokens; every panel style is a class here
+  tokens.css    the theme: palette, type scale, spacing. Imported by both
+                stylesheets, so the phone and the dashboard cannot drift
+  style.css     every panel style is a class here
   app/
     dom.js      el()/svg()/link() — the only way anything reaches the DOM
     api.js      fetch + ndjson, and the definition of "today"
@@ -82,9 +102,15 @@ web/                  the front end — native ES modules, no build step
     carousel.js the four logging panels taking turns in one card
     nudges.js   what the day is still waiting on, said out loud
     piano.js    the sampler behind the scale and chord buttons
+    logs.js     what the five logs ask — shared with the phone, imports nothing
     panels/     one file per panel
     modals/     theorems, math, tricks, day logs (the archives) + trickset,
                 and the sheet on how the calendar box reads a line
+  m/            the phone log — see 'The phone log' above
+    app.js      the five logs as touch targets; the ladder, unrolled
+    queue.js    writes that have not reached the server yet
+    when.js     the date and the hour, which here are the whole point
+    sw.js       caches the shell so it opens with the laptop asleep
   data/         piano.json — scale/chord content, out of the logic file
   vendor/katex  see PROVENANCE.txt
   vendor/piano  one mp3 per semitone, C42013Ab6 2014 see PROVENANCE.txt
@@ -125,8 +151,9 @@ first/last panel, `n` opens the next unfinished task, `?` lists the lot.
 
 `f` is three layers over one press, and they do not collide because only one of
 them is an alphabet: **letters** open the links it has just lettered,
-`c`/`l`/`m`/`p` reach the check-in, the session log, the meals and the
-in-and-out from any section, and **digits** open that numbered notification.
+`c`/`d`/`l`/`m`/`p` reach the check-in, the drinks, the session log, the meals
+and the in-and-out from any section, and **digits** open that numbered
+notification.
 Standing on an article you get `f a`–`f e` on the headlines, `f m` to the meal
 log and `f 1` to whatever is in the corner. The mode line prints all three
 ranges while the layer is up. The
@@ -146,8 +173,8 @@ not use — gives them back to the tabs.
 
 So the flow is: **move the ring to a cell, then one key enters it.** `i` for a
 text box; `b` on the session log starts it *on boxing*; `s` on the in-and-out
-log starts it *on stool*; `m`/`p` on the meal log open it standing on the hour,
-one step earlier or later. Enter enters whatever the cell's first question is.
+log starts it *on stool*; `w` on the drinks log starts it *on water*; `m`/`p` on
+the meal log open it standing on the hour, one step earlier or later. Enter enters whatever the cell's first question is.
 After that a single-answer field advances by itself and a text box advances on
 Enter, and the last answer commits — a finished log lets go of the keyboard on
 its own, so the `Esc` that used to follow every entry is one the entry no
@@ -167,13 +194,15 @@ m l 4          a large, fairly unprocessed meal, now
 m m m ⏎ l 4    a large meal two hours ago — m and p are minus and plus
 f p  s 2 m     a soft stool, medium, now
 f p  u 4 l     dark urine, large volume, now
+f d  w ⏎       one drink of water, now
+f d  c 1.4 ⏎   a 16.9oz coffee
 b 7 45 ⏎ ⏎     45 minutes of boxing at RPE 7
 ```
 
 The meal log asks the hour *first*, which is why `m` at that card steps it back
 rather than picking a size, and why `⏎` — "the hour is already right" — is what
-skips past it. Only the meal log does this: the in-and-out log has no global
-key of its own and is answered more often, so a question in front of it would
+skips past it. Only the meal log does this: the other two have no global key of
+their own and are answered more often, so a question in front of either would
 cost a keystroke on every entry to save one on a few.
 
 There used to be a global `b` for the in-and-out log, and it is gone: `b` is
@@ -182,21 +211,48 @@ ambiguous which of the two you meant — and that ambiguity was the thing
 standing in the way of the one-key rule above.
 
 Each entry carries the hour it happened, rounded down, starting at now; `-` and
-`+` walk it. Both panels are built from a list of steps in `quicklog.js` — the
-bathroom one branches on its first answer (a stool is asked for solidity, urine
-for colour) and nothing else about them differs.
+`+` walk it. All three panels are built from one list of steps in `quicklog.js`,
+and they differ in exactly two ways: the bathroom one branches on its first
+answer (a stool is asked for solidity, urine for colour), and the drinks one
+ends in a **typed** answer rather than a row of buttons.
 
-**The four logging panels take turns.** Under the training hero the health tab
+**Drinks are counted in drinks**, where a drink is twelve ounces of it — a can.
+Water, electrolyte water, gatorade, coffee, alcohol; the box takes `1.5`, `.5`
+and `1 1/2` alike, and it arrives holding `1` with the text selected, so `w ⏎`
+is one drink of water and the number is only typed when there is something to
+say. It is the one bucketless field in either log, and the reason is that the
+answer is *printed on the bottle*: sizes and volumes are buckets because nobody
+knows how big their lunch was, and rounding a measurement to small/medium/large
+would throw away accuracy that cost nothing. Alcohol changes the unit to the
+standard drink — a shot, a beer and a glass of wine are each 1 — and is the one
+kind that counts toward none of the day's fluid. Those two rules and the
+sugar/no-sugar line between electrolyte water and gatorade live behind the `?`
+on the card rather than on it, for the reason the calendar's sheet gives: a
+panel whose whole claim is that it costs nothing cannot open with a paragraph
+of definitions. The tab carries no dot and asks nothing of the day — a
+hydration target you hit by *logging* is a target that teaches you to log, and
+the panel already has a measurement of whether it worked one tab over.
+
+What it feeds: the hero quotes the drink log's ml/day on the dark-urine line in
+preference to the watch's hydration glyph (that one is tapped by hand, so a day
+nobody tapped it is indistinguishable from a day nobody drank), and it adds two
+lines of its own — a week averaging over three coffees a day, and four or more
+standard drinks in seven days. Both are there as the cheap explanations for
+lines already above them: a flat HRV week and a sleep score that does not match
+the hours usually have a duller cause than overtraining. Neither says anything
+until the log has been kept five days out of seven.
+
+**The five logging panels take turns.** Under the training hero the health tab
 is two halves: the plan on the left, which is what you read, and on the right
-one card that cycles through the check-in, the session log, the meals and the
-in-and-out every five seconds — the shape of the Windows news strip, and for
+one card that cycles through the check-in, the session log, the meals, the
+drinks and the in-and-out every three seconds — the shape of the Windows news strip, and for
 its reason. Hovering pauses it, selecting it with the focus ring holds it, and
 a ladder running on it freezes it outright, so nothing rotates through a
 half-typed meal. The arrows turn it by hand once the ring is on it, and
-`f c`/`f l`/`f m`/`f p` stop it on one from anywhere. Nothing is rebuilt on the
+`f c`/`f d`/`f l`/`f m`/`f p` stop it on one from anywhere. Nothing is rebuilt on the
 turn — only `visibility` moves — because these panels hold captures,
 half-typed inputs and a cursor into a ladder, and tearing them down would drop
-all three every five seconds. `visibility` and not `display`, because the four
+all three every three seconds. `visibility` and not `display`, because the
 slides share one grid cell so the card is always as tall as the tallest of
 them: hidden the other way they contribute no height and the card resized 200px
 under the pointer every time it turned. It also stops turning entirely when its

@@ -28,65 +28,17 @@
 // nothing happened, and a panel that cannot tell those apart is a panel that
 // warns you about your Sundays.
 
+import { BATHROOM_STEPS } from "../logs.js";
 import { quickLog } from "../quicklog.js";
 
 /**
- * `[key, value, label]`, in the order the ladder walks them.
- *
- * The keys are the first letters where they can be, and `s` goes to stool
- * rather than to solid or to small — the collision is resolved once, in favour
- * of the answer that comes first in the sequence, so the first keystroke never
- * has to be thought about. Everything downstream of it is unambiguous inside
- * its own step, which is what a per-step keyboard buys.
+ * The questions live in `logs.js`, because the phone at `/m` asks the same
+ * ones. Re-exported under the name the tests and the other panels use — and
+ * it is still exported so the branch can be tested without a DOM: a step whose
+ * two options share a key is a button you can never reach from the keyboard,
+ * and that is a bug you would find months later while standing in a bathroom.
  */
-const KIND = [
-  ["s", "stool", "stool"],
-  ["u", "urine", "urine"],
-];
-
-const SOLIDITY = [
-  ["1", "liquid", "liquid"],
-  ["2", "soft", "soft"],
-  ["3", "solid", "solid"],
-];
-
-const COLOR = [
-  ["1", "clear", "clear"],
-  ["2", "light", "light"],
-  ["3", "yellow", "yellow"],
-  ["4", "darker", "darker"],
-];
-
-const VOLUME = [
-  ["s", "small", "small"],
-  ["m", "medium", "medium"],
-  ["l", "large", "large"],
-];
-
-/**
- * The ladder, and the one branch either quick log has: the second question is
- * a different question depending on the first answer.
- *
- * Exported so it can be tested without a DOM — a step whose two options share
- * a key is a button you can never reach from the keyboard, and that is a bug
- * you would find months later while standing in a bathroom.
- */
-export const STEPS = [
-  { name: "kind", options: KIND },
-  {
-    name: "solidity",
-    hint: "1 loosest · 3 formed",
-    options: SOLIDITY,
-    when: (draft) => draft.kind === "stool",
-  },
-  {
-    name: "color",
-    hint: "1 clear · 4 dark",
-    options: COLOR,
-    when: (draft) => draft.kind === "urine",
-  },
-  { name: "volume", options: VOLUME },
-];
+export const STEPS = BATHROOM_STEPS;
 
 export default quickLog({
   id: "bathroom",

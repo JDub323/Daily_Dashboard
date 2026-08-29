@@ -1,0 +1,39 @@
+// The date and the hour, which on this client are the whole point.
+//
+// [Invariant 1] says the browser owns "today" and the server never asks its
+// own clock. On the desktop that is a correctness rule about a machine in WSL
+// disagreeing with the tab in front of it. Here it is the feature: the phone
+// decides what day and what hour an entry happened, writes both into the body,
+// and the entry lands there whenever it eventually reaches the server — an
+// hour later, or tomorrow morning when the laptop wakes up.
+//
+// So these two functions are the smallest and the most load-bearing file in
+// this directory, and they are a copy of `app/api.js`'s rather than an import
+// of it: that module is the desktop's HTTP client, and pulling it in for two
+// lines of date formatting would pull `fetch` wrappers and an error class the
+// phone has its own opinions about.
+
+export const localISO = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+export const today = () => localISO(new Date());
+
+/** The current hour, rounded down — what the three quick logs record.
+ *
+ *  Rounded because that is what can be answered truthfully from memory a
+ *  minute later, and because a minutes field is another thing to tap on a
+ *  budget of about four. */
+export const nowHour = () => new Date().getHours();
+
+/** `14` -> `2pm`, `0` -> `12am`. */
+export const clock = (hour) => {
+  const h = ((hour % 24) + 24) % 24;
+  const suffix = h < 12 ? "am" : "pm";
+  return `${h % 12 === 0 ? 12 : h % 12}${suffix}`;
+};
+
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
+
+export const dayLabel = (d = new Date()) =>
+  `${DAYS[d.getDay()]} ${MONTHS[d.getMonth()]} ${d.getDate()}`;

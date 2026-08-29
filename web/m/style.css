@@ -1,0 +1,312 @@
+/* The phone log.
+
+   The theme is the dashboard's, imported rather than restated: same palette,
+   same six-step type scale, same 4px spacing, same monospace. That is the whole
+   reason `tokens.css` was pulled out of `style.css` — a second copy of forty
+   custom properties is a second copy that drifts, and "same theme" has to mean
+   the same values rather than the same intention.
+
+   What is *not* shared is every layout rule in `style.css`, and that is the
+   point of the split. This is a one-column screen with 48px hit targets and a
+   thumb-reachable tab bar; that is a six-column grid with an 11px label on
+   every card and a keyboard ring. The tokens are the agreement between them. */
+@import url("../tokens.css");
+
+* { box-sizing: border-box; }
+
+html {
+  /* Stops iOS scaling text up in landscape, which on a page of button rows
+     turns a tidy 3-across into a 2-across with one orphan. */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: var(--t-body)/1.5 "Cascadia Code", Consolas, "JetBrains Mono", monospace;
+  /* Room for the fixed tab bar plus whatever the home indicator wants. */
+  padding: 0 0 calc(76px + env(safe-area-inset-bottom));
+  min-height: 100vh;
+  /* The rubber-band overscroll on iOS shows the page behind this one, which in
+     a standalone app is nothing at all — a white flash on a dark screen. */
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* --- the top line ---------------------------------------------------------
+   The day, the hour every entry is filed against, and whether anything is
+   waiting to be sent. Sticky rather than fixed: it is worth its 44px while you
+   are choosing an hour and not worth them while you are reading a list. */
+
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: calc(var(--s3) + env(safe-area-inset-top)) var(--s4) var(--s3);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-soft);
+}
+.top-day { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
+#day {
+  font-size: var(--t-meta);
+  color: var(--faint);
+  letter-spacing: .06em;
+  text-transform: lowercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The hour is the one control up here, so it is styled as one: gold, because
+   what it says is which hour you are writing into, and getting that wrong is
+   the mistake this screen exists to make cheap to fix. */
+.hour {
+  font: inherit;
+  font-size: var(--t-lede);
+  color: var(--gold-text);
+  background: var(--panel2);
+  border: 1px solid var(--gold-dim);
+  border-radius: var(--r-pill);
+  padding: var(--s1) var(--s4);
+  min-height: 36px;
+  cursor: pointer;
+}
+.hour.open { background: var(--raised); }
+
+.net { font-size: var(--t-meta); color: var(--faint); text-align: right; }
+.net.waiting { color: var(--gold-text); }
+
+/* --- the hour strip -------------------------------------------------------
+   Twenty-four chips on one scrolling row, opened from the button above. A
+   native <select> would be less markup and the wrong control: the answer is
+   almost always within two of now, and a wheel makes "an hour ago" cost the
+   same as "eleven hours ago". */
+
+.hours {
+  display: flex;
+  gap: var(--s2);
+  overflow-x: auto;
+  padding: var(--s3) var(--s4);
+  margin-bottom: var(--s2);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border-soft);
+  scrollbar-width: none;
+}
+.hours::-webkit-scrollbar { display: none; }
+.hourchip {
+  flex: none;
+  font: inherit;
+  font-size: var(--t-body);
+  color: var(--dim);
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: var(--s2) var(--s3);
+  min-height: 40px;
+  cursor: pointer;
+}
+.hourchip.on { color: var(--bg); background: var(--gold); border-color: var(--gold); }
+
+/* --- a question ------------------------------------------------------------ */
+
+main { padding: var(--s3) var(--s4) 0; }
+
+.q { margin-bottom: var(--s5); }
+.q-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  margin-bottom: var(--s2);
+  flex-wrap: wrap;
+}
+.q-name {
+  font-size: var(--t-meta);
+  font-weight: 700;
+  color: var(--dim);
+  text-transform: lowercase;
+  letter-spacing: 1.2px;
+}
+/* `min-width: 0` and the wrap on `.q-head` together: without both, a long hint
+   is one unbreakable flex item that runs off the right edge rather than moving
+   to its own line. */
+.q-hint { font-size: var(--t-meta); color: var(--faint); min-width: 0; }
+.q-hint.queued { color: var(--gold-text); }
+
+/* Answers, as a grid rather than a wrapping flex row. A flex row leaves the
+   last item on its own line at a different width from its neighbours, which on
+   a row of three sizes reads as one of them being special. Equal columns,
+   always, and 48px tall — the size a thumb hits without aiming, which is the
+   entire specification of this screen. */
+.opts { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s2); }
+.opts-10 { grid-template-columns: repeat(5, 1fr); }
+
+.opt {
+  font: inherit;
+  font-size: var(--t-body);
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  min-height: 48px;
+  padding: var(--s2);
+  cursor: pointer;
+  /* A 200ms delay before every tap registers, on a screen built around taps. */
+  touch-action: manipulation;
+}
+.opt:active { background: var(--raised); }
+/* Chosen. Gold means "this is answered" here exactly as it means "this is done"
+   on the dashboard — the one colour in the palette that is about completion. */
+.opt.on {
+  color: var(--bg);
+  background: var(--gold);
+  border-color: var(--gold);
+  font-weight: 700;
+}
+/* Five and ten of them respectively, so they can be square and dense. */
+.opt.num { font-size: var(--t-lede); }
+
+/* --- a typed answer -------------------------------------------------------- */
+
+.row { display: flex; gap: var(--s2); margin-top: var(--s2); }
+.amount {
+  flex: 1;
+  font: inherit;
+  /* 16px exactly, and it is not on the type scale by accident: iOS zooms the
+     page when a field under 16px takes focus and never zooms back out. This is
+     the one place in either stylesheet where the browser picks the size. */
+  font-size: 16px;
+  color: var(--fg);
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  min-height: 48px;
+  padding: 0 var(--s3);
+}
+.amount:focus { outline: none; border-color: var(--accent-dim); }
+.amount.bad { border-color: var(--bad); }
+.go {
+  font: inherit;
+  font-size: var(--t-body);
+  color: var(--bg);
+  background: var(--gold);
+  border: 0;
+  border-radius: var(--r-sm);
+  min-height: 48px;
+  padding: 0 var(--s5);
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.go:active { background: var(--gold-text); }
+
+/* --- what is logged today -------------------------------------------------- */
+
+.empty { color: var(--faint); font-size: var(--t-meta); margin: var(--s4) 0 var(--s6); }
+
+.entries { list-style: none; margin: var(--s5) 0 var(--s6); padding: 0; }
+.entry {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--border-soft);
+}
+.entry-at {
+  flex: none;
+  width: 5.5ch;
+  font-size: var(--t-meta);
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.entry-what { flex: 1; min-width: 0; }
+/* Written here, not there yet. Dimmed rather than badged in red: it is the
+   normal state of an entry made in a gym, not a failure. */
+.entry.queued .entry-what { color: var(--dim); }
+.entry-tag { font-size: var(--t-meta); color: var(--gold-text); }
+.del {
+  flex: none;
+  font: inherit;
+  font-size: var(--t-lede);
+  color: var(--faint);
+  background: none;
+  border: 0;
+  /* 44px square even though the glyph is 8px wide — a delete you hit by
+     accident is worse than one you have to aim at, so it is the target that is
+     generous and the mark that is quiet. */
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.del:active { color: var(--bad); }
+
+/* --- the tab bar ------------------------------------------------------------
+   Fixed to the bottom, which is where a thumb is. The dashboard puts its tabs
+   at the top because a mouse is equidistant from everything; a phone is not. */
+
+.tabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1px;
+  background: var(--border-soft);
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: 1px solid var(--border);
+}
+.tab {
+  font: inherit;
+  font-size: var(--t-meta);
+  color: var(--faint);
+  background: var(--panel);
+  border: 0;
+  min-height: 56px;
+  padding: var(--s2) 2px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.tab.on { color: var(--gold-text); background: var(--panel2); box-shadow: inset 0 2px 0 var(--gold); }
+
+/* --- the toast --------------------------------------------------------------
+   Above the tab bar rather than over it: the one thing it ever says is that a
+   write was refused, and covering the control you would reach for next is a
+   poor way to report it. */
+
+.toast {
+  position: fixed;
+  left: var(--s4);
+  right: var(--s4);
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  z-index: 4;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--s3) var(--s4);
+  font-size: var(--t-meta);
+  color: var(--fg);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity .18s ease, transform .18s ease;
+  pointer-events: none;
+}
+.toast.up { opacity: 1; transform: none; }
+
+/* A tablet, or a phone in landscape. The column stops growing — a 700px-wide
+   row of three buttons is three buttons you have to reach across — and the
+   whole thing centres instead. */
+@media (min-width: 560px) {
+  main, .top { max-width: 520px; margin-inline: auto; }
+  .tabs { max-width: 520px; margin-inline: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { transition: none; }
+}

@@ -1,0 +1,116 @@
+/* Design tokens. Dark + monospace, gold for completion, cyan for links. */
+:root {
+  /* ---- surfaces ----
+     Four opaque steps, each about 4.8 L* above the last. The number is the
+     whole point: on a dark ground depth comes from the surface's own lightness,
+     because a shadow cast onto near-black is a shadow nobody sees. Below about
+     3 L* the eye stops reading a lighter rectangle as a *thing* and starts
+     reading it as a smudge on the page.
+
+     What was here before stepped 2.4 — and worse, `.panel` painted its colour
+     at .86 alpha, which composited the card back *down* toward the page and cost
+     another half a point. Every card in the app was therefore held up by its 1px
+     border alone, which is why the whole thing read as a wireframe rather than
+     as a stack of objects.
+
+     Opaque, so nothing here is undone by whatever ends up behind it. */
+  --bg: #0a0c12;      /* L*  3.4 — the page */
+  --panel: #141822;   /* L*  8.3 — a card */
+  --panel2: #1c2130;  /* L* 12.9 — a hero, a field, the statusline */
+  --raised: #252b3c;  /* L* 17.7 — the modal, a chip, anything that floats */
+
+  /* Rules are alpha rather than fixed hex so one value works on all four
+     surfaces: a #232a3a hairline that reads on the page is invisible on the
+     modal, and keeping a separate rule colour per surface is four tokens that
+     will drift apart the first time one of them is nudged. */
+  --border: rgba(223,230,242,.16);
+  --border-soft: rgba(223,230,242,.09);
+
+  /* ---- text ----
+     Raising the surfaces lowers every alpha-based text colour sitting on them,
+     so these moved in the same commit. The old --faint measured 2.50:1, under
+     even the 3:1 floor for large text, and it was the colour the app's *smallest*
+     type used — month labels, feed stamps, the digit on each tab. All three now
+     clear AA on both --panel (7.4 / 5.1) and --panel2 (7.0 / 4.8). */
+  --fg: #dfe6f2;
+  --dim: rgba(223,230,242,.70);
+  --faint: rgba(223,230,242,.55);
+
+  --gold: #e8b458;
+  /* Cyan's dim twin, for the same jobs --gold-dim used to do on things
+     that are current rather than finished. */
+  --accent-dim: rgba(92,207,230,.5);
+  /* Gold that carries words. --gold-dim is 3.3:1 and belongs on borders; it was
+     also the colour of the one line a collapsed hero shows you, which is the
+     worst place in the app to put text nobody can read. */
+  --gold-text: #f2c877;
+  --gold-dim: rgba(232,180,88,.5);
+  --accent: #5ccfe6;
+  --ok: #8bd49c;
+  --bad: #e0687a;
+
+  /* ---- the plate ----
+     Chromed type: cold steel down to a hard dark bevel, then gold. The stops
+     are hard rather than smooth on purpose — a ramp reads as a gradient fill,
+     an edge reads as a machined surface, and the near-black band at 47–51% is
+     the whole illusion.
+
+     Only legible at size. Below roughly 40px the six bands land inside a
+     couple of pixels each and the glyph turns to mud, so this is for the title
+     screen's wordmark, the app title, and hero figures — never a label.
+     `--plate-flat` is the same idea for things at --t-display, with the bevel
+     dropped and half the range: enough to catch light, not enough to muddy. */
+  --plate: linear-gradient(178deg,
+    #eef3fb 0 25%, #9fb0c8 26% 46%, #2c3444 47% 51%,
+    #e8b458 52% 65%, #8a6a2c 66% 83%, #d9c39a 100%);
+  --plate-flat: linear-gradient(178deg, #f2f6fd 0 38%, #b9c6da 42% 54%, #e8b458 60% 100%);
+
+  /* Film grain as a data URI so there is no asset and no request. Used at low
+     opacity over chrome, never over body copy. */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+
+  /* ---- type scale ----
+     Six steps on a ~1.25 ratio, replacing thirteen sizes that all sat between
+     9.5px and 21px. The old range gave a largest-over-body ratio of 1.56, which
+     is another way of saying nothing on the page was ever big — on a dashboard,
+     whose whole job is to make a few numbers land before you have read anything,
+     that is the expensive kind of wrong.
+
+     Only --hero and --display are new. The other four are where the old thirteen
+     land once they stop being decided one rule at a time. */
+  --t-meta: 11px;     /* labels, stamps, kbd, the digit on a tab */
+  --t-body: 14px;     /* anything read */
+  --t-lede: 17px;     /* a hero's heading, a lead line */
+  --t-head: 21px;     /* the app title, a modal title */
+  --t-display: 32px;  /* a rating, a secondary figure */
+  --t-hero: 44px;     /* the one number a hero exists to report */
+
+  /* ---- spacing ----
+     A 4px base. The file had 21 distinct padding and margin values — essentially
+     every integer up to 22 — which is the kind of thing you feel as "off"
+     without ever being able to point at it. */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
+
+  /* Three radii. There were eight — 2, 3, 4, 6, 8, 10, 12 and 18 — and eight
+     means none of them reads as this app's. Controls, cards, and things that
+     are pills.
+
+     --r-mark is the fourth and is not one of the three: a heatmap cell is
+     11px square and a bar is 3px tall, and those are data marks rather than
+     components. A control radius on an 11px square is a circle. */
+  --r-sm: 6px; --r-md: 10px; --r-pill: 999px;
+  --r-mark: 2px;
+
+  /* The Edge-ish measure, widened from 1040 to give six grid columns room. The
+     margin either side of it is still the point rather than waste: a dashboard
+     that fills a 32" monitor edge to edge is one you scan instead of read.
+     Prose does *not* get this width — see --measure-text. */
+  --measure: 1240px;
+
+  /* The comfortable band is 45–75 characters. Hero panels were running 116 and
+     grid columns 36, so the app managed to be wrong in both directions at once.
+     This is applied to the long-form blocks only, which leaves tables, the
+     heatmap and the keyboard sheet free to use the full width. */
+  --measure-text: 68ch;
+}
+
