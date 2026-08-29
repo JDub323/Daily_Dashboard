@@ -772,12 +772,24 @@ def _parse_search(tsv: str) -> list[SearchRow]:
     lines = tsv.strip().splitlines()
     if not lines:
         return []
-    header = lines[0].split("\t")
-    if header[0] != "start_date":
-        log.warning("gcalcli search had no header row; first line was %r", lines[0][:120])
-        return []
-    index = {name: i for i, name in enumerate(header)}
+    index = {name: i for i, name in enumerate(lines[0].split("\t"))}
+    # The two columns this function exists to read, and the whole of the header
+    # check. It used to additionally require `start_date` in column 0 -- which
+    # is what `--details calendar` produces, and *not* what `--details id`
+    # does: gcalcli puts `id` first there, so every search parsed to zero rows.
+    #
+    # That was not a cosmetic failure. `delete_calendar_event` reads this to
+    # find the event it is about to remove, and no rows meant "the id we
+    # recorded is not among the matches", which it reports as *already gone*.
+    # So every tick marked its event deleted and left it standing on the
+    # calendar, silently, for as long as this has been here.
+    #
+    # A header-driven parser exists precisely so column order does not matter;
+    # pinning position 0 gave that up and kept none of the safety. Requiring
+    # both names is the guard that was wanted -- a line of event data will not
+    # contain the literal words `id` and `title` in tab-separated fields.
     if "id" not in index or "title" not in index:
+        log.warning("gcalcli search had no usable header; first line was %r", lines[0][:120])
         return []
 
     rows: list[SearchRow] = []

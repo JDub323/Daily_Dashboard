@@ -547,3 +547,48 @@ def test_a_second_failure_after_refreshing_is_reported(fetcher, monkeypatch):
     with pytest.raises(feeds.FeedError) as caught:
         fetcher.gcalcli("agenda", "2026-08-17", "2026-08-24")
     assert "404" in str(caught.value)
+
+
+# --- search parsing --------------------------------------------------------
+#
+# The half of the calendar code that had no tests at all, which is why it was
+# broken in production for as long as it was: every API-level test stubs
+# `delete_calendar_event` wholesale, so nothing ever fed it gcalcli's real
+# output.
+
+# What `search --tsv --details id` actually prints. `id` is the first column --
+# not `start_date`, which is what `--details calendar` leads with. The parser
+# used to require the latter and therefore threw every row away.
+SEARCH_TSV = (
+    "id\tstart_date\tstart_time\tend_date\tend_time\ttitle\n"
+    "rl0lrl4pdf14idhvmt7h60e3os\t2027-08-25\t\t2027-08-26\t\tOperating Systems Reading 01\n"
+)
+
+
+def test_search_rows_are_read_when_id_leads_the_header():
+    """The regression. Zero rows here reads to `delete_calendar_event` as "the
+    id we recorded is not among the matches", which it reports as *already
+    gone* -- so every tick marked its event deleted and left it standing."""
+    rows = feeds._parse_search(SEARCH_TSV)
+    assert [r.id for r in rows] == ["rl0lrl4pdf14idhvmt7h60e3os"]
+    assert [r.title for r in rows] == ["Operating Systems Reading 01"]
+
+
+def test_search_rows_are_read_whatever_the_column_order():
+    """Header-driven means header-driven. The point of reading the names is
+    that a gcalcli release may reorder the columns and this still works."""
+    rows = feeds._parse_search(
+        "title\tid\tstart_date\n" "Chapter 3\tabc123\t2026-08-25\n"
+    )
+    assert [(r.id, r.title) for r in rows] == [("abc123", "Chapter 3")]
+
+
+def test_search_output_with_no_header_is_refused():
+    """The guard that was wanted. A line of event data does not contain the
+    literal words `id` and `title` in tab-separated fields."""
+    assert feeds._parse_search("2026-08-25\t\tSomething\n") == []
+
+
+def test_empty_search_output_is_no_rows_rather_than_an_error():
+    assert feeds._parse_search("") == []
+    assert feeds._parse_search("id\tstart_date\ttitle\n") == []
