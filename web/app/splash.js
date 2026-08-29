@@ -249,10 +249,33 @@ export function initSplash() {
     true,
   );
 
-  // Clicking anywhere puts the focus back where the key listener can hear it.
-  // Without this a click on the backdrop steals focus to <body> and Enter
-  // still works — but only because the listener is on window. Belt and braces.
-  splash.addEventListener("pointerdown", () => splash.focus({ preventScroll: true }));
+  // A tap anywhere raises the curtain, and on a touchscreen it is the only way
+  // to. The splash was dismissed by Enter and by nothing else, which is fine on
+  // the machine this was written on and makes it a dead end on a phone: there
+  // is no keyboard until something asks for one, and the splash is not a text
+  // field, so nothing ever does. The dashboard was unreachable from iOS.
+  //
+  // Dismissing on click rather than only focusing is also the plainer
+  // behaviour on a desktop — a splash screen you click to get past is what
+  // everyone expects — and it replaces the focus-restoring handler rather than
+  // joining it, because a screen that is going away has no use for focus.
+  //
+  // `preventDefault` matters on touch: without it the browser synthesises a
+  // click after the tap, and that click lands on whatever the splash was
+  // covering. Tapping to start would press a button on the dashboard behind it.
+  splash.addEventListener("pointerdown", (event) => {
+    if (!open) return;
+    event.preventDefault();
+    dismiss();
+  });
+
+  // Say which of the two it is. `pointer: coarse` is the primary input being a
+  // finger — a touchscreen laptop still reports `fine` and still reads "press
+  // enter", which is right, because it has both and one of them is faster.
+  if (matchMedia("(pointer: coarse)").matches) {
+    $(".sp-press").textContent = "TAP TO START";
+    splash.setAttribute("aria-label", "sharpness — tap to begin");
+  }
 
   watchForReturn();
   showSplash("boot");
