@@ -728,7 +728,7 @@ const SOURCE_LABEL = {
   default: "default",
   chosen: "chosen",
   // Nothing decided a calendar, because the line does not want one.
-  someday: "undated",
+  todo: "undated",
 };
 
 
@@ -784,11 +784,11 @@ function previewLine(line) {
     );
   }
 
-  // A `someday` line has no date and no calendar, because it writes no event.
-  // Both halves are stated rather than left blank: "someday" where the day
-  // goes, and "not on the calendar" where the target does — a line that quietly
+  // A `todo` line has no date and no calendar, because it writes no event.
+  // Both halves are stated rather than left blank: "no day" where the day goes,
+  // and "not on the calendar" where the target does — a line that quietly
   // showed neither would look like a line that had failed to parse.
-  const day = line.undated ? "someday" : (() => {
+  const day = line.undated ? "no day" : (() => {
     const date = parseISO(line.date);
     return `${DAY_NAMES[(date.getDay() + 6) % 7]} ${MONTHS[date.getMonth()]} ${date.getDate()}`;
   })();

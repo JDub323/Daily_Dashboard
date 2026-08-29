@@ -1217,7 +1217,7 @@ textarea.cal-input.bad:focus { outline-color: var(--bad); }
   border-radius: var(--r-pill);
   padding: 1px var(--s2);
 }
-/* A `someday` line is filed nowhere, and the pill says so in the register of an
+/* A `todo` line is filed nowhere, and the pill says so in the register of an
    absence rather than of a target — same shape, none of the accent colour, so
    it does not read as a calendar named "not on the calendar". */
 .cal-pill.none { border-color: var(--border); color: var(--faint); }
@@ -1431,7 +1431,7 @@ select.cal-picker option { background: var(--panel2); color: var(--fg); }
 /* Work with no day, under a rule. The rule is the whole statement: above it the
    list is sorted by when things are owed, below it nothing is, and a border is
    a cheaper way to say that than a sentence would be. */
-.todo-someday {
+.todo-undated {
   margin-top: var(--s3);
   padding-top: var(--s3);
   border-top: 1px solid var(--border);

@@ -259,8 +259,8 @@ export default {
       // list saying a feature exists — the box's own refusal message is where
       // that is advertised, at the moment it is useful.
       undated.length
-        ? el("div.todo-someday", null,
-            el("div.todo-when", { text: `someday · ${undated.length}` }),
+        ? el("div.todo-undated", null,
+            el("div.todo-when", { text: `no date · ${undated.length}` }),
             ...undated.map(row),
           )
         : null,

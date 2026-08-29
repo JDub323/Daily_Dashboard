@@ -1029,7 +1029,7 @@ class TodoItem(Base):
     `due_date`."""
 
     due_date: dt.date | None = None
-    """Null for a `someday` item: work that is owed but not on a day.
+    """Null for an undated (`todo`) item: work that is owed but not on a day.
 
     Those are the rows this dashboard owns outright. There is no Google event
     behind one, so no calendar, no `event_id`, and nothing to delete when it is

@@ -430,7 +430,7 @@ def _resolve_line(
             title=parsed.title if parsed else resolved.raw,
             date=None,
             calendar=None,
-            source="someday",
+            source="todo",
             warning=warning,
             raw=resolved.raw,
             aliases=[api.AliasHit(key=h.key, name=h.name) for h in resolved.hits],
@@ -1084,7 +1084,7 @@ def _register(app: FastAPI) -> None:
         # Recorded against what the box *would* have done, which has to be
         # recomputed: `line.calendar` is already the override, so comparing the
         # two would be comparing the choice with itself.
-        # The first *dated* line, not simply the first: a `someday` item was
+        # The first *dated* line, not simply the first: an undated item was
         # never filed anywhere, so it cannot be evidence about where the picker
         # should have filed things.
         dated = [(r, ln) for r, ln in done if not r.undated]

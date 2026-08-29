@@ -2726,7 +2726,7 @@ class Repository:
         marked pending -- means a list that shows work Google has never heard
         of, which is the failure mode this whole feature exists to avoid.
 
-        A `someday` item has no event, and so arrives here with no date and no
+        An undated (`todo`) item has no event, and so arrives here with no date and no
         calendar. `event_deleted` is set from the date rather than passed,
         because there is exactly one right answer and asking every caller for
         it is asking to eventually be told the wrong one -- the schema's last

@@ -55,26 +55,27 @@ enforcing it (see `Parsed.date_explicit`) because the two callers want opposite
 things: an event on the wrong day is one drag in Google, but a *due date* that
 nobody typed is a lie about when work is owed, and it is worse than no item.
 
---- someday ----------------------------------------------------------------
+--- todo -------------------------------------------------------------------
 
-The rule above has one exception, and it is a word rather than a mode:
+The rule above has one exception, and it is the first word of the line:
 
-    fix the coffee table someday
+    todo fix the coffee table
+    todo: fix the coffee table
 
-`someday` (or `sometime`) says that the omission was deliberate. The line then
-writes a row and *no Google event* -- there is no day to put one on, and a
-calendar is not a place to keep things that are not happening at a time. So an
-undated item lives only here, which is the one thing in this feature that is
-not mirrored anywhere.
+`todo` -- in any case, with or without the colon -- says that the omission was
+deliberate. The line then writes a row and *no Google event*: there is no day
+to put one on, and a calendar is not a place to keep things that are not
+happening at a time. So an undated item lives only here, which is the one thing
+in this feature that is not mirrored anywhere.
 
-A word and not a sigil for the same reason the rest of this module is a
-rewrite rather than a flag: the box has one grammar, you type a sentence into
-it, and "someday" is what that sentence already ends with when you mean this.
-It is stripped before `calparse` sees the line, like the recurrence phrases
-above it, and it is `RESERVED` so no alias can ever shadow it.
+It has to *begin* the line, which is what makes it safe to hand a word this
+ordinary that much power. "add a todo item to the list thursday" is a Thursday
+event about a list; only a line that opens by announcing itself is read as
+undated. The word is stripped before `calparse` sees the line, like the
+recurrence phrases above it, and it is `RESERVED` so no alias can shadow it.
 
 Repeating something with no date is a contradiction rather than a shorthand,
-and is refused as one -- "every tuesday someday" has no reading.
+and is refused as one -- "todo water the plants every tuesday" has no reading.
 """
 
 from __future__ import annotations
@@ -106,7 +107,7 @@ RESERVED = (
     | set(calparse.MONTHS)
     | {"today", "tonight", "tomorrow", "tmrw", "overmorrow", "every", "other",
        "until", "due", "by", "weekly", "week", "day", "days", "weeks", "at",
-       "from", "on", "in", "all", "someday", "sometime"}
+       "from", "on", "in", "all", "todo"}
 )
 
 # `every other tuesday`, `every tuesday`, `every 2 weeks`, `weekly`.
@@ -118,7 +119,10 @@ EVERY = re.compile(
 WEEKLY = re.compile(r"\b(?:weekly|each\s+week)\b", re.I)
 FOR_N_WEEKS = re.compile(r"\bfor\s+(\d{1,2})\s+weeks?\b", re.I)
 UNTIL = re.compile(r"\buntil\s+(.+)$", re.I)
-SOMEDAY = re.compile(r"\b(?:someday|some\s+day|sometime|at\s+some\s+point)\b", re.I)
+# Anchored: only a line that *opens* with it is undated. The colon is optional
+# because both spellings get typed and neither is a different thought, and the
+# word boundary is what keeps "todos for friday" an ordinary Friday event.
+TODO = re.compile(r"^\s*todo\b\s*:?\s*", re.I)
 
 
 class AliasHit(NamedTuple):
@@ -148,7 +152,7 @@ class Resolved(NamedTuple):
     recurrence: Recurrence | None
     error: str | None = None
     undated: bool = False
-    """The line said `someday`. It has a title and no date, and it writes a row
+    """The line began with `todo`. It has a title and no date, and it writes a row
     without an event -- see the module docstring. `parsed` is still set, because
     the title still had to be read out of the text; only its `date` is
     meaningless and nothing may use it."""
@@ -246,17 +250,18 @@ def _horizon(text: str, today: dt.date, default_weeks: int) -> tuple[str, int]:
     return text, default_weeks
 
 
-def _someday(text: str) -> tuple[str, bool]:
-    """Pull `someday` off the line. Returns the text without it, and whether.
+def _todo(text: str) -> tuple[str, bool]:
+    """Pull a leading `todo` off the line. Returns the rest, and whether it fired.
 
-    Only the first match is removed, and only ever one: two of them in a line
-    is a typo, not twice as undated, and cutting both would silently accept a
-    sentence nobody meant to write.
+    Only the first word, and only ever one: "todo todo call mum" keeps the
+    second one in the title, because a line that says it twice is a typo rather
+    than twice as undated, and eating both would silently accept a sentence
+    nobody meant to write.
     """
-    match = SOMEDAY.search(text)
+    match = TODO.match(text)
     if match is None:
         return text, False
-    return _cut(text, match.span()), True
+    return text[match.end() :], True
 
 
 def _recurrence(text: str) -> tuple[str, int | None]:
@@ -297,7 +302,7 @@ def resolve(
     expanded, hits = expand(raw, subjects, pattern)
     # Before the recurrence clauses and well before `calparse`, for the reason
     # they are stripped too: a word left in the text becomes part of the title.
-    body, someday = _someday(expanded)
+    body, undated = _todo(expanded)
     body, interval = _recurrence(body)
     weeks = default_weeks
     if interval is not None:
@@ -305,11 +310,11 @@ def resolve(
 
     parsed = calparse.parse(body, today)
 
-    if someday:
+    if undated:
         if interval is not None:
             return Resolved(
                 raw, None, tuple(hits), None,
-                "“someday” and a repeat contradict each other — a thing with no "
+                "“todo” and a repeat contradict each other — a thing with no "
                 "day cannot happen every week",
             )
         if parsed.title == "(untitled)":
@@ -322,7 +327,7 @@ def resolve(
         return Resolved(
             raw, None, tuple(hits), None,
             "needs a day — add one, e.g. “thursday”, “oct 3”, “tomorrow” — "
-            "or “someday” if it has none",
+            "or start the line with “todo” if it has none",
         )
     if parsed.title == "(untitled)":
         return Resolved(raw, None, tuple(hits), None, "nothing left for a title")

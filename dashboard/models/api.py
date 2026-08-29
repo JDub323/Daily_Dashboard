@@ -1598,17 +1598,17 @@ class ResolvedEvent(Base):
 
     title: str
     date: dt.date | None = None
-    """Null only for a `someday` line, which has no day by construction."""
+    """Null only for a `todo` line, which has no day by construction."""
 
     start: str | None = None
     end: str | None = None
 
     calendar: str | None = None
-    """Null for a `someday` line. Nothing is filed anywhere, and naming a
+    """Null for a `todo` line. Nothing is filed anywhere, and naming a
     calendar in the preview would promise a Google event that never arrives."""
 
     source: str = Field(
-        pattern=r"^(rule|model|correction|fallback|subject|default|chosen|someday)$"
+        pattern=r"^(rule|model|correction|fallback|subject|default|chosen|todo)$"
     )
     """Which stage decided. Shown in the preview, because "why did it pick
     that" is the first question a wrong guess raises.
@@ -1649,7 +1649,7 @@ class ResolvedEvent(Base):
     """Whether this becomes a tracked item as well as an event."""
 
     undated: bool = False
-    """The line said `someday`. It becomes a tracked item and *no* event —
+    """The line began with `todo`. It becomes a tracked item and *no* event —
     the one thing the box writes that Google never hears about."""
 
     recurrence: str | None = None

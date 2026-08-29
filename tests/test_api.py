@@ -946,7 +946,7 @@ def test_a_line_with_no_day_in_it_is_refused(client, monkeypatch):
     assert "needs a day" in body["failed"][0]["error"]
 
 
-def test_someday_writes_an_item_and_no_event(client, monkeypatch):
+def test_todo_writes_an_item_and_no_event(client, monkeypatch):
     """The one thing the box writes that Google never hears about.
 
     An undated item is the dashboard's own: no day, so no event, so no
@@ -955,7 +955,7 @@ def test_someday_writes_an_item_and_no_event(client, monkeypatch):
     """
     written = _no_gcalcli(monkeypatch)
     body = client.post(
-        "/api/calendar/add", json={"text": "fix the coffee table someday", "today": DATE}
+        "/api/calendar/add", json={"text": "todo fix the coffee table", "today": DATE}
     ).json()
 
     assert written == {}  # gcalcli was never asked to add anything
@@ -980,7 +980,7 @@ def test_ticking_an_undated_item_asks_google_for_nothing(client, monkeypatch):
         feeds.Feeds, "delete_calendar_event", lambda self, **kw: called.append(kw)
     )
     client.post(
-        "/api/calendar/add", json={"text": "fix the coffee table someday", "today": DATE}
+        "/api/calendar/add", json={"text": "todo fix the coffee table", "today": DATE}
     )
     item = client.get("/api/todo", params={"date": DATE}).json()["items"][0]
 
@@ -1012,9 +1012,9 @@ def test_the_good_lines_commit_and_the_bad_ones_come_back(client, monkeypatch):
         "US National Security Policy Making Thornhill Chapter 3",
         "Read ch4",
     ]
-    # Was "someday: fix the printer", which is now a *writable* line -- see
-    # `todo._someday`. The bad line here has to be one with no day and no way
-    # to read one, which is what a bare title is.
+    # Was "todo: fix the printer", which is now a *writable* line -- see
+    # `todo._todo`. The bad line here has to be one with no day and no way to
+    # read one, which is what a bare title is.
     assert [line["raw"] for line in body["failed"]] == ["fix the printer"]
 
 
