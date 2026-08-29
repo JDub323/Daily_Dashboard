@@ -8,7 +8,21 @@
 # Relative paths resolve against this file's directory.
 
 [server]
-host = "127.0.0.1"          # localhost-only by decision; see REWRITE_PLAN.md
+# Every interface, so the phone log at /m is reachable over Tailscale. It was
+# loopback-only by decision and the decision has not changed -- what changed is
+# that there is now a second client, on a device that is not this one.
+#
+# Nothing here is what keeps the dashboard off eduroam. This binds; Windows
+# Firewall decides. Inbound is default-deny on all three profiles with no allow
+# rule for python, so the only interface that answers is the tailnet one --
+# which is why the safe order is Tailscale first, and why an "Allow access"
+# prompt for python must be refused. There is no auth on this server: anything
+# that can reach the port can read the health log, the calendar and the day.
+#
+# The model's default in config.py stays 127.0.0.1, and should. A fresh
+# checkout on someone else's machine has no tailnet and no reason to listen
+# past its own loopback.
+host = "0.0.0.0"
 port = 8502
 open_browser = true
 log_level = "INFO"
