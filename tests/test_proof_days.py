@@ -290,6 +290,31 @@ def test_a_reading_day_draws_nothing(settings, repo):
         content.next_problem(settings, repo, SUNDAY)
 
 
+def test_a_proof_day_will_not_fall_back_to_the_aime_pool(settings, repo):
+    """The pool is numeric answers and three hints. Serving one on a Thursday
+    would put a compute problem under the two-day rules and rate it into the
+    buckets the proof days exist to leave alone."""
+    settings.path("problems").write_text(
+        json.dumps(
+            [
+                {
+                    "source": "AMC 2019 P5",
+                    "tier": "amc",
+                    "statement": "What is $1+1$?",
+                    "answer": "2",
+                    "hints": ["a", "b", "c"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(content.ContentError, match="proof day"):
+        content.next_problem(settings, repo, THURSDAY)
+
+    # ...and the same pool still serves a calibrated day.
+    assert content.next_problem(settings, repo, MONDAY).source == "AMC 2019 P5"
+
+
 def plan(date=SUNDAY) -> d.StudyPlan:
     return d.StudyPlan(
         date=date,

@@ -319,16 +319,26 @@ def next_problem(settings: Settings, repo: Repository, date: dt.date) -> d.MathP
         log.info("serving %s from the overnight batch (no LLM call)", batched.source)
         return _store(repo, batched, date)
 
-    for raw in load_pool(settings.path("problems")):
-        if raw.get("source") and raw["source"] not in seen:
-            log.info("serving %s from the hand-curated pool (no LLM call)", raw["source"])
-            problem = to_problem(raw, settings, HAND_CURATED, date)
-            return _store(repo, problem, date)
+    # The pool is AIME-shaped: numeric answers, three hints, no rubric. It is
+    # the right safety net for a calibrated day and the wrong one for a proof
+    # day, where it would serve a compute problem under the two-day rules --
+    # no hints on Thursday, a "keep going tomorrow" button, and a result rated
+    # into the compute buckets the proof days are meant to leave alone. A proof
+    # day with no batch says so instead.
+    if not mode.is_proof:
+        for raw in load_pool(settings.path("problems")):
+            if raw.get("source") and raw["source"] not in seen:
+                log.info("serving %s from the hand-curated pool (no LLM call)", raw["source"])
+                problem = to_problem(raw, settings, HAND_CURATED, date)
+                return _store(repo, problem, date)
 
+    where = "the curated pool has nothing for a proof day" if mode.is_proof else (
+        "every problem in the curated pool has been served"
+    )
     raise ContentError(
-        f"no problem for {date.isoformat()}: the overnight batch has not landed and "
-        f"every problem in the curated pool has been served. Run the batch for today "
-        f"in the Claude app and import it — the dashboard no longer generates one."
+        f"no problem for {date.isoformat()} ({mode.value}): the batch has not landed and "
+        f"{where}. Run `./batch.sh --week` and generate it in the Claude app — the "
+        f"dashboard no longer generates one."
     )
 
 
