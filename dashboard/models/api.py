@@ -116,6 +116,18 @@ class MathCarryRequest(DateBody):
     stays alive into tomorrow."""
 
 
+class MathOwnRequest(DateBody):
+    """A problem you found and want to do instead.
+
+    `source` is how you will recognise it in the archive a year from now, and
+    it is UNIQUE in the database like every other problem's -- so reusing a
+    label is a 409 rather than two rows called "the cylinder one".
+    """
+
+    statement: str = Field(min_length=20, max_length=4000)
+    source: str = Field(min_length=3, max_length=120)
+
+
 class StudySegmentRequest(DateBody):
     """Tick or skip one segment of Sunday's reading plan."""
 

@@ -72,7 +72,7 @@ from .feeds import FeedError, Feeds
 from .llm import LlmError
 from .models import api
 from .models import domain as dom
-from .models.common import Deck, PaperStatus, Track
+from .models.common import DayMode, Deck, PaperStatus, Track
 from .models.domain import PokedokuResult, WordleResult
 
 log = logs.get(__name__)
@@ -1217,6 +1217,29 @@ def _register(app: FastAPI) -> None:
             rubric_hit=body.rubric_hit,
             early_solve=cfg.math.carries_over(body.date),
         )
+        return state.math_panel(cfg, repo, body.date)
+
+    @app.post("/api/math/own")
+    def math_own(cfg: Cfg, repo: Repo, body: api.MathOwnRequest) -> api.MathPanel:
+        """Work a problem you brought, on one of the two days that allow it.
+
+        The showcase day, and a day two that a day-one solve turned into a day
+        off. Refused elsewhere with a 409: every other day has a problem of its
+        own, and letting this replace it would make the ladder optional.
+
+        This is the only paid call the math problem makes. It is a few hundred
+        tokens on the cheap model and it fires only when you paste something --
+        never on a page load, which is the property that made the old $0.15-0.80
+        generation worth deleting.
+        """
+        mode = cfg.math.mode_for(body.date)
+        free = cfg.math.is_second_day(body.date) and repo.carried_math_attempt(body.date) is None
+        if mode is not DayMode.proof_showcase and not free:
+            raise ValueError(
+                f"{body.date} has a problem of its own; bring your own on the showcase day, "
+                f"or on a day two you earned off by solving day one"
+            )
+        content.own_problem(cfg, repo, body.date, body.statement, body.source)
         return state.math_panel(cfg, repo, body.date)
 
     @app.post("/api/math/segment")

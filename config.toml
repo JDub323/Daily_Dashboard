@@ -73,6 +73,11 @@ pattern-grade = "claude-haiku-4-5"
 # smallest job in the app by a wide margin -- a few hundred tokens once a day,
 # which is well under a cent a year.
 investigate-file = "claude-haiku-4-5"
+# Rating a problem you brought yourself: one statement in, a tier out. The only
+# paid call the math problem still makes, and it fires when you paste something
+# rather than when a page loads -- which is the property that made the old
+# $0.15-0.80 generation worth deleting.
+own-problem = "claude-haiku-4-5"
 
 # Approx $/token for the retrieval-efficiency log. Sonnet 5 is at intro
 # pricing through 2026-08-31; update when it reverts to $3/$15.

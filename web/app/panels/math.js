@@ -146,6 +146,51 @@ function rubricBox(problem, boxes) {
 }
 
 /**
+ * Paste a problem you found, on the two days that allow one.
+ *
+ * The tier is not asked for. A box that let you type "putnam-late" would be
+ * asking for the one number in the panel nobody can check — so the statement
+ * goes to a cheap level check instead, which is the only paid call the math
+ * problem makes and only ever fires because you pressed this.
+ *
+ * Collapsed behind a button because most Saturdays there is nothing to paste,
+ * and an open textarea is a panel asking a question it usually should not.
+ */
+function ownBox(node) {
+  const open = el("button", { text: "bring your own problem" });
+  const slot = el("div");
+  open.addEventListener("click", () => {
+    const statement = el("textarea.recall-box", {
+      rows: 4,
+      placeholder: "the problem, stated in full — LaTeX between $…$ renders",
+    });
+    const source = el("input", {
+      type: "text",
+      placeholder: "what to call it — \"the numbered cylinder / Fourier\"",
+    });
+    const go = el("button.primary", { text: "check the level and start" });
+    const err = el("div");
+    open.disabled = true;
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      mount(err, el("div.row", null, el("span.spinner"), el("span.dim", { text: "rating it…" })));
+      try {
+        put("math", await api.post("/api/math/own", {
+          statement: statement.value,
+          source: source.value,
+        }));
+        await this.render(node);
+      } catch (error) {
+        go.disabled = false;
+        mount(err, el("div.err", { text: error.message }));
+      }
+    });
+    mount(slot, statement, el("div.row.gap", null, source, go), err);
+  });
+  return el("div", null, el("div.row.gap", null, open), slot);
+}
+
+/**
  * Which day of the two you are on, and what that costs.
  *
  * Written out because the barrier is the feature and an invisible rule is a
@@ -302,6 +347,7 @@ export default {
         el("div.faint.small", {
           text: "nothing is drawn and nothing lapses. Work a problem of your own if you found one.",
         }),
+        ownBox.call(this, node),
         archiveLink(),
       );
       return;
@@ -322,6 +368,8 @@ export default {
           },
         }),
         el("div.faint", { text: `topic: ${store.config.topic}` }),
+        // The showcase day is the one that says "or one you found yourself".
+        math.mode === "proof-showcase" ? ownBox.call(this, node) : null,
         archiveLink(),
       );
       return;
@@ -346,7 +394,9 @@ export default {
     }
 
     if (math.status !== "open") {
-      const answer = answerLine(problem);
+      // Null for a problem you brought yourself: there is no reference
+      // solution, so the archive line would be a label with nothing after it.
+      const answer = problem.answer ? answerLine(problem) : null;
       mount(node, head, areas,
         el("div.ok", null, `done for today ✓ (${problem.source}) `, lastDelta(math.summary)),
         math.minutes
@@ -355,7 +405,7 @@ export default {
         answer,
         archiveLink(),
       );
-      typeset(answer);
+      if (answer) typeset(answer);
       return;
     }
 
@@ -422,9 +472,12 @@ export default {
     // to render it was never a control, only an inconvenience. What this buys
     // is checking your work *before* committing, which the old order made
     // impossible: you had to declare, then find out.
-    const revealAnswer = el("button", {
-      text: proof ? "reveal the book's solution" : "reveal answer",
-    });
+    // Absent when there is no reference solution at all — a problem you
+    // brought yourself has none, and a button that reveals an empty line is
+    // worse than no button.
+    const revealAnswer = problem.answer
+      ? el("button", { text: proof ? "reveal the book's solution" : "reveal answer" })
+      : null;
     const solved = el("button.ok", { text: proof ? "proved it" : "solved" });
     const partial = proof ? el("button", { text: "partial — had the idea" }) : null;
     // Day one ends by carrying, not by failing, so it has no "couldn't do it".
@@ -440,7 +493,7 @@ export default {
       : el("button.bad", { text: proof ? "couldn't do it" : "couldn't solve" });
     const buttons = [hintButton, revealAnswer, solved, partial, failed, carry].filter(Boolean);
 
-    revealAnswer.addEventListener("click", () => {
+    revealAnswer?.addEventListener("click", () => {
       revealAnswer.disabled = true;
       mount(answerSlot, answerLine(problem));
       typeset(answerSlot);

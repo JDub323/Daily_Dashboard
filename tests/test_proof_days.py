@@ -13,10 +13,11 @@ and every weekday below an offset from it.
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 import pytest
 
-from dashboard import content, scoring
+from dashboard import content, llm, scoring
 from dashboard.db.repository import PROOF_AREA
 from dashboard.models import domain as d
 from dashboard.models.common import DayMode, MathOutcome, MathStatus, ProblemKind, Track
@@ -226,6 +227,59 @@ def test_the_day_one_bonus_needs_a_genuine_unhinted_day_one(repo, proof):
     repo.open_math_attempt(FRIDAY, proof.id, day=2)
     _, event = repo.finish_math(FRIDAY, MathOutcome.solved, early_solve=True)
     assert event.k == scoring.k_factor(0)  # day two: no bonus
+
+
+# --- a problem you brought yourself ----------------------------------------
+
+
+@pytest.fixture
+def level_check(monkeypatch):
+    """Stub the one paid call the math problem still makes."""
+    seen: dict[str, object] = {"reply": {"tier": "putnam-late", "note": "a real Putnam B6."}}
+
+    def fake(settings, system, user, *, metrics=None, **kw):
+        m = metrics if metrics is not None else llm.Metrics()
+        m.input_tokens += 400
+        m.output_tokens += 40
+        seen["user"] = user
+        # `(text, metrics)`, the shape `llm.json_call` unpacks.
+        return json.dumps(seen["reply"]), m
+
+    monkeypatch.setattr(llm, "call", fake)
+    return seen
+
+
+def test_a_brought_problem_is_rated_at_the_tier_the_check_returns(settings, repo, level_check):
+    problem = content.own_problem(
+        settings, repo, SATURDAY, "Prove the numbered cylinder is a Fourier problem.", "cylinder"
+    )
+
+    assert problem.tier == "putnam-late"
+    assert problem.anchor == settings.math.anchors["putnam-late"]
+    assert problem.kind is ProblemKind.proof
+    assert problem.model == content.OWN
+    # Nobody wrote hints or a rubric for a problem you found. Empty rather than
+    # invented is the honest state, and the panel renders it as such.
+    assert problem.hints == [] and problem.rubric == []
+    assert problem.answer == ""
+    # Every tier offered to the check must be one it can actually be rated at.
+    assert "putnam-late" in level_check["user"]
+
+
+def test_a_brought_problem_rates_into_proofs(repo, settings, level_check):
+    content.own_problem(settings, repo, SATURDAY, "Prove something hard enough.", "cylinder")
+    pooled = repo.current_rating(Track.math)
+    repo.finish_math(SATURDAY, MathOutcome.solved)
+
+    areas = [r[0] for r in repo.conn.execute("SELECT area FROM rating_event WHERE track='math'")]
+    assert areas == [PROOF_AREA]
+    assert repo.current_rating(Track.math) == pooled
+
+
+def test_an_unknown_tier_falls_back_rather_than_crashing(settings, repo, level_check):
+    level_check["reply"] = {"tier": "impossible", "note": "n/a"}
+    problem = content.own_problem(settings, repo, SATURDAY, "Prove it.", "mystery")
+    assert problem.tier == settings.math.tiers_for(DayMode.proof_showcase)[0]
 
 
 # --- sunday ----------------------------------------------------------------

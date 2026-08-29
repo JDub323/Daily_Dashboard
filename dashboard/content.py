@@ -105,6 +105,89 @@ def hints_available(settings: Settings, date: dt.date, problem: d.MathProblem) -
     return min(ceiling, len(problem.hints))
 
 
+OWN = "brought-by-hand"
+"""The `model` recorded for a problem you brought yourself.
+
+Distinguishes it in the log from a batched problem and from a pooled one, which
+matters more here than anywhere: this is the only problem in the app whose
+statement the dashboard did not choose, so "where did this come from" has an
+answer that is neither of the usual two.
+"""
+
+LEVEL_SYSTEM = (
+    "You rate the difficulty of competition mathematics problems. You are given "
+    "one problem and a list of tier names with the rating each is worth. Reply "
+    "with JSON: {\"tier\":\"one of the tiers given\",\"note\":\"one short sentence "
+    "on what makes it that level\"}. Judge the problem in front of you on the "
+    "ingenuity it demands, not on the area it is from or on how it is worded. If "
+    "it is clearly below the easiest tier offered, say so by choosing that tier "
+    "and saying why in the note — do not invent a tier that was not listed."
+)
+"""The one paid call the math problem still makes, and it is a small one.
+
+It exists because a self-declared tier is the one number here nobody can check:
+every other anchor comes from a batch that named the tier against a rubric. The
+problems this rates are ones you found and wanted to do, so the risk is not
+gaming -- it is that "this felt hard" and "this is Putnam-level" are different
+claims and only the second one belongs in an elo.
+
+Deliberately not asked to solve, verify, or improve the problem. It reads a
+statement and returns a tier, which is a few hundred tokens on the cheap model.
+"""
+
+
+def own_problem(
+    settings: Settings, repo: Repository, date: dt.date, statement: str, source: str
+) -> d.MathProblem:
+    """A problem you brought, rated on the proofs track like the others.
+
+    Available on the showcase day and on a day two that a day-one solve turned
+    into a day off -- the two days that are about curiosity rather than
+    calibration. The tier comes from `LEVEL_SYSTEM` rather than from a box you
+    fill in, which is the whole reason this costs anything at all.
+
+    No hints and no rubric: nobody wrote either. That is a real difference from
+    a batched proof and the panel shows it by having nothing to offer -- which
+    is the honest state of a problem you found yourself.
+    """
+    tiers = settings.math.tiers_for(DayMode.proof_showcase) or sorted(settings.math.anchors)
+    raw = _json_generation(
+        settings,
+        kind="own-problem",
+        date=date,
+        system=LEVEL_SYSTEM,
+        user=(
+            "Tiers, easiest first: "
+            + ", ".join(f"{t} ({settings.math.anchors[t]})" for t in tiers)
+            + f"\n\nProblem:\n{statement.strip()}"
+        ),
+    )
+    tier = raw.get("tier") if isinstance(raw, dict) else None
+    if tier not in settings.math.anchors:
+        log.warning("level check returned tier %r; falling back to %s", tier, tiers[0])
+        tier = tiers[0]
+
+    problem = d.MathProblem(
+        source=source.strip(),
+        tier=tier,
+        anchor=settings.math.anchors[tier],
+        statement=statement.strip(),
+        kind=ProblemKind.proof,
+        # Nothing wrote a solution, so there is nothing to reveal. The panel
+        # reads this as "no reference" and drops the reveal button rather than
+        # offering one that shows an empty line.
+        answer="",
+        hints=[],
+        rubric=[],
+        location=(raw.get("note") or "").strip() or None if isinstance(raw, dict) else None,
+        model=OWN,
+        generated_at=dt.datetime.now(),
+        topic=settings.math.topic_for(date),
+        area=settings.math.areas.get(settings.math.topic_for(date)),
+    )
+    return _store(repo, problem, date)
+
+
 def load_pool(path: Path) -> list[dict[str, Any]]:
     """The hand-curated problem pool. Never written by the server.
 
