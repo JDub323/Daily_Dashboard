@@ -49,7 +49,7 @@ from .db import Repository
 from .db.schema import migrate
 from .models import domain as d
 from .models.batch import DailyBatch
-from .models.common import DayMode
+from .models.common import DayMode, ProblemKind
 
 log = logs.get(__name__)
 
@@ -107,6 +107,57 @@ answer", so anything that depends on the date has to come back from the CLI.
 """
 
 
+COMPUTE_SCHEMA = (
+    "Write the file as JSON:\n"
+    '{"date":"the date in this payload","topic":"the topic, verbatim",'
+    '"generated_at":"current ISO 8601 timestamp","problems":['
+    '{"source":"e.g. Putnam 1998 B3","tier":"one of suggested_tiers",'
+    '"kind":"compute","statement":"the problem, LaTeX between $..$ or $$..$$",'
+    '"answer":"the final answer","hints":["direction, under five words",'
+    '"minor hint","major hint"],"verified_url":"where you confirmed it"}]}\n'
+    "One problem per suggested tier, easiest first, all different. Real problems "
+    "from past competitions only (AIME, AMC, Putnam, IMO, USAMO, national "
+    "olympiad archives), none of them in do_not_use, and preferring ones that "
+    "exercise the week's topic.\n"
+    "VERIFY EACH ONE WITH WEB SEARCH BEFORE WRITING IT DOWN: that it genuinely "
+    "appeared in the competition you cite, that your statement matches the "
+    "original, and that your answer is right. Discard anything you cannot "
+    "confirm and verify a replacement. `verified_url` is the evidence; a missing "
+    "one is read as 'not actually checked' and the file is rejected."
+)
+"""What a calibrated day must produce.
+
+Lives here rather than in the scheduled task's prompt, which is the whole point
+of `--context`: a schema in a prompt is a copy of this file that nothing keeps
+in step, and it goes stale silently -- the first proof day would have been
+generated against the compute shape by a task nobody had remembered to edit.
+"""
+
+PROOF_SCHEMA = (
+    "Write the file as JSON, with exactly ONE problem in it:\n"
+    '{"date":"the date in this payload","topic":"the topic, verbatim",'
+    '"generated_at":"current ISO 8601 timestamp","problems":['
+    '{"source":"P&B <problem number as the book prints it>",'
+    '"tier":"one of the tiers in `proof.tiers`","kind":"proof",'
+    '"statement":"the problem, quoted as printed, LaTeX between $..$ or $$..$$",'
+    '"answer":"three to six sentences sketching the BOOK\'S solution",'
+    '"hints":["the nudge","the one that gives the argument away"],'
+    '"rubric":["three or four checkpoints a complete proof hits"],'
+    '"location":"section number, its title, and the printed page"}]}\n'
+    "No `verified_url` — the page is the provenance. Exactly two hints and at "
+    "least one rubric line, both written from the printed solution rather than "
+    "from your own."
+)
+
+READING_SCHEMA = (
+    "Write the file as JSON:\n"
+    '{"date":"the date in this payload","topic":"the topic, verbatim",'
+    '"book":"the book you drew it from","segments":[{"title":"short name",'
+    '"reading":"section, pages, and where to stop","problems":["problem numbers '
+    'as the book prints them"],"minutes":30,"why":"one line on what it buys"}]}'
+)
+
+
 def context(settings: Settings, repo: Repository, date: dt.date) -> dict[str, Any]:
     """Everything the generator needs for one day, as one JSON object.
 
@@ -134,6 +185,7 @@ def context(settings: Settings, repo: Repository, date: dt.date) -> dict[str, An
         "do_not_use": seen[-content.SEEN_WINDOW :],
         "already_generated": batch_path(settings, date).exists(),
         "showcase": SHOWCASE_BRIEF if showcase else None,
+        "schema": PROOF_SCHEMA if mode.is_proof else COMPUTE_SCHEMA,
     }
     if mode.is_proof:
         payload.update(proof_context(settings, date, mode))
@@ -168,6 +220,7 @@ def context_without_db(settings: Settings, date: dt.date, why: str) -> dict[str,
         # are still readable. Losing the database costs the rating and the
         # do-not-repeat list and nothing else.
         "showcase": SHOWCASE_BRIEF if showcase else None,
+        "schema": PROOF_SCHEMA if mode.is_proof else COMPUTE_SCHEMA,
         "degraded": (
             f"could not read the database ({why}). Rating and the do-not-repeat list "
             f"are unavailable; the tier ladder is centred on the default tier instead. "
@@ -348,6 +401,7 @@ def reading_context(settings: Settings, repo: Repository, date: dt.date) -> dict
         "instructions": READING_BRIEF.format(
             segments=cfg.segments, minutes=cfg.segment_minutes
         ),
+        "schema": READING_SCHEMA,
     }
 
 
@@ -717,13 +771,37 @@ def validate(settings: Settings, raw: str) -> tuple[DailyBatch | None, list[str]
         return None, [f"does not match the batch schema: {e}"]
 
     for i, p in enumerate(batch.problems):
+        where = f"problems[{i}] ({p.source})"
         if p.tier not in settings.math.anchors:
             errors.append(
-                f"problems[{i}] ({p.source}): unknown tier {p.tier!r}; "
+                f"{where}: unknown tier {p.tier!r}; "
                 f"expected one of {sorted(settings.math.anchors)}"
             )
-        if not p.verified_url:
-            errors.append(f"problems[{i}] ({p.source}): no verified_url — was it actually checked?")
+        if p.kind not in set(ProblemKind):
+            errors.append(f"{where}: unknown kind {p.kind!r}")
+            continue
+
+        # Provenance, and it is a different object for each kind. A competition
+        # problem is checked against an archive and the URL is the evidence; a
+        # textbook problem was read off a page, and the page is. Demanding a URL
+        # for both -- which this did -- would have rejected every proof batch
+        # ever generated, on the grounds that a book is not a web page.
+        if p.kind == ProblemKind.proof:
+            if not p.location:
+                errors.append(f"{where}: no location — which section and page is it on?")
+            if not p.rubric:
+                errors.append(f"{where}: no rubric — `partial` has nothing to mean without one")
+            if len(p.hints) != 2:
+                errors.append(f"{where}: a proof takes exactly 2 hints, got {len(p.hints)}")
+        else:
+            if not p.verified_url:
+                errors.append(f"{where}: no verified_url — was it actually checked?")
+            if len(p.hints) != 3:
+                errors.append(
+                    f"{where}: a compute problem takes exactly 3 hints, got {len(p.hints)}"
+                )
+            if p.rubric:
+                errors.append(f"{where}: a rubric belongs to a proof; there is nothing to itemise")
         try:
             content.to_problem(p.model_dump(), settings, model="scheduled-task")
         except content.ContentError as e:

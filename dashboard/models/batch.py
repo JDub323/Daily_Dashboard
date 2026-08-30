@@ -39,13 +39,35 @@ class BatchProblem(Base):
     tier table lives in config.toml and this model must not freeze a copy."""
 
     statement: str = Field(min_length=1)
+
+    kind: str = "compute"
+    """`compute` or `proof`. Validated against `ProblemKind` on import rather
+    than here, alongside `tier` and for the same reason: this model is the wire
+    format and must not freeze a copy of a vocabulary that lives elsewhere."""
+
     answer: str = Field(min_length=1)
-    hints: list[str] = Field(min_length=3, max_length=3)
+    """The final answer on a compute problem; the book's solution sketch on a
+    proof. Never empty -- a rung with nothing to check against is a rung that
+    cannot be marked."""
+
+    hints: list[str] = Field(min_length=2, max_length=3)
+    """Three on a compute problem, two on a proof. The bound here is the union;
+    `validate` checks the count against the kind, because a proof with three
+    hints is a generation that ignored the brief rather than a malformed file."""
+
+    rubric: list[str] = Field(default_factory=list, max_length=6)
+    """Checkpoints a complete proof has to hit, from the book's own printed
+    solution. Required on a proof and absent on a compute problem."""
+
+    location: str | None = None
+    """Where in the book -- "2.2.4 Viete's Relations, p. 70". The proof day's
+    answer to `verified_url`: a printed page is the provenance, and it is the
+    thing a person can actually go and check."""
 
     verified_url: Url | None = None
     """Where the generator confirmed the problem. Optional in the type so a
-    batch is still usable without it, required in the prompt so its absence
-    is visible."""
+    batch is still usable without it, and required by `validate` only for a
+    compute problem -- a textbook problem has a page, not a URL."""
 
 
 class DailyBatch(Base):

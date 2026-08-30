@@ -17,7 +17,7 @@ import json
 
 import pytest
 
-from dashboard import content, llm, scoring
+from dashboard import batch, content, llm, scoring
 from dashboard.db.repository import PROOF_AREA
 from dashboard.models import domain as d
 from dashboard.models.common import DayMode, MathOutcome, MathStatus, ProblemKind, Track
@@ -227,6 +227,66 @@ def test_the_day_one_bonus_needs_a_genuine_unhinted_day_one(repo, proof):
     repo.open_math_attempt(FRIDAY, proof.id, day=2)
     _, event = repo.finish_math(FRIDAY, MathOutcome.solved, early_solve=True)
     assert event.k == scoring.k_factor(0)  # day two: no bonus
+
+
+# --- what the overnight file has to look like ------------------------------
+
+
+def proof_file(**over) -> str:
+    problem = {
+        "source": "P&B 693",
+        "tier": "olympiad-easy",
+        "kind": "proof",
+        "statement": "Prove that the midpoints of a quadrilateral form a parallelogram.",
+        "answer": "Half-sums of position vectors; opposite sides are both (c-a)/2.",
+        "hints": ["write each midpoint as a half-sum", "subtract adjacent midpoints"],
+        "rubric": ["wrote the midpoints as half-sums", "concluded from equal-and-parallel"],
+        "location": "4.1.1 Geometry / Vectors, p. 211",
+    }
+    problem.update(over)
+    return json.dumps({"date": WEDNESDAY.isoformat(), "problems": [problem]})
+
+
+def test_a_proof_batch_is_accepted_without_a_verified_url(settings):
+    """A textbook problem has a page, not a URL. Requiring one -- which the
+    validator did -- would have rejected every proof batch ever generated."""
+    parsed, errors = batch.validate(settings, proof_file())
+    assert errors == []
+    assert parsed.problems[0].kind == "proof"
+
+
+def test_a_proof_without_its_page_or_rubric_is_rejected(settings):
+    _, errors = batch.validate(settings, proof_file(location=None, rubric=[]))
+    assert any("no location" in e for e in errors)
+    assert any("no rubric" in e for e in errors)
+
+
+def test_a_proof_takes_two_hints_and_a_compute_problem_three(settings):
+    _, errors = batch.validate(settings, proof_file(hints=["a", "b", "c"]))
+    assert any("exactly 2 hints" in e for e in errors)
+
+    _, errors = batch.validate(settings, proof_file(kind="compute"))
+    assert any("exactly 3 hints" in e for e in errors)
+    assert any("verified_url" in e for e in errors)
+    assert any("rubric belongs to a proof" in e for e in errors)
+
+
+def test_every_day_of_the_week_carries_the_schema_it_must_write(settings, repo):
+    """The scheduled task's prompt must not hold a copy of the output shape.
+
+    A schema in a prompt is a copy of `batch.py` that nothing keeps in step, and
+    it goes stale silently -- the first proof day would have been generated
+    against the compute shape by a task nobody remembered to edit.
+    """
+    week = batch.week_context(settings, repo, SUNDAY)
+    for day in week["days"]:
+        if not day["generate"]:
+            continue
+        assert day["schema"], f"{day['weekday']} carries no schema"
+    shapes = {d["mode"]: d["schema"] for d in week["days"] if d["generate"]}
+    assert "kind\":\"proof\"" in shapes["proof"]
+    assert "verified_url" in shapes["compute"]
+    assert "segments" in shapes["reading"]
 
 
 # --- a problem you brought yourself ----------------------------------------
