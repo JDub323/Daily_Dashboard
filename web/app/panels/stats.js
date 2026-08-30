@@ -18,6 +18,7 @@
 
 import * as api from "../api.js";
 import { el } from "../dom.js";
+import { rerender } from "../panel.js";
 import { store } from "../store.js";
 
 // --- the completion heatmap -------------------------------------------------
@@ -28,6 +29,17 @@ import { store } from "../store.js";
 const DAY_MS = 864e5;
 const MIN_WEEKS = 12;
 const MAX_WEEKS = 53;
+// The ceiling a square is allowed to grow to, and the gutter between two of
+// them — `--hm-col-max` and `--hm-gap` in style.css, which is where the floor
+// lives too. Only the ceiling is needed here: it is what decides how many
+// columns it takes to reach the far edge of the card.
+const COL_MAX = 20;
+const COL_GAP = 3;
+// The column count the grid on screen was drawn with, and the panel bodies
+// already being watched for a width change — both for `observeWidth` at the
+// bottom of the file.
+let drawn = 0;
+const observed = new WeakSet();
 
 /** Local midnight for an ISO date, via noon — see the piano panel's day index. */
 const at = (iso) => new Date(`${iso}T12:00:00`);
@@ -61,24 +73,37 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 /**
  * How many week-columns to draw.
  *
- * Sized to the data rather than fixed at a year. A fresh install with nine
- * days of history should not render a 53-column grid that is 96% empty — that
- * reads as "you have done almost nothing" when what it means is "you started
- * last week". Grows to a full year and stops.
+ * Sized to the data, then widened to the card. The data half is the original
+ * rule: a fresh install with nine days of history should not render a
+ * 53-column grid that is 96% empty — that reads as "you have done almost
+ * nothing" when what it means is "you started last week". The card half is
+ * what stops twelve weeks of squares from sitting in the bottom-left third of
+ * a hero: the grid takes as many columns as fit at `COL_MAX`, so it reaches
+ * the far edge at a readable square size instead of stretching a dozen of them
+ * to 40px each. Either way it grows to a full year and stops, and past that
+ * `.hm-scroll` is what handles the overflow.
+ *
+ * `width` is the panel body's content box, or 0 before it has one — a render
+ * on a hidden tab measures nothing, and falls back to the data-sized grid
+ * until the tab is looked at.
  */
-function weekCount(rows, today) {
-  if (!rows.length) return MIN_WEEKS;
-  const earliest = rows.reduce((a, r) => (r.date < a ? r.date : a), rows[0].date);
-  const days = Math.round((today - at(earliest)) / DAY_MS);
-  return Math.max(MIN_WEEKS, Math.min(MAX_WEEKS, Math.ceil(days / 7) + 1));
+function weekCount(rows, today, width) {
+  const fits = Math.floor((width + COL_GAP) / (COL_MAX + COL_GAP));
+  let data = MIN_WEEKS;
+  if (rows.length) {
+    const earliest = rows.reduce((a, r) => (r.date < a ? r.date : a), rows[0].date);
+    const days = Math.round((today - at(earliest)) / DAY_MS);
+    data = Math.ceil(days / 7) + 1;
+  }
+  return Math.max(MIN_WEEKS, Math.min(MAX_WEEKS, Math.max(data, fits)));
 }
 
-function heatmap() {
+function heatmap(width) {
   const rows = store.state.completion ?? [];
   const byDate = new Map(rows.map((r) => [r.date, r]));
 
   const today = at(api.today());
-  const weeks = weekCount(rows, today);
+  const weeks = weekCount(rows, today, width);
 
   // The grid ends on the Saturday of the current week, so today's column is
   // the last one and the shape is stable through the week rather than
@@ -242,7 +267,9 @@ export const activity = {
   span: 3,
 
   async render(node) {
-    const { cells, labels, weeks, rows } = heatmap();
+    const { cells, labels, weeks, rows } = heatmap(node.clientWidth);
+    drawn = weeks;
+    observeWidth(node);
     const perfect = rows.filter((r) => r.done >= r.total).length;
     // Filled in after the grid is already on screen. The spend read hits the
     // filesystem, and a heatmap that waits on a log file would be a worse
@@ -263,7 +290,9 @@ export const activity = {
       ),
       el("div.hm-scroll", null,
         el("div.hm-wrap", null,
-          el("div.hm-months", { style: `grid-template-columns: repeat(${weeks}, var(--hm-col))` },
+          // The same track sizing the grid below uses, so a month label still
+          // starts over the week it names once the columns stretch.
+          el("div.hm-months", { style: `grid-template-columns: repeat(${weeks}, minmax(var(--hm-col), 1fr))` },
             ...labels),
           el("div.heatmap", null, ...cells),
         ),
@@ -285,3 +314,28 @@ export const activity = {
     }
   },
 };
+
+/**
+ * Redraw the grid when the card it is in changes width.
+ *
+ * How many columns fit is a fact about the layout now, and the first render
+ * does not know it: the panel is built behind the splash, where the shell is
+ * `display: none` and every width is 0 — so without this the grid you see
+ * after pressing enter is the fallback one, sized to the data. A window resize
+ * is the same problem later on, and one observer answers both.
+ *
+ * Guarded on the count rather than on the width, so the redraw happens only
+ * when the answer actually changed — a rerender writes into the box being
+ * observed, and an observer that fired on its own output would not stop.
+ */
+function observeWidth(node) {
+  if (observed.has(node)) return;
+  observed.add(node);
+  new ResizeObserver(() => {
+    const width = node.clientWidth;
+    if (!width) return;
+    if (weekCount(store.state.completion ?? [], at(api.today()), width) !== drawn) {
+      rerender(activity.id);
+    }
+  }).observe(node);
+}

@@ -7,7 +7,10 @@
 //
 // It headed a tab of its own for a while, which was more room than two games
 // nobody else schedules deserve. It is half a row on `dailies` now, beside the
-// streaks it feeds.
+// day log — the streaks panel that used to sit here is gone.
+//
+// One panel, two chips, so its border goes gold only once *both* are logged:
+// see `renderChips`. Half a card cannot show half a border.
 
 import * as api from "../api.js";
 import { el, link, mount } from "../dom.js";

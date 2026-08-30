@@ -32,7 +32,6 @@ import investigate from "./panels/investigate.js";
 import markets from "./panels/markets.js";
 import meals from "./panels/meals.js";
 import math from "./panels/math.js";
-import metrics from "./panels/metrics.js";
 import { finance, politics } from "./panels/news.js";
 import patterns from "./panels/patterns.js";
 import piano from "./panels/piano.js";
@@ -59,11 +58,11 @@ import { initModal, onModalClose, toast } from "./ui.js";
  * puzzle meant knowing which other panels existed.
  *
  * It shrank under tabs — the spend strip moved off the trophies panel to the
- * home tab, taking `metrics`' dependency on `math` with it — and again when the
- * rating charts came out, which took the two `elo-*` entries with them.
+ * home tab, taking `metrics`' dependency on `math` with it — again when the
+ * rating charts came out, which took the two `elo-*` entries with them, and
+ * again when the streaks panel itself went and took `metrics: ["games"]`.
  */
 const WATCHES = {
-  metrics: ["games"],
   // Generating a problem is the one action in the app that spends real money,
   // and the spend strip lives in this panel.
   activity: ["math"],
@@ -133,10 +132,14 @@ const PANELS = [
   // moves is the thing that makes the next one sharper, and the headlines are
   // the frame both are read against.
   investigate, patterns, politics,
-  // dailies — no hero, in pairs: the day's line about itself at the top, then
-  // the two vocabulary cells, the two games cells, the two hobbies, and the
-  // day's article across the bottom.
-  daylog, word, spelling, games, metrics, chess, piano, reading,
+  // dailies — no hero, in pairs: the two vocabulary cells lead, then the two
+  // things you sit down and do, then the day's line about itself beside the
+  // games, and the article across the bottom.
+  //
+  // `metrics` is gone from here. It was half a row of streak counters beside
+  // the games it counted, and every number on it was either duplicated on the
+  // home tab or a count of a thing that is worth one point.
+  spelling, word, chess, piano, daylog, games, reading,
   // markets — the portfolio is the hero; the movements list is the frame it
   // is read against.
   portfolio, markets, finance,

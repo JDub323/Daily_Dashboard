@@ -384,15 +384,20 @@ export async function renderChips() {
       : null,
   );
 
-  for (const id of ["math", "chess", "investigate"]) {
-    const task = list.find((entry) => entry.id === id);
-    if (task) markDone(id, task.done);
+  // The gold border, for every panel the day asks something of. This used to
+  // name three of them, which is why the chess puzzle read as finished while
+  // the bee beside it read as untouched whichever of the two you had done.
+  //
+  // Grouped by *panel* rather than by task, and gold only once every task on
+  // it is done. The plan panel needed that rule already — a card still open is
+  // a panel still owed — and the games panel needs it for the same reason: it
+  // draws Wordle and Pokedoku side by side, so a border earned by one of them
+  // is a border that lies about the other.
+  const byPanel = new Map();
+  for (const task of list) {
+    byPanel.set(task.panel, (byPanel.get(task.panel) ?? true) && task.done);
   }
-
-  // The plan panel holds several tasks, so it goes gold only when the day's
-  // training is finished outright — a card still open is a panel still owed.
-  const training = list.filter((task) => task.panel === "plan");
-  if (training.length) markDone("plan", training.every((task) => task.done));
+  for (const [panel, done] of byPanel) markDone(panel, done);
 
   // The logging carousel shows one of its four at a time, so the same fact has
   // to reach its tab bar or three quarters of it is unreadable without waiting
