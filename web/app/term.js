@@ -14,9 +14,14 @@
 // Two chords cannot be had, and no amount of `preventDefault` changes it:
 // Chrome reserves Ctrl-W (close tab) and Ctrl-R (reload), which are vim's
 // window prefix and its redo. Redo is remapped to `U` server-side — see
-// `[investigate].editor_commands` — and window commands are simply not
-// available in a browser tab. The file is a real file on disk, so the answer
-// to wanting them is to open it in a real terminal, where none of this applies.
+// `[editor].commands` — and window commands are simply not available in a
+// browser tab. The file is a real file on disk, so the answer to wanting them
+// is to open it in a real terminal, where none of this applies.
+//
+// Two panels open one of these: the investigation write-up, where the file is
+// the work, and the theorem recall boxes, where the file is a form of two
+// textareas. Which is which is entirely the caller's business — everything
+// below is a screen and a keyboard, and it does not know what is in the buffer.
 
 import { el } from "./dom.js";
 
@@ -31,16 +36,17 @@ const FONT = '"SF Mono", "Cascadia Mono", Menlo, Consolas, monospace';
 export const ready = () => Boolean(window.Terminal && window.FitAddon);
 
 /**
- * Open an editor on today's investigation.
+ * Open an editor on whatever the given socket serves.
  *
  * Returns `{node, dispose, closed}` — `closed` resolves when the editor exits,
- * which is the panel's cue to re-read the file and redraw.
+ * which is the panel's cue to read the file back and redraw.
  *
+ * @param opts.url         the websocket route. A path, not a file: which file
+ *                         is opened is decided server-side from the date, and
+ *                         nothing this function sends could name one.
  * @param opts.scrollback  lines kept; only `:!` output ever reaches it.
- * @param opts.theme       colours pulled from the page's own custom properties,
- *                         so the terminal is not a light rectangle in a dark app.
  */
-export function openEditor({ date, scrollback = 1000 } = {}) {
+export function openEditor({ url: route, date, scrollback = 1000 } = {}) {
   const node = el("div.term");
 
   const term = new window.Terminal({
@@ -56,7 +62,7 @@ export function openEditor({ date, scrollback = 1000 } = {}) {
   term.loadAddon(fit);
   term.open(node);
 
-  const url = new URL("/api/investigate/term", location.href);
+  const url = new URL(route, location.href);
   url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("date", date);
   const socket = new WebSocket(url);

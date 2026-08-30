@@ -317,6 +317,26 @@ class TheoremRecallRequest(DateBody):
     application: str = Field(min_length=3, max_length=2000)
 
 
+class TheoremOpenRequest(DateBody):
+    """Put what is in the boxes into the file, before the editor opens it.
+
+    The drafts travel *up* here, which is the opposite direction from every
+    other body in this file, and it is the only reason this endpoint exists:
+    the panel is holding text that has never been posted anywhere, and an
+    editor that opened onto two empty sections would look exactly like having
+    lost it.
+
+    Both default empty and both are allowed to be, because the ordinary case
+    is opening the editor to start writing. What is *not* here is a path --
+    which file this is, is worked out from the day's draw. A client that could
+    name one would be naming the argument to an editor, and `dashboard/term.py`
+    exists on the promise that nothing can.
+    """
+
+    explanation: str = Field(default="", max_length=2000)
+    application: str = Field(default="", max_length=2000)
+
+
 class TheoremArchiveRequest(DateBody):
     card_id: int
     archived: bool = True
@@ -733,6 +753,24 @@ class TheoremWritten(Base):
     explained: bool
     applied: bool
     note: str
+
+
+class TheoremScratch(Base):
+    """The editor's file, as the two boxes it is a form of.
+
+    Returned by both ends of the round trip -- opening the editor and reading
+    it back afterwards -- because they are the same question asked twice, and a
+    second shape would be a second thing to keep in step.
+    """
+
+    path: str
+    """Where it is on disk, so the panel can say so. The file is a real file
+    and opening it in a real terminal is a supported way to use this, which is
+    the same bargain the investigation write-up makes."""
+
+    scrollback: int
+    explanation: str
+    application: str
 
 
 class TheoremDeckEntry(Base):

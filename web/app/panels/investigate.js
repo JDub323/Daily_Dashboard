@@ -260,7 +260,11 @@ function writeUp(panel, redraw) {
           redraw();
           return;
         }
-        editor = openEditor({ date: api.today(), scrollback: panel.scrollback });
+        editor = openEditor({
+          url: "/api/investigate/term",
+          date: api.today(),
+          scrollback: panel.scrollback,
+        });
         // The editor exiting is the cue to re-read the file: `:wq` is how you
         // finish, and the panel should show the paragraphs without being asked.
         editor.closed.then(async () => {

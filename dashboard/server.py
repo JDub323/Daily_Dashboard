@@ -36,6 +36,7 @@ import threading
 import time
 import uuid
 import webbrowser
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
@@ -55,6 +56,7 @@ from . import (
     logs,
     portfolio,
     scoring,
+    scratch,
     spelling,
     spend,
     state,
@@ -1357,7 +1359,7 @@ def _register(app: FastAPI) -> None:
             repo,
             date,
             cfg.path("investigations"),
-            cfg.investigate.scrollback,
+            cfg.editor.scrollback,
             cfg.investigate.folders,
         )
 
@@ -1486,84 +1488,18 @@ def _register(app: FastAPI) -> None:
     async def investigate_term(ws: WebSocket) -> None:
         """A real editor, on a real pty, in the panel.
 
-        The protocol is deliberately tiny and one-directional in each shape:
-        the client sends JSON (`in` for keystrokes, `resize` for a window
-        size), and the server sends raw bytes straight off the pty. Nothing the
-        client sends is ever interpreted as a path, an argument or a command.
-
-        Refused from anywhere but loopback. The rest of this app is equally
-        unauthenticated but exposes readings and ratings; an editor is a shell,
-        and `[server].host` is a line somebody could widen without thinking
-        about what is behind this one.
+        Which file it opens is the only thing this route decides; everything
+        else about an editor socket is in `_serve_editor` below, shared with
+        the theorem recall boxes. Nothing the client sends is ever interpreted
+        as a path, an argument or a command -- the date in the query string
+        chooses a row, and the row chooses the file.
         """
-        client = ws.client.host if ws.client else None
-        if client not in webauthn.LOOPBACK and client != "testclient":
-            await ws.close(code=1008, reason="the editor is loopback-only")
-            return
 
-        cfg: Settings = ws.app.state.settings
-        repo = Repository(ws.app.state.db.conn)
-        await ws.accept()
+        def open_file(cfg: Settings, repo: Repository, params: Any) -> tuple[Path, Path]:
+            date = dt.date.fromisoformat(params.get("date", ""))
+            return _investigation_file(cfg, repo, date), cfg.path("investigations")
 
-        try:
-            date = dt.date.fromisoformat(ws.query_params.get("date", ""))
-            path = _investigation_file(cfg, repo, date)
-            editor = term.resolve_editor(cfg.investigate.editor)
-        except (ValueError, LookupError, term.TerminalError) as e:
-            # Reported down the socket rather than as a close reason: the panel
-            # has a terminal on screen by now, and a line of text in it is read
-            # where a close code is not.
-            await ws.send_bytes(f"\r\n\x1b[31m{e}\x1b[0m\r\n".encode())
-            await ws.close()
-            return
-
-        session = term.Session.spawn(
-            editor, cfg.investigate.editor_commands, path, cwd=cfg.path("investigations")
-        )
-        log.info("editor %d opened %s", session.pid, path.name)
-
-        loop = asyncio.get_running_loop()
-        outbound: asyncio.Queue[bytes | None] = asyncio.Queue()
-
-        async def pump() -> None:
-            """Queue -> socket. One task, so frames keep the pty's order."""
-            while True:
-                chunk = await outbound.get()
-                if chunk is None:
-                    return
-                await ws.send_bytes(chunk)
-
-        async def keys() -> None:
-            """Socket -> pty. The only thing that reads from the client."""
-            while True:
-                message = await ws.receive_json()
-                kind = message.get("t")
-                if kind == "in":
-                    session.write(str(message.get("d", "")).encode())
-                elif kind == "resize":
-                    session.resize(int(message.get("rows", 24)), int(message.get("cols", 80)))
-
-        tasks = [
-            asyncio.create_task(term.bridge(outbound, session, loop)),
-            asyncio.create_task(pump()),
-            asyncio.create_task(keys()),
-        ]
-        try:
-            # Whichever ends first ends the session: the editor quitting, the
-            # tab closing, or the socket dropping. All three mean the same
-            # thing here, so none of them is special-cased.
-            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        except WebSocketDisconnect:
-            pass
-        finally:
-            for task in tasks:
-                task.cancel()
-            # Off-thread: close() waits on the editor to die and would
-            # otherwise stall every other request for up to `GRACE_SECONDS`.
-            await loop.run_in_executor(None, session.close)
-            log.info("editor %d closed", session.pid)
-            with contextlib.suppress(RuntimeError):
-                await ws.close()
+        await _serve_editor(ws, open_file)
 
     # -- chess -------------------------------------------------------------
 
@@ -1794,6 +1730,91 @@ def _register(app: FastAPI) -> None:
     def theorem_new(cfg: Cfg, repo: Repo, body: api.TheoremNewRequest) -> api.TheoremsPanel:
         repo.add_card(content.theorem_card(cfg, body.date))
         return state.theorems_panel(repo, body.date)
+
+    # The two recall boxes, written in nvim instead of in the textareas.
+    #
+    # Three calls, and the middle one is the websocket. `open` puts whatever is
+    # in the boxes on disk, the socket forks the editor onto that file, and
+    # `scratch` reads it back when the editor exits. Nothing here grades
+    # anything and nothing here is submitted: the file is a form of the two
+    # boxes, not a document, and `/api/theorem/recall` below is still the only
+    # way an answer is handed in. That is the difference from the investigation
+    # write-up, where the file *is* the work.
+
+    def _theorem_scratch_file(cfg: Settings, repo: Repository, date: dt.date) -> tuple[Path, Any]:
+        """Today's card, and the file its answer is being typed into.
+
+        Raises if nothing was drawn. Opening an editor on a day with no
+        question would give you a buffer with nowhere to submit it, which is a
+        worse way to find out than a line of red text in the panel.
+        """
+        drawn = repo.draw(date)
+        if drawn is None:
+            raise LookupError(f"no theorem drawn on {date}")
+        card = repo.card(drawn.card_id)
+        if card is None:
+            raise LookupError(f"theorem card {drawn.card_id} is missing")
+        return scratch.file_for(cfg.path("scratch"), "theorem", date), card
+
+    @app.post("/api/theorem/open")
+    def theorem_open(
+        cfg: Cfg, repo: Repo, body: api.TheoremOpenRequest
+    ) -> api.TheoremScratch:
+        """Seed the file from the boxes, before the terminal attaches to it.
+
+        Separate from the websocket for the same reason the investigation's
+        open is: the file is on disk whether or not an editor can start, so a
+        machine without `nvim` loses the panel's terminal and nothing else --
+        the path comes back either way and a real terminal still works.
+        """
+        path, card = _theorem_scratch_file(cfg, repo, body.date)
+        scratch.ensure_file(
+            path,
+            scratch.header_for(card.name, card.topic, body.date),
+            body.explanation,
+            body.application,
+        )
+        explanation, application = scratch.read_file(path)
+        return api.TheoremScratch(
+            path=str(path),
+            scrollback=cfg.editor.scrollback,
+            explanation=explanation,
+            application=application,
+        )
+
+    @app.get("/api/theorem/scratch")
+    def theorem_scratch(cfg: Cfg, repo: Repo, date: Today) -> api.TheoremScratch:
+        """The file, split back into the two boxes. What `:wq` hands over.
+
+        A read, and only a read -- the panel puts what comes back in the
+        textareas and the submit button is still a submit button. Writing in
+        the editor is therefore never the same act as handing in, which is the
+        rule the investigation's "read it back" exists to keep too.
+        """
+        path, _ = _theorem_scratch_file(cfg, repo, date)
+        explanation, application = scratch.read_file(path)
+        return api.TheoremScratch(
+            path=str(path),
+            scrollback=cfg.editor.scrollback,
+            explanation=explanation,
+            application=application,
+        )
+
+    @app.websocket("/api/theorem/term")
+    async def theorem_term(ws: WebSocket) -> None:
+        """nvim on today's recall buffer. See `_serve_editor`."""
+
+        def open_file(cfg: Settings, repo: Repository, params: Any) -> tuple[Path, Path]:
+            date = dt.date.fromisoformat(params.get("date", ""))
+            path, card = _theorem_scratch_file(cfg, repo, date)
+            # Belt and braces: the panel POSTs to `open` first and this is
+            # then a no-op, but a socket that arrived on its own would
+            # otherwise chdir into a directory that does not exist yet and the
+            # editor would die at exec with nothing to show for it.
+            scratch.ensure_file(path, scratch.header_for(card.name, card.topic, date))
+            return path, cfg.path("scratch")
+
+        await _serve_editor(ws, open_file)
 
     @app.post("/api/theorem/recall")
     def theorem_recall(cfg: Cfg, repo: Repo, body: api.TheoremRecallRequest) -> api.TheoremsPanel:
@@ -2177,6 +2198,94 @@ def _register(app: FastAPI) -> None:
 
 
 # --- helpers ---------------------------------------------------------------
+
+
+async def _serve_editor(
+    ws: WebSocket, open_file: Callable[[Settings, Repository, Any], tuple[Path, Path]]
+) -> None:
+    """One websocket, one editor, on a file the *server* picked.
+
+    Shared by the investigation write-up and the theorem recall boxes, which
+    differ in nothing but which file they open -- so `open_file` is the whole
+    of the difference, and it is handed the config, a repository and the query
+    string rather than anything the client could shape into a path.
+
+    The protocol is deliberately tiny and one-directional in each shape: the
+    client sends JSON (`in` for keystrokes, `resize` for a window size), and
+    the server sends raw bytes straight off the pty. Nothing the client sends
+    is ever interpreted as a path, an argument or a command.
+
+    Refused from anywhere but loopback. The rest of this app is equally
+    unauthenticated but exposes readings and ratings; an editor is a shell, and
+    `[server].host` is a line somebody could widen without thinking about what
+    is behind this one.
+    """
+    client = ws.client.host if ws.client else None
+    if client not in webauthn.LOOPBACK and client != "testclient":
+        await ws.close(code=1008, reason="the editor is loopback-only")
+        return
+
+    cfg: Settings = ws.app.state.settings
+    repo = Repository(ws.app.state.db.conn)
+    await ws.accept()
+
+    try:
+        path, cwd = open_file(cfg, repo, ws.query_params)
+        editor = term.resolve_editor(cfg.editor.editor)
+    except (ValueError, LookupError, term.TerminalError) as e:
+        # Reported down the socket rather than as a close reason: the panel
+        # has a terminal on screen by now, and a line of text in it is read
+        # where a close code is not.
+        await ws.send_bytes(f"\r\n\x1b[31m{e}\x1b[0m\r\n".encode())
+        await ws.close()
+        return
+
+    session = term.Session.spawn(editor, cfg.editor.commands, path, cwd=cwd)
+    log.info("editor %d opened %s", session.pid, path.name)
+
+    loop = asyncio.get_running_loop()
+    outbound: asyncio.Queue[bytes | None] = asyncio.Queue()
+
+    async def pump() -> None:
+        """Queue -> socket. One task, so frames keep the pty's order."""
+        while True:
+            chunk = await outbound.get()
+            if chunk is None:
+                return
+            await ws.send_bytes(chunk)
+
+    async def keys() -> None:
+        """Socket -> pty. The only thing that reads from the client."""
+        while True:
+            message = await ws.receive_json()
+            kind = message.get("t")
+            if kind == "in":
+                session.write(str(message.get("d", "")).encode())
+            elif kind == "resize":
+                session.resize(int(message.get("rows", 24)), int(message.get("cols", 80)))
+
+    tasks = [
+        asyncio.create_task(term.bridge(outbound, session, loop)),
+        asyncio.create_task(pump()),
+        asyncio.create_task(keys()),
+    ]
+    try:
+        # Whichever ends first ends the session: the editor quitting, the tab
+        # closing, or the socket dropping. All three mean the same thing here,
+        # so none of them is special-cased.
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        for task in tasks:
+            task.cancel()
+        # Off-thread: close() waits on the editor to die and would otherwise
+        # stall every other request for up to `GRACE_SECONDS`.
+        await loop.run_in_executor(None, session.close)
+        log.info("editor %d closed", session.pid)
+        with contextlib.suppress(RuntimeError):
+            await ws.close()
+
 
 
 def _feed_meta(got: feeds.Cached[Any]) -> api.FeedMeta:

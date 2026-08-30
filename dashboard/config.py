@@ -78,6 +78,15 @@ class PathSettings(Base):
     be overwritten by the server -- see `investigate.ensure_file`.
     """
 
+    scratch: str = "scratch"
+    """Where the recall boxes' buffer goes while it is being typed in.
+
+    A working directory, not a record: what a graded recall is, is the row the
+    grading wrote, and these files are only ever the two textareas in a form an
+    editor can open. Gitignored for that reason -- a day's file stops mattering
+    the moment the answer is submitted, and the answer is in the database.
+    """
+
     spelling: str = "spelling.json"
     """The hand-curated spelling pool. Read-only to the server, and tracked in
     git -- unlike `problems.json`, nothing ever appends to this, so it stays
@@ -686,8 +695,15 @@ class ArgumentPattern(Base):
     statement: str = Field(min_length=20, max_length=1000)
 
 
-class InvestigateSettings(Base):
-    """The write-up: which editor opens it, and how it is told to behave."""
+class EditorSettings(Base):
+    """The embedded editor: which one, and how it is told to behave.
+
+    Its own section rather than `[investigate]`'s, which is where these three
+    started. Two panels fork an editor now -- the write-up on the politics tab
+    and the theorem recall boxes on the math one -- and a setting that governs
+    the math tab out of the politics feature's config is a setting nobody finds
+    when they go looking for it.
+    """
 
     editor: list[str] = Field(default_factory=lambda: ["nvim", "vim"])
     """Editors to try, in order. The first one on PATH wins.
@@ -697,7 +713,7 @@ class InvestigateSettings(Base):
     `vim` and a working panel, not a stack trace about a missing binary.
     """
 
-    editor_commands: list[str] = Field(default_factory=lambda: ["nnoremap U <C-r>"])
+    commands: list[str] = Field(default_factory=lambda: ["nnoremap U <C-r>"])
     """Ex commands passed as `-c`, so they run *after* your own config.
 
     The default one is here because of a browser, not a preference. Chrome
@@ -714,6 +730,10 @@ class InvestigateSettings(Base):
     scrollback: int = Field(default=1000, ge=0, le=100_000)
     """Lines the terminal keeps. Only reached with `:!` output -- a buffer
     scrolls inside the editor, not into the terminal's own history."""
+
+
+class InvestigateSettings(Base):
+    """The write-up: what it is rated against, and where it is filed."""
 
     anchor: int = Field(default=1500, ge=100, le=4000)
     """The opponent rating every investigation is scored against.
@@ -992,6 +1012,7 @@ class Settings(Base):
     paths: PathSettings = Field(default_factory=PathSettings)
     llm: LlmSettings
     math: MathSettings
+    editor: EditorSettings = Field(default_factory=EditorSettings)
     investigate: InvestigateSettings = Field(default_factory=InvestigateSettings)
     spelling: SpellingSettings = Field(default_factory=SpellingSettings)
     tricks: TrickSettings = Field(default_factory=TrickSettings)

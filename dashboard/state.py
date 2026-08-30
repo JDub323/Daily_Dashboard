@@ -827,7 +827,7 @@ def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.Dash
             repo,
             today,
             cfg.path("investigations"),
-            cfg.investigate.scrollback,
+            cfg.editor.scrollback,
             cfg.investigate.folders,
         ),
         patterns=patterns_panel(repo, today),

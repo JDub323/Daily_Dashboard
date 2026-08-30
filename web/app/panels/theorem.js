@@ -22,10 +22,34 @@ import * as api from "../api.js";
 import { opener } from "../daily.js";
 import { el, mount } from "../dom.js";
 import { put, store } from "../store.js";
-import { typeset } from "../ui.js";
+import { openEditor, ready as termReady } from "../term.js";
+import { toast, typeset } from "../ui.js";
 
 /** Loose on purpose — see the placeholder text. Matches the server's floor. */
 const MIN_ANSWER = 3;
+
+/**
+ * The editor, if one is open, and the file it is on. At most one, ever.
+ *
+ * Module-level for the same reason the investigation's is: this panel is
+ * rebuilt by any store change at all, and a terminal rebuilt underneath you is
+ * a lost buffer. The node is kept and re-attached; only closing it disposes it.
+ *
+ * Why an editor at all, for two textareas. Half of a good answer here is
+ * `$|\langle x,y\rangle| \le \|x\|\,\|y\|$`, and a browser text box is the
+ * worst place there is to proofread a line like that — no motions, no undo
+ * tree, no matchparen, and a cursor you move with the arrow keys. The pty is
+ * already here for the write-up, so this is the same real nvim, with the same
+ * config and the same plugins, pointed at a file that is a form of these two
+ * boxes rather than a document. See `dashboard/scratch.py`.
+ */
+let editor = null;
+let scratchPath = "";
+
+function closeEditor() {
+  editor?.dispose();
+  editor = null;
+}
 
 /**
  * A recall box that renders what you are typing.
@@ -123,6 +147,103 @@ function undrawn(theorems) {
   );
 }
 
+/**
+ * Read the file back into the two boxes.
+ *
+ * Called however the editor ended — `:wq`, `:q!`, or the close button — because
+ * all three leave a file on disk that is at least as new as what the panel is
+ * holding. Nothing is submitted by this: it fills the textareas, and the submit
+ * button underneath them is still the only thing that hands an answer in.
+ *
+ * A failed read is said out loud with the path in it. The words are on disk
+ * either way, and a toast naming the file is the difference between a bad
+ * moment and a lost answer.
+ */
+async function pullBack(cardId, body) {
+  try {
+    const got = await api.get("/api/theorem/scratch", { date: api.today() });
+    const held = drafted(cardId);
+    held.explanation = got.explanation;
+    held.application = got.application;
+    scratchPath = got.path;
+  } catch (error) {
+    toast(`could not read the file back: ${error.message} — it is at ${scratchPath}`);
+  } finally {
+    draw(body);
+  }
+}
+
+/** The terminal, and the way out of it. */
+function editorBlock(cardId, body) {
+  const done = el("button", {
+    text: "done — close the editor",
+    onclick: () => {
+      closeEditor();
+      pullBack(cardId, body);
+    },
+  });
+
+  return el("div.gap", null,
+    editor.node,
+    el("div.row", null, done),
+    el("div.faint", {
+      text: "esc and tab are vim's in here · alt-hjkl leaves · ctrl-w and ctrl-r "
+        + "stay the browser's, so redo is U · keep the two >>> lines, they are "
+        + "what splits the boxes",
+    }),
+    scratchPath ? el("div.faint.small", { text: scratchPath }) : null,
+  );
+}
+
+/** The way into the editor. Never the way an answer is submitted. */
+function writeIt(held, cardId, body, message) {
+  const open = el("button", {
+    text: "write it in nvim",
+    title: "both boxes, in a real editor on a real pty",
+    onclick: async () => {
+      open.disabled = true;
+      try {
+        // What is in the boxes goes up first, so the buffer opens on the
+        // half-answer rather than on two empty sections. The response is the
+        // file as it now reads, which is what the boxes are re-seeded from --
+        // one direction of truth per moment, and this is the moment the file
+        // takes over.
+        const got = await api.post("/api/theorem/open", {
+          explanation: held.explanation,
+          application: held.application,
+        });
+        scratchPath = got.path;
+        held.explanation = got.explanation;
+        held.application = got.application;
+        if (!termReady()) {
+          toast(`the terminal did not load — the file is at ${got.path}`);
+          draw(body);
+          return;
+        }
+        editor = openEditor({
+          url: "/api/theorem/term",
+          date: api.today(),
+          scrollback: got.scrollback,
+        });
+        // `:wq` is how you finish, and the boxes should fill without being
+        // asked. Guarded because the close button gets there first when it is
+        // the close button that ended it, and pulling back twice would race
+        // two reads of the same file into the same draft.
+        editor.closed.then(() => {
+          if (!editor) return;
+          closeEditor();
+          pullBack(cardId, body);
+        });
+        draw(body);
+      } catch (error) {
+        open.disabled = false;
+        message.textContent = error.message;
+      }
+    },
+  });
+  return open;
+}
+
 /** Drawn and unanswered: the name, and two boxes. */
 function question(body, theorems) {
   const card = theorems.today;
@@ -130,6 +251,19 @@ function question(body, theorems) {
   const seen = entry ? ` · seen ${entry.seen}× · recalled ${entry.recalled}×` : "";
 
   const held = drafted(card.id);
+
+  // The editor replaces the boxes rather than sitting beside them. Two live
+  // copies of one answer is a way to lose half of it, and the panel is redrawn
+  // by any store change at all — a textarea reflowing under a buffer you are
+  // typing into would be the same bug the draft above exists to prevent.
+  if (editor) {
+    return el("div", null,
+      el("div.big.value", { text: card.name }),
+      el("div.faint", { text: `${card.topic}${seen}` }),
+      editorBlock(card.id, body),
+    );
+  }
+
   const explanation = latexBox(
     3,
     held.explanation,
@@ -189,7 +323,7 @@ function question(body, theorems) {
     el("div.faint.gap", { text: "the problem" }),
     application.box,
     application.preview,
-    el("div.row", null, submit, message),
+    el("div.row", null, submit, writeIt(held, card.id, body, message), message),
   );
 }
 

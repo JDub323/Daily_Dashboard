@@ -41,6 +41,10 @@ training = "training.toml"
 # source rather than an export: they are opened in a real editor, and the server
 # only ever creates one that is missing -- it never rewrites one that exists.
 investigations = "investigations"
+# Scratch buffers for the recall boxes -- what the embedded editor opens when
+# you write a theorem out in nvim instead of in the textarea. Working files,
+# not records: the graded answer is a database row, and these are gitignored.
+scratch = "scratch"
 
 [llm]
 model = "claude-sonnet-5"
@@ -550,10 +554,15 @@ feeds = [
 # memory is isolated from your global chat memory and from other projects, so a
 # semester of foreign-policy write-ups does not leak into everything else you
 # ask Claude.
-[investigate]
-# Editors to try, in order; the first one on PATH wins. A real terminal editor
-# runs on a real pty inside the panel -- this is not an emulation, so your own
-# config, plugins and muscle memory all come with it.
+# ---------------------------------------------------------------------------
+# The embedded editor.
+#
+# Two panels fork one: the investigation write-up below, and the two theorem
+# recall boxes on the math tab. Both get a real terminal editor on a real pty
+# -- this is not an emulation, so your own config, your plugins and your
+# muscle memory all arrive with it.
+[editor]
+# Editors to try, in order; the first one on PATH wins.
 editor = ["nvim", "vim"]
 
 # Ex commands run with -c, and therefore *after* your own config.
@@ -562,16 +571,17 @@ editor = ["nvim", "vim"]
 # reserves Ctrl-R and will not give it to a page, so vim's redo cannot be
 # reached inside the panel however this is wired; `U` is the nearest free key.
 # Ctrl-W is reserved the same way and window commands are simply unavailable
-# in a browser tab -- which is why the file is a real file you can also open
+# in a browser tab -- which is why both files are real files you can also open
 # from a terminal, where none of this applies.
 #
 # Empty the list for vim exactly as you configured it.
-editor_commands = ["nnoremap U <C-r>"]
+commands = ["nnoremap U <C-r>"]
 
 # Lines of terminal scrollback. Only ever reached by `:!` output; a buffer
 # scrolls inside the editor, not into the terminal's history.
 scrollback = 1000
 
+[investigate]
 # The opponent rating every investigation is scored against. One number, not a
 # table: the topics differ in subject, not in difficulty, so there is nothing
 # for a second anchor to mean. Fixed, so the scale cannot drift when the
