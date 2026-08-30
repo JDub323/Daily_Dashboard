@@ -2308,7 +2308,14 @@ def main() -> None:
             log_config=None,  # logs.setup owns the handlers
         )
     )
-    if cfg.server.open_browser:
+    # `DASHBOARD_NO_BROWSER` is for the one caller that wants everything in
+    # config.toml except the tab: the logon task, which starts this at every
+    # sign-in so the phone has something to send to. `open_browser = false` in
+    # the file would be the obvious way to say it and is the wrong one -- it is
+    # also how you launch it by hand, and a flag that turns the tab off for both
+    # is a flag you turn back on and then forget about. An env var scopes the
+    # difference to the caller that wants it.
+    if cfg.server.open_browser and not os.environ.get("DASHBOARD_NO_BROWSER"):
         threading.Thread(target=_open_when_ready, args=(server, url), daemon=True).start()
     server.run()
 

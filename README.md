@@ -61,7 +61,9 @@ Then open `/m` and use the browser's *add to home screen*. `display: standalone`
 
 Fetches race a 2s timer against the cache rather than waiting on the network: an unreachable host refuses in milliseconds, but a network that *drops* rather than refuses holds the socket open for tens of seconds per file, and sixteen files of that is an app that appears not to launch. `install` adds each file separately rather than with `addAll`, which is atomic — one 404 in the list above and there would be no cache at all.
 
-`run.cmd` and `.claude/launch.json` both call `run.sh`, so there is one launch path. The port lives only in `config.toml` — `.claude/launch.json` has to repeat it so the preview tool knows where to connect, and a test fails if the two drift apart.
+`run.cmd`, `boot.cmd` and `.claude/launch.json` all call `run.sh`, so there is one launch path. The port lives only in `config.toml` — `.claude/launch.json` has to repeat it so the preview tool knows where to connect, and a test fails if the two drift apart.
+
+**`boot.cmd` is the same launch minus the browser tab, run by a logon task.** Register it with `powershell -ExecutionPolicy Bypass -File install-boot-task.ps1` (`-Remove` to undo). It exists because the phone holds its writes until you press *send*, and send needs the server up at the moment you press it — Tailscale's service comes back after a reboot on its own and this does not, so the cost of forgetting is a failed send from a gym, which is the exact situation the queue was built for. It runs as you, interactively, 30s after sign-in: not SYSTEM, no stored password, because the server reaches into WSL, your venv, `dashboard.db` and a Tailscale identity that belongs to your account. The tab is suppressed with `DASHBOARD_NO_BROWSER` rather than `open_browser = false`, so launching by hand is unaffected.
 
 ## Tests
 
