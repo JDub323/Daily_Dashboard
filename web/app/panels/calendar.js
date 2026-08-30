@@ -1038,6 +1038,12 @@ function quickAdd(panel, node) {
       return;
     }
     if (event.key === "Escape") {
+      // Two presses, two things, and the second one has to be the way out.
+      // Esc clears a box you have typed into — but on a box that is already
+      // empty and back on `auto` it is you asking to leave, so it falls
+      // through to the app handler, which blurs and puts the ring back on the
+      // card. Swallowing it either way made this box a room with no door.
+      if (!input.value && picker.value === AUTO) return;
       event.stopPropagation();
       input.value = "";
       lines = [];
