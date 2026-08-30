@@ -624,6 +624,62 @@ def validate_trick(
     return parsed, errors + warnings
 
 
+def _windows_path(path: Path) -> str:
+    """`/mnt/c/Users/...` -> `C:\\Users\\...`.
+
+    Printed beside the WSL path because the two ends of this job disagree about
+    which is real: the CLI runs inside WSL and the file tools that will open
+    these PNGs run outside it. Naming both removes the one step of the proof
+    days where a reader has to translate a path by hand.
+    """
+    text = str(path)
+    if text.startswith("/mnt/") and len(text) > 6:
+        return f"{text[5].upper()}:{text[6:]}".replace("/", "\\")
+    return text
+
+
+def _render(settings: Settings, spec: str) -> int:
+    """`--render-pages FIRST-LAST`, printed.
+
+    The way the proof days actually read the book. See `proofbook.render_pages`
+    for why the pages have to become images rather than text.
+    """
+    first, _, last = spec.partition("-")
+    try:
+        lo, hi = int(first), int(last or first)
+    except ValueError:
+        print(f"not a page range: {spec!r} (expected e.g. 228-232)", file=sys.stderr)
+        return 2
+
+    pdf = (settings.root / settings.math.proof.pdf).resolve()
+    if not pdf.exists():
+        print(
+            f"no proof textbook at {pdf}. [math.proof].pdf names it; the file is "
+            f"gitignored, so a fresh clone has to be given a copy.",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        written = proofbook.render_pages(pdf, lo, hi, pdf.parent / ".pages")
+    except ImportError:
+        print(
+            "pymupdf is not installed: pip install -e '.[proofbook]' — without it "
+            "the pages cannot be rendered, and the text layer of this book is not a "
+            "safe substitute (x^{2^n} extracts as x2n).",
+            file=sys.stderr,
+        )
+        return 2
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+
+    print(f"OK {len(written)} page(s) of {pdf.name} as PNG. Open these:")
+    for path in written:
+        print(f"  {_windows_path(path)}")
+    return 0
+
+
 def _report_reading(settings: Settings, path: Path, date: dt.date) -> int:
     """`--validate-reading`, printed. Same contract as the reports around it."""
     if not path.exists():
@@ -829,6 +885,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="print the whole coming week, Sunday first — the weekly job's input",
     )
+    ap.add_argument(
+        "--render-pages",
+        metavar="FIRST-LAST",
+        help="render those PDF pages of the proof textbook to PNGs and print where they are",
+    )
     ap.add_argument("--validate", metavar="FILE", type=Path, help="check a generated batch")
     ap.add_argument(
         "--validate-reading", metavar="FILE", type=Path, help="check a generated reading plan"
@@ -845,6 +906,7 @@ def main(argv: list[str] | None = None) -> int:
     wanted = [
         args.context,
         args.week,
+        args.render_pages,
         args.validate,
         args.validate_reading,
         args.trick_context,
@@ -852,8 +914,8 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if not any(wanted):
         ap.error(
-            "one of --context, --week, --validate, --validate-reading, --trick-context "
-            "or --validate-trick is required"
+            "one of --context, --week, --render-pages, --validate, --validate-reading, "
+            "--trick-context or --validate-trick is required"
         )
 
     settings = load_settings()
@@ -910,6 +972,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         return 0
+
+    if args.render_pages:
+        return _render(settings, args.render_pages)
 
     if args.validate_reading:
         return _report_reading(settings, args.validate_reading, date)

@@ -5,8 +5,16 @@
 #
 #   ./batch.sh --week                     the whole coming week, Sunday first
 #   ./batch.sh --context                  one day of it
+#   ./batch.sh --render-pages 228-232     those pages of the proof textbook, as PNGs
 #   ./batch.sh --validate FILE            the server's checks, at 3am not 8am
 #   ./batch.sh --validate-reading FILE    the same, for Sunday's reading plan
+#
+# `--render-pages` is how the proof days actually read the book, and it is not
+# a convenience. The harness's own PDF reader shells out to `pdftoppm`, which is
+# not installed here; and this book's text layer turns `x^{2^n}` into `x2n`,
+# which is worse than an obvious garble because it reads as a plausible
+# *different* problem. Rendering the page and looking at it is the only route
+# that quotes rather than reconstructs. Needs the `proofbook` extra.
 #
 #   ./batch.sh --trick-context            tonight's trick set: topic, bands, callback
 #   ./batch.sh --validate-trick FILE      the same, for a generated trick set

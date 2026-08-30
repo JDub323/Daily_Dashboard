@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from pathlib import Path
 
 import pytest
 
-from dashboard import batch, content, llm, scoring
+from dashboard import batch, content, llm, proofbook, scoring
 from dashboard.db.repository import PROOF_AREA
 from dashboard.models import domain as d
 from dashboard.models.common import DayMode, MathOutcome, MathStatus, ProblemKind, Track
@@ -287,6 +288,29 @@ def test_every_day_of_the_week_carries_the_schema_it_must_write(settings, repo):
     assert "kind\":\"proof\"" in shapes["proof"]
     assert "verified_url" in shapes["compute"]
     assert "segments" in shapes["reading"]
+
+
+# --- reading the book ------------------------------------------------------
+
+
+def test_a_page_range_is_bounded_before_anything_is_opened(tmp_path):
+    """The guards run before `pymupdf` is imported, so they hold on a machine
+    that has neither the extra nor the book."""
+    with pytest.raises(ValueError, match="not a range"):
+        proofbook.render_pages(tmp_path / "x.pdf", 10, 4, tmp_path)
+    with pytest.raises(ValueError, match="more than"):
+        proofbook.render_pages(tmp_path / "x.pdf", 1, 500, tmp_path)
+
+
+def test_the_render_path_is_printed_for_both_sides_of_the_wsl_boundary():
+    """The CLI runs inside WSL; the tools that open these PNGs run outside it.
+    Printing only one form leaves a path to be translated by hand at 3am."""
+    assert (
+        batch._windows_path(Path("/mnt/c/Users/jwhal/Daily Dashboard/textbooks/.pages/p0228.png"))
+        == r"C:\Users\jwhal\Daily Dashboard\textbooks\.pages\p0228.png"
+    )
+    # Not under /mnt: left exactly as it is rather than mangled.
+    assert batch._windows_path(Path("/home/jwhal/x.png")) == "/home/jwhal/x.png"
 
 
 # --- a problem you brought yourself ----------------------------------------

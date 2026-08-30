@@ -180,6 +180,69 @@ def chapter_for_area(book: d.ProofBook, area: str | None) -> d.ProofChapter | No
     return next((c for c in book.chapters if c.number == number), None)
 
 
+RENDER_DPI = 160
+"""Enough to read a printed page of mathematics without the file being huge.
+
+Measured rather than guessed: at 160 the subscripts and the primes in
+`\\varepsilon^{n-1}` are legible in a rendered page, and a page comes to about
+200KB. At 100 the exponents start to go.
+"""
+
+MAX_RENDER = 12
+"""How many pages one call will render.
+
+A guard against `--render-pages 1-857`, which would fill a directory with a
+gigabyte of PNGs and hand a model more than it can read anyway. A section of
+this book is four or five pages; a chapter's solutions are consulted a page at
+a time.
+"""
+
+
+def render_pages(
+    pdf: Path, first: int, last: int, out: Path, dpi: int = RENDER_DPI
+) -> list[Path]:
+    """Render 1-based PDF pages to PNGs and return the files written.
+
+    This exists because reading the book is the one step of the proof days that
+    has no fallback, and the obvious route to it is not reliably available: the
+    harness's own PDF reader shells out to `pdftoppm`, which is not installed
+    here and is not something a 3am job can install. Text extraction is worse
+    than useless for this book -- `x^{2^n}` comes out as `x2n`, which is not a
+    garbled statement but a *plausible different one*, and a generator reading
+    that will quietly reconstruct rather than quote.
+
+    So the pages become images, and the model looks at the page.
+
+    `pymupdf` is imported here rather than at module scope, like `build_index`
+    above: nothing at runtime renders anything, and a venv without the extra
+    must still start the server.
+    """
+    if first < 1 or last < first:
+        raise ValueError(f"page range {first}-{last} is not a range")
+    if last - first + 1 > MAX_RENDER:
+        raise ValueError(
+            f"{last - first + 1} pages is more than the {MAX_RENDER} this renders at once"
+        )
+
+    import pymupdf  # lazy: see the docstring
+
+    out.mkdir(parents=True, exist_ok=True)
+    # Cleared each call: these are scratch, and a stale page from last week's
+    # section sitting beside this week's is exactly the confusion to avoid.
+    for old in out.glob("p*.png"):
+        old.unlink()
+
+    written = []
+    with pymupdf.open(str(pdf)) as doc:
+        if last > len(doc):
+            raise ValueError(f"{pdf.name} has {len(doc)} pages; {last} was asked for")
+        for n in range(first, last + 1):
+            path = out / f"p{n:04d}.png"
+            doc[n - 1].get_pixmap(dpi=dpi).save(str(path))
+            written.append(path)
+    return written
+
+
 def solution_pages(book: d.ProofBook, section: d.ProofSection) -> tuple[int, int] | None:
     """Where the printed solutions for a section's chapter live, in PDF pages.
 

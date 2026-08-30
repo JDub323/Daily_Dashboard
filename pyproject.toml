@@ -38,10 +38,13 @@ dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.6"]
 # 2026 auth change). A hard dependency on it would mean the day it breaks
 # again is a day the dashboard does not start.
 garmin = ["garminconnect>=0.2.25"]
-# Parsing the proof textbook's contents into `proofbook.json`. Needed by one
-# command that runs about once per book -- `python -m dashboard.proofbook` --
-# and by nothing at runtime: the index it writes is committed, the PDF is not.
-proofbook = ["pypdf>=5"]
+# The proof textbook, read two ways. `pypdf` parses the contents into
+# `proofbook.json`, once per book. `pymupdf` renders pages to PNGs for
+# `./batch.sh --render-pages`, which is how the overnight job actually reads a
+# problem -- the text layer is not a safe substitute, since x^{2^n} extracts as
+# x2n and a generator reading that reconstructs rather than quotes.
+# Neither is needed at runtime: the index is committed and the PDF is not.
+proofbook = ["pypdf>=5", "pymupdf>=1.24"]
 
 [project.scripts]
 sharpness = "dashboard.server:main"
