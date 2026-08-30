@@ -345,6 +345,47 @@ def test_an_unknown_tier_falls_back_rather_than_crashing(settings, repo, level_c
 # --- sunday ----------------------------------------------------------------
 
 
+def test_a_reading_plan_is_imported_from_the_weekly_file(settings, repo):
+    """The two halves of a reading day are written by different processes: the
+    weekly job writes the file, the panel reads the table. Without an import
+    the file was validated, correct, and never looked at."""
+    batches = settings.path("batches")
+    batches.mkdir(parents=True, exist_ok=True)
+    (batches / f"reading-{SUNDAY.isoformat()}.json").write_text(
+        json.dumps(
+            {
+                "date": SUNDAY.isoformat(),
+                "topic": settings.math.topic_for(SUNDAY),
+                "book": "Putnam and Beyond",
+                "segments": [
+                    {
+                        "title": "the section from the top",
+                        "reading": "6.4.2, pp. 318-320",
+                        "problems": ["1022", "1023"],
+                        "minutes": 30,
+                        "why": "the objects themselves",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    plan = content.import_study_plan(settings, repo, SUNDAY)
+    assert plan.book == "Putnam and Beyond"
+    assert repo.study_plan(SUNDAY) is not None
+
+    # Idempotent: importing twice must not discard ticked segments.
+    repo.mark_segment(SUNDAY, 0, done=True)
+    again = content.import_study_plan(settings, repo, SUNDAY)
+    assert again.done == [0]
+
+
+def test_a_missing_reading_plan_names_the_command(settings, repo):
+    with pytest.raises(content.ContentError, match=r"batch.sh --week"):
+        content.import_study_plan(settings, repo, SUNDAY)
+
+
 def test_a_reading_day_draws_nothing(settings, repo):
     with pytest.raises(content.ContentError, match="reading day"):
         content.next_problem(settings, repo, SUNDAY)

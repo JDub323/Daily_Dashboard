@@ -188,6 +188,41 @@ def own_problem(
     return _store(repo, problem, date)
 
 
+def import_study_plan(settings: Settings, repo: Repository, date: dt.date) -> d.StudyPlan:
+    """Read Sunday's plan out of the overnight file and store it.
+
+    The counterpart of `_from_batch`, and it exists because the two halves of a
+    reading day are written by different processes: the weekly job writes
+    `batches/reading-<date>.json` and the panel reads the `study_plan` table.
+    Without this the file was validated, correct, and never looked at -- the
+    Sunday panel said "no reading plan for today" while a good one sat on disk.
+
+    Idempotent: a plan already in the table is returned untouched rather than
+    re-imported, so pressing the button twice does not discard which segments
+    you have already ticked.
+    """
+    stored = repo.study_plan(date)
+    if stored is not None:
+        return stored
+
+    path = settings.path("batches") / f"reading-{date.isoformat()}.json"
+    if not path.exists():
+        raise ContentError(
+            f"no reading plan for {date.isoformat()}: the weekly job has not landed. "
+            f"Run `./batch.sh --week` and generate it in the Claude app."
+        )
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise ContentError(f"unusable reading plan at {path}: {e}") from e
+
+    plan = d.StudyPlan(
+        **{**raw, "model": BATCHED, "generated_at": dt.datetime.now()}
+    )
+    log.info("serving %s's reading plan from the weekly batch (no LLM call)", date)
+    return repo.add_study_plan(plan)
+
+
 def load_pool(path: Path) -> list[dict[str, Any]]:
     """The hand-curated problem pool. Never written by the server.
 

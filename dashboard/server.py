@@ -1166,7 +1166,14 @@ def _register(app: FastAPI) -> None:
         that hands back the panel, and the browser gets the problem in the
         same shape every other daily arrives in.
         """
-        content.next_problem(cfg, repo, body.date)
+        # A reading day draws no problem; what it "draws" is the plan, out of
+        # the same overnight directory. One endpoint rather than two because
+        # the panel's gesture is the same either way -- this is the button that
+        # puts the day on the record.
+        if cfg.math.mode_for(body.date) is DayMode.reading:
+            content.import_study_plan(cfg, repo, body.date)
+        else:
+            content.next_problem(cfg, repo, body.date)
         return state.math_panel(cfg, repo, body.date)
 
     @app.post("/api/math/hint")

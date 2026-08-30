@@ -221,11 +221,25 @@ function dayBanner(math) {
 function renderReading(node, math, head) {
   const plan = math.plan;
   if (!plan) {
+    // The same gesture as drawing a problem, and the same endpoint: the plan
+    // is sitting in the overnight directory and this is what imports it. The
+    // error case — no file at all — comes back from the server saying which
+    // command to run, so there is nothing for the panel to guess at.
     mount(node, head,
-      el("div.faint", { text: "no reading plan for today." }),
-      el("div.faint.small", {
-        text: "the weekly job did not run. `./batch.sh --week`, then generate it in the Claude app.",
+      el("button.primary", {
+        text: "get today's reading",
+        onclick: (e) => {
+          e.target.disabled = true;
+          draw(node, this).catch((error) => {
+            mount(node, head,
+              el("div.err", { text: error.message }),
+              el("div.row", null,
+                el("button", { text: "retry", onclick: () => this.render(node) })),
+            );
+          });
+        },
       }),
+      el("div.faint", { text: `topic: ${store.config.topic}` }),
       archiveLink(),
     );
     return;
