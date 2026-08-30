@@ -1815,6 +1815,27 @@ MIGRATIONS: list[tuple[int, str]] = [
         -- plan opening with the same introduction.
         """,
     ),
+    (
+        30,
+        """
+        -- The piano panel was the one cell on `dailies` with nothing to
+        -- report. It drew the day's scale and chord, you played them or you
+        -- did not, and the card looked identical either way -- which is
+        -- exactly the state the gold border exists to distinguish.
+        --
+        -- A row per day and nothing else in it. There is no rating here and
+        -- there should not be: what a scale is worth practising against is
+        -- whether you sat down, and a self-graded number on top of that is a
+        -- number about your mood. Absent means not practised, so unticking is
+        -- a DELETE and the table never holds a false.
+        CREATE TABLE piano_practice (
+            date       TEXT PRIMARY KEY
+                            CHECK (date IS strftime('%Y-%m-%d', date)),
+            logged_at  TEXT NOT NULL
+                            DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        ) STRICT;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

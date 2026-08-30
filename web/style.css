@@ -602,15 +602,28 @@ kbd { font: inherit; font-size: var(--t-meta); border: 1px solid var(--border); 
    Column-major: `grid-auto-flow: column` over seven fixed rows means cells
    appended in date order land as weeks, so the DOM order is the reading order
    and no cell needs to name its own position. */
-:root { --hm-col: 11px; --hm-gap: 3px; }
+/* A floor and a ceiling rather than one fixed size. Both are read back by
+   `weekCount` in stats.js, which draws as many week-columns as fit the card at
+   the ceiling — keep the three in step. */
+:root { --hm-col: 14px; --hm-col-max: 20px; --hm-gap: 3px; }
 .hm-scroll { overflow-x: auto; padding-bottom: var(--s1); margin: var(--s2) 0; }
-.hm-wrap { display: inline-block; min-width: min-content; }
-.heatmap { display: grid; grid-template-rows: repeat(7, var(--hm-col));
-           grid-auto-flow: column; grid-auto-columns: var(--hm-col); gap: var(--hm-gap); }
+.hm-wrap { display: block; width: 100%; min-width: min-content; }
+/* The columns stretch to the card rather than sitting at a fixed width, and
+   `weekCount` draws enough of them to reach the far edge — twelve weeks of
+   history used to leave a stamp of squares in the bottom-left corner of a card
+   three times its width. The stretch is bounded by the number of columns
+   asked for, so a square lands between --hm-col and --hm-col-max; at a full
+   year the columns bottom out on the floor and `.hm-scroll` takes over exactly
+   as it did before. Squares stay square by ratio rather than by height. */
+.heatmap { display: grid; grid-template-rows: repeat(7, auto);
+           grid-auto-flow: column; grid-auto-columns: minmax(var(--hm-col), 1fr); gap: var(--hm-gap); }
 .hm-months { display: grid; gap: var(--hm-gap); margin-bottom: 3px; }
 .hm-month { font-size: var(--t-meta); color: var(--faint); white-space: nowrap; }
 .hm-cell { width: var(--hm-col); height: var(--hm-col); border-radius: var(--r-mark); background: var(--bg);
            border: 1px solid var(--border-soft); }
+/* Inside the grid the column decides the width. The legend's swatches are flex
+   children with no column to take one from, so they keep the fixed size above. */
+.heatmap > .hm-cell { width: auto; height: auto; aspect-ratio: 1; }
 /* Four steps of gold, so "nearly done" and "done" are different squares. The
    top step is the one worth earning and is the only one that is fully solid. */
 .hm-1 { background: rgba(232,180,88,.22); border-color: transparent; }
@@ -939,6 +952,9 @@ button.tiny.keyed::before { content: attr(data-key) " "; color: var(--accent-dim
 .piano-play { font-size: var(--t-meta); padding: var(--s1) var(--s2); flex: 0 0 auto; }
 .piano-song { font-size: var(--t-meta); margin-top: var(--s1); }
 #panel-piano svg { width: 100%; max-width: 280px; height: auto; display: block; margin: var(--s1) 0; }
+/* The tick sits under both keyboards, so it takes the same rule the second
+   item takes off the first: a line, and room to be a separate question. */
+.piano-tick { margin-top: var(--s3); border-top: 1px solid var(--border-soft); padding-top: var(--s2); }
 .pk-white { fill: #e8eaf0; stroke: #1a1f2c; stroke-width: 1; }
 .pk-black { fill: #1a1f2c; stroke: #000; stroke-width: 1; }
 .pk-hl    { fill: var(--accent); }

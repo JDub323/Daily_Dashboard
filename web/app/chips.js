@@ -296,6 +296,17 @@ function tasks() {
       points: 1,
     },
     { id: "log", label: "day log", done: Boolean(s.daylog), panel: "log", points: 1 },
+    {
+      // The one self-report on the list, and priced as the short sitting it
+      // is. It exists because the panel is otherwise the same card whether or
+      // not you played — every other cell here shows its own answer back, and
+      // this one had nothing to show.
+      id: "piano",
+      label: "piano",
+      done: s.piano_practiced,
+      panel: "piano",
+      points: 1,
+    },
   ].filter(
     (task) =>
       // Nothing drawn means nothing owed: a day with an empty pool, or one

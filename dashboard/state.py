@@ -839,6 +839,7 @@ def dashboard_state(cfg: Settings, repo: Repository, today: dt.date) -> api.Dash
         papers=papers_panel(repo, today),
         health=health_panel(cfg, repo, today),
         daylog=repo.daylog(today),
+        piano_practiced=repo.piano_practiced(today),
         completion=repo.completions(),
         perfect_day_streak=scoring.streak(repo.perfect_days(), today),
     )

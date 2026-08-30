@@ -4,8 +4,10 @@
 // file. They are content, so they live in web/data/piano.json now and this
 // module only draws them.
 
+import * as api from "../api.js";
 import { today } from "../api.js";
-import { el, link, svg } from "../dom.js";
+import { el, link, mount, svg } from "../dom.js";
+import { put, store } from "../store.js";
 // The voice lives in its own module: it is fifty lines of panel and two
 // hundred of acoustics, and the two have nothing to say to each other past
 // "play these semitones".
@@ -99,6 +101,31 @@ export default {
   // it used to hold were mostly whitespace to the right of the picture.
   span: 3,
 
+  /**
+   * The tick, and the only thing this panel writes.
+   *
+   * It is a self-report and cannot be anything else — the app has no way of
+   * hearing you play — so it asks the smallest question it can answer
+   * honestly: did you sit down. No minutes, no self-graded quality, nothing
+   * that turns into a rating. Pressing it again takes it back, because the
+   * failure mode of a one-tap claim is tapping it on the way past.
+   */
+  practiceRow() {
+    const done = store.state.piano_practiced;
+    return el("div.row.spread.piano-tick", null,
+      el(done ? "span.ok" : "span.faint", { text: done ? "practiced ✓" : "not practiced yet" }),
+      el(`button${done ? "" : ".primary"}`, {
+        text: done ? "undo" : "practiced it",
+        onclick: async (e) => {
+          e.target.disabled = true;
+          const practiced = !store.state.piano_practiced;
+          await api.post("/api/piano", { practiced });
+          put("piano_practiced", practiced);
+        },
+      }),
+    );
+  },
+
   async render(node) {
     const { notes, scales, chords } = await load();
     // Noon avoids the DST edge where a midnight timestamp lands on the
@@ -110,9 +137,12 @@ export default {
     const scaleRoot = (day * 7) % 12; // ×7 cycles all twelve keys
     const chordRoot = (day * 5 + 3) % 12;
 
-    node.replaceChildren(
+    mount(node,
       item(`${notes[scaleRoot]} ${scale.name}`, "scale", scaleRoot, scale.intervals, scale, notes, "scale"),
       item(`${notes[chordRoot]}${chord.symbol}`, chord.name, chordRoot, chord.intervals, chord, notes, "chord"),
+      // Under both, not above them: the two keyboards are what you came for,
+      // and the tick is what you press on the way out.
+      this.practiceRow(),
     );
   },
 };

@@ -894,6 +894,33 @@ def test_the_daylog_round_trips(client):
     assert client.get("/api/state", params={"date": DATE}).json()["daylog"] == "shipped the rewrite"
 
 
+def test_the_piano_tick_round_trips_and_unticks(client):
+    """Absence is the false, so the untick has to leave the day reading false
+    rather than leaving a row behind that says it happened."""
+    def state():
+        return client.get("/api/state", params={"date": DATE}).json()["piano_practiced"]
+
+    assert state() is False
+
+    client.post("/api/piano", json={"date": DATE, "practiced": True})
+    assert state() is True
+
+    # Twice is the same claim, not two of them.
+    client.post("/api/piano", json={"date": DATE, "practiced": True})
+    assert state() is True
+
+    client.post("/api/piano", json={"date": DATE, "practiced": False})
+    assert state() is False
+
+
+def test_the_piano_tick_is_a_day_at_a_time(client):
+    """Yesterday's practice is not today's — the tick keys on the date it was
+    posted with, which is the browser's local day."""
+    client.post("/api/piano", json={"date": DATE, "practiced": True})
+    other = (TODAY - dt.timedelta(days=1)).isoformat()
+    assert client.get("/api/state", params={"date": other}).json()["piano_practiced"] is False
+
+
 def _no_gcalcli(monkeypatch, writable=("Special Events", "Tests", "Homework")):
     """Stub the two gcalcli reads the quick-add path makes, and capture the write."""
     written: dict = {}

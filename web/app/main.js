@@ -63,6 +63,9 @@ import { initModal, onModalClose, toast } from "./ui.js";
  * again when the streaks panel itself went and took `metrics: ["games"]`.
  */
 const WATCHES = {
+  // The tick redraws its own card: the button's label is the state it just
+  // wrote, so the panel has to hear about the write it made itself.
+  piano: ["piano_practiced"],
   // Generating a problem is the one action in the app that spends real money,
   // and the spend strip lives in this panel.
   activity: ["math"],

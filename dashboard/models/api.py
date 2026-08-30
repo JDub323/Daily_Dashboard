@@ -525,6 +525,12 @@ class DayLogRequest(DateBody):
     text: str = Field(max_length=2000)
 
 
+class PianoPracticeRequest(DateBody):
+    #: False is a real value here -- the tick unticks, for the evening you
+    #: press it and then do not get to the keyboard after all.
+    practiced: bool = True
+
+
 class CompletionRequest(DateBody):
     done: int = Field(ge=0)
     total: int = Field(gt=0)
@@ -1307,6 +1313,10 @@ class DashboardState(Base):
     papers: PapersPanel
     health: HealthPanel = Field(default_factory=HealthPanel)
     daylog: str | None = None
+    #: Whether the day's scale and chord were actually played. The piano panel
+    #: is otherwise the same card whether or not you sat down, and the whole
+    #: point of a tick is that the border can tell.
+    piano_practiced: bool = False
     completion: list[DayCompletion] = Field(default_factory=list)
     perfect_day_streak: int = 0
 

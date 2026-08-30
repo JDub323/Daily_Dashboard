@@ -2546,6 +2546,27 @@ class Repository:
             (_iso(date), text),
         )
 
+    def piano_practiced(self, date: dt.date) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM piano_practice WHERE date = ?", (_iso(date),)
+        ).fetchone()
+        return row is not None
+
+    def set_piano_practice(self, date: dt.date, practiced: bool) -> None:
+        """Tick or untick the day. Absence is the false, so untick deletes.
+
+        `DO NOTHING` rather than an upsert on the tick: a second press is the
+        same claim as the first, and rewriting `logged_at` would move the time
+        you sat down to the time you pressed the button twice.
+        """
+        if practiced:
+            self.conn.execute(
+                "INSERT INTO piano_practice (date) VALUES (?) ON CONFLICT (date) DO NOTHING",
+                (_iso(date),),
+            )
+        else:
+            self.conn.execute("DELETE FROM piano_practice WHERE date = ?", (_iso(date),))
+
     def set_completion(
         self, date: dt.date, done: int, total: int, bonus: int = 0
     ) -> d.DayCompletion:

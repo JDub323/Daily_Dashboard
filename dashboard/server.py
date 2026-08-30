@@ -2141,6 +2141,11 @@ def _register(app: FastAPI) -> None:
         repo.set_daylog(body.date, body.text)
         return {"ok": True}
 
+    @app.post("/api/piano")
+    def piano(repo: Repo, body: api.PianoPracticeRequest) -> dict[str, bool]:
+        repo.set_piano_practice(body.date, body.practiced)
+        return {"practiced": body.practiced}
+
     @app.post("/api/completion")
     def completion(repo: Repo, body: api.CompletionRequest) -> api.DayCompletion:
         return repo.set_completion(body.date, body.done, body.total, body.bonus)
