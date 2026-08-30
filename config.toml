@@ -485,8 +485,8 @@ history_cache_seconds = 86400
 write_timeout_seconds = 20
 # Where an event goes when nothing else decides. Must be a writable calendar.
 default_calendar = "Special Events"
-# 0 = Monday. Google's own week view starts on Sunday (6).
-week_starts_on = 0
+# 0 = Monday. Google's own week view starts on Sunday (6), and so does this.
+week_starts_on = 6
 
 [todo]
 # The prior for anything with a due date. Not [calendar].default_calendar --
