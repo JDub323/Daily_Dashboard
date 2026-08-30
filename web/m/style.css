@@ -113,16 +113,46 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   border-color: var(--gold);
   box-shadow: inset 0 -2px 0 var(--gold), inset 0 1px 0 rgba(255,255,255,.12);
 }
+/* The send button. It was a status line, and the change from reading the queue
+   to draining it is the whole of this app's networking, so it earns a hit
+   target: 40px to match the hour beside it, and a border so it reads as
+   something you press rather than something that is telling you a number.
+
+   Quiet and borderless while there is nothing owed — an empty queue is the
+   normal state and a lit button on an empty queue is a thing you check. It
+   takes the gold the moment there is anything to send. */
 .net {
   font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 9px;
+  font-weight: 700;
+  font-size: 10px;
   letter-spacing: .16em;
   text-transform: uppercase;
   color: var(--faint);
+  border: 1px solid transparent;
+  border-radius: 0;
+  padding: var(--s2) var(--s3);
+  min-height: 40px;
+  background: none;
   text-align: right;
+  cursor: pointer;
+  touch-action: manipulation;
 }
-.net.waiting { color: var(--gold-text); }
+.net:disabled { cursor: default; }
+.net.waiting {
+  color: var(--gold-text);
+  border-color: var(--gold-dim);
+  background: linear-gradient(180deg, rgba(232,180,88,.16), rgba(232,180,88,.02));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 1px 0 rgba(0,0,0,.5);
+}
+.net.waiting:active { box-shadow: inset 0 2px 3px rgba(0,0,0,.5); }
+/* Mid-flight: still gold, but plainly not pressable again. The queue count is
+   replaced by the word rather than sitting beside it, because the number is
+   about to be wrong. */
+.net.sending {
+  opacity: .6;
+  background: none;
+  box-shadow: none;
+}
 
 /* --- the hour strip -------------------------------------------------------
    Twenty-four caps on one scrolling row. A native <select> would be less markup

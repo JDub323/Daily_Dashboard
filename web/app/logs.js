@@ -126,9 +126,9 @@ export const BATHROOM_VOLUME = [
  * The ladder, and the one branch any of the logs has: the second question is a
  * different question depending on the first answer.
  *
- * `when` is a predicate over the answers so far. Both clients honour it — see
- * `quicklog.applicableSteps`, which is the desktop's reading of it and is
- * exported so the phone reads the same rule rather than a second copy of it.
+ * `when` is a predicate over the answers so far. Both clients honour it through
+ * `applicableSteps` at the foot of this file, so the rule is read once rather
+ * than copied.
  * Getting this wrong in the direction of *too many* steps means a urine entry
  * stopping to ask for a solidity, and the table rejecting the row after the
  * answers have been given; the other way means committing a row with a field
@@ -208,3 +208,65 @@ export const RPE_ANCHOR = {
   1: "nothing", 2: "very easy", 3: "easy", 4: "comfortable", 5: "moderate",
   6: "working", 7: "hard", 8: "very hard", 9: "near maximal", 10: "everything",
 };
+
+// --- reading the tables above -----------------------------------------------
+//
+// Two pure functions, and they live here for the same reason the tables do:
+// both clients have to reach the same conclusion about them, and this is the
+// file that imports nothing.
+//
+// They were in `quicklog.js` until the phone needed them. That was a fine home
+// while the desktop was the only reader, and a bad one the moment the phone
+// imported them: `quicklog.js` pulls in the store, the nav ring, the capture
+// stack and the HTTP client, so two lines of branching logic dragged five
+// desktop modules into the phone's module graph — and, worse, into the graph
+// the service worker has to have cached for the app to open with no server.
+// Five files that were never in `SHELL`, so the offline app was one cache
+// eviction away from a blank screen. Moving them costs nothing and removes the
+// whole class.
+
+/**
+ * Which steps this entry actually asks, given what has been answered so far.
+ *
+ * The whole of the branching, and pure so it can be tested without a DOM —
+ * which matters more than it looks. Getting this wrong in the direction of
+ * *too many* steps means a urine entry stopping to ask for a solidity, and the
+ * table would reject the row after four keystrokes had already been spent on
+ * it; getting it wrong the other way means committing an entry with a field
+ * missing, which is the same rejection with less warning.
+ */
+export const applicableSteps = (steps, draft) =>
+  steps.filter((step) => !step.when || step.when(draft));
+
+/**
+ * What a `field` step's box will accept, as a number, or null.
+ *
+ * Three spellings, because all three are what somebody standing at a sink
+ * actually types: `1.5`, `.5`, and `1 1/2`. The fraction is not decoration —
+ * the unit here is a twelve-ounce drink and half of one is the commonest
+ * answer there is, and a box that took `1.5` but silently rejected `1/2` would
+ * be a box you learn to distrust rather than one you learn the grammar of.
+ *
+ * Null for anything else, including the empty string and `0`. The caller shows
+ * the box's own hint rather than a validation message: there is one rule, it
+ * is printed beside the box, and a red sentence explaining it a second time is
+ * a sentence that appears when you are already looking at the answer.
+ *
+ * `max` is the fat-finger guard the table and the request model both carry. It
+ * is checked here as well so a mistyped `15` — which is a legal number, just
+ * not a legal answer — is refused by the box that took it rather than by a
+ * toast a round trip later.
+ */
+export function parseAmount(text, max = 20) {
+  const said = String(text ?? "").trim();
+  if (!said) return null;
+  const mixed = said.match(/^(?:(\d+)\s+)?(\d+)\s*\/\s*(\d+)$/);
+  const value = mixed
+    ? Number(mixed[1] ?? 0) + Number(mixed[2]) / Number(mixed[3])
+    : Number(said);
+  if (!Number.isFinite(value) || value <= 0 || value > max) return null;
+  // Two places is past the precision anyone has about a bottle, and it is what
+  // stops a third of a drink arriving as 0.3333333333333333 in a table that
+  // will be summed for the rest of the year.
+  return Math.round(value * 100) / 100;
+}

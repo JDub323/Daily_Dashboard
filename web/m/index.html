@@ -67,7 +67,11 @@
        before you have chosen which log to open. -->
   <div id="hourbar">
     <button id="hour" class="hour" aria-label="the hour being logged against">—</button>
-    <div id="net" class="net" aria-live="polite"></div>
+    <!-- The send button. Nothing in this app reaches the laptop except by a tap
+         on this, which is why it is a `button` and not the status line it used
+         to be: the queue is the record, sending is an errand you run when you
+         are somewhere the laptop can hear you. -->
+    <button id="net" class="net" aria-live="polite" disabled>nothing to send</button>
   </div>
 
   <main id="view" class="panel"></main>

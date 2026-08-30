@@ -28,8 +28,28 @@
 // does not appear, which is the same symptom `StaticAssets` was written to
 // prevent on the desktop and is worth remembering here for the same reason.
 
-const VERSION = "log-v2";
+const VERSION = "log-v3";
 
+/** How long the network gets to beat the cache. Argued for in the fetch
+ *  handler; it is the same reasoning as `REACH_MS` in `app.js` and a shorter
+ *  number, because this one is spent before anything is on screen. */
+const NETWORK_MS = 2000;
+
+// Every file the app needs to open with nothing behind it.
+//
+// This list is the app's module graph plus its stylesheets, and it has to be
+// *complete*: an ES module graph fails whole. One missing import is not a
+// degraded screen, it is a blank one, and the miss does not show up until the
+// first time the laptop is off — which is the one occasion the cache exists
+// for. `../app/quicklog.js` was here and is not any more, and that is the
+// interesting entry: the phone imported two pure functions from it, and it in
+// turn imports `api.js`, `capture.js`, `nav.js`, `store.js` and `tabs.js`,
+// none of which were ever listed. The graph was five files wider than the
+// shell for as long as the shell existed, and it only ever loaded because the
+// fetch handler below happened to cache them on the way past. Those two
+// functions live in `logs.js` now. The rule that would have caught it: nothing
+// under `../app/` may be imported here unless it imports nothing itself, or
+// everything it imports is also on this list.
 const SHELL = [
   "./",
   "./index.html",
@@ -45,8 +65,10 @@ const SHELL = [
   "../chrome.css",
   "../splash.css",
   "../vendor/orbitron/orbitron-latin.woff2",
+  // Imports nothing, by design — see the head of the file.
   "../app/logs.js",
-  "../app/quicklog.js",
+  // `splash.js` imports `dom.js` and `dom.js` imports nothing, so the two of
+  // them close the graph.
   "../app/splash.js",
   "../app/dom.js",
   "./icon.svg",
@@ -54,10 +76,26 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (event) => {
-  // `skipWaiting` so an update lands on the next open rather than after every
-  // tab is closed — on a phone, "every tab is closed" may not happen for weeks.
+  // One `cache.add` each, not `addAll`.
+  //
+  // `addAll` is atomic: one 404 and the whole install rejects, leaving no cache
+  // at all — the app then falls back to "works only on wifi" with no signal
+  // that anything is wrong, which is the exact failure this file exists to
+  // prevent, arrived at by a typo in the list above. Per-file, a miss costs the
+  // one file. Whether that is survivable depends on which file, but a shell
+  // with fifteen of sixteen entries is strictly better than no shell, and the
+  // miss is logged where it can be read off the phone's inspector.
   event.waitUntil(
-    caches.open(VERSION).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()),
+    caches.open(VERSION)
+      .then((cache) => Promise.all(
+        SHELL.map((path) => cache.add(path).catch((error) => {
+          console.error("[sw] not cached:", path, error);
+        })),
+      ))
+      // `skipWaiting` so an update lands on the next open rather than after
+      // every tab is closed — on a phone, "every tab is closed" may not happen
+      // for weeks.
+      .then(() => self.skipWaiting()),
   );
 });
 
@@ -78,26 +116,59 @@ self.addEventListener("fetch", (event) => {
   // The API is never cached — see the note at the top.
   if (url.pathname.startsWith("/api/")) return;
 
-  // Network first, cache as the fallback. The other way round would mean an
-  // edit to `app.js` never arriving while the phone is on wifi, which is the
-  // whole class of problem `StaticAssets` sends `no-cache` to avoid. The cache
-  // is here for the case where the network is not an option at all.
+  // Network first, cache as the fallback, and a stopwatch on the first half.
+  //
+  // Network first because the other way round means an edit to `app.js` never
+  // arriving while the phone is on wifi, which is the whole class of problem
+  // `StaticAssets` sends `no-cache` to avoid.
+  //
+  // The stopwatch because "network first" and "unreachable" are not the same
+  // shape of failure. A laptop that is off refuses the connection in
+  // milliseconds and the fallback is instant. A network that accepts the packet
+  // and drops it — a hotel portal, a locked-down campus wifi, a tailnet whose
+  // other end is asleep behind a firewall that blackholes rather than rejects —
+  // leaves the socket open until the OS gives up, which is tens of seconds, per
+  // file. Sixteen files of that is an app that appears not to launch. So the
+  // network gets two seconds to be better than the cache, and after that the
+  // cached copy wins. Two seconds is far more than a healthy round trip on a
+  // tailnet and far less than a person deciding the icon is broken.
+  //
+  // The fetch is not aborted when it loses. It is left running so its `cache.put`
+  // still lands, which means the slow network still refreshes the shell for
+  // next time — it just does not make you wait to find out.
+  const fromNetwork = fetch(request)
+    .then((response) => {
+      if (response.ok) {
+        const copy = response.clone();
+        caches.open(VERSION).then((cache) => cache.put(request, copy));
+      }
+      return response;
+    });
+
   event.respondWith(
-    fetch(request)
-      .then((response) => {
-        if (response.ok) {
-          const copy = response.clone();
-          caches.open(VERSION).then((cache) => cache.put(request, copy));
+    (async () => {
+      const hit = await caches.match(request);
+      if (!hit) {
+        // Nothing cached, so there is no deadline to keep — the network is the
+        // only answer there is, and waiting for it is better than failing while
+        // it is still in flight.
+        try {
+          return await fromNetwork;
+        } catch {
+          // A navigation to any path under the scope is the app itself; hand
+          // back the shell rather than the browser's dinosaur.
+          if (request.mode === "navigate") {
+            const shell = await caches.match("./index.html");
+            if (shell) return shell;
+          }
+          return Response.error();
         }
-        return response;
-      })
-      .catch(async () => {
-        const hit = await caches.match(request);
-        if (hit) return hit;
-        // A navigation to any path under the scope is the app itself; hand back
-        // the shell rather than the browser's dinosaur.
-        if (request.mode === "navigate") return caches.match("./index.html");
-        return Response.error();
-      }),
+      }
+      const raced = await Promise.race([
+        fromNetwork.then((r) => (r.ok ? r : null)).catch(() => null),
+        new Promise((resolve) => setTimeout(() => resolve(null), NETWORK_MS)),
+      ]);
+      return raced ?? hit;
+    })(),
   );
 });

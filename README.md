@@ -35,17 +35,31 @@ The five logs off the health tab — check-in, session, meals, drinks, in-and-ou
 
 The theme is identical by construction rather than by eye: `web/tokens.css` was pulled out of `style.css` and both stylesheets import it.
 
-**Every write is queued first and flushed when the server is reachable.** This is the part that makes it work from a gym, and it is nearly free because of [Invariant 1] — every request already carries the browser's own date, and the three quick logs carry the hour, so a meal logged at 13:00 on Tuesday and flushed at 21:00 on Wednesday still lands at 13:00 on Tuesday. The server never consults its own clock. Queued entries are drawn on screen immediately, marked `queued`, alongside the ones the server already has. The queue drains oldest-first and stops at the first write it cannot send; a 4xx is dropped rather than retried forever, because an entry the server will never accept otherwise blocks everything behind it. There is **no de-duplication**: if the server commits a write and the response is lost, the flush retries and the row lands twice. The fix is one tap on the entry; the cure would be an idempotency column on four tables.
+**Every write is queued, and the queue is drained when you press *send*.** Nothing in the app reaches the laptop on its own. Logging is entirely local and entirely instant — no `fetch` on the write path, so a tap cannot hang on a captive portal or a sleeping tailnet — and the one button in the hour bar is the only thing that talks to the server. It counts *everything* owed rather than today's entries, which matters the morning after a day logged offline; it reports a partial send as one; and when the laptop is not answering it says so, which is the point. An automatic flush fails silently into a counter that does not go down.
+
+This is nearly free because of [Invariant 1] — every request already carries the browser's own date, and the three quick logs carry the hour, so a meal logged at 13:00 on Tuesday and flushed at 21:00 on Wednesday still lands at 13:00 on Tuesday. The server never consults its own clock. Queued entries are drawn on screen immediately, marked `queued`, alongside the ones the server already has. The queue drains oldest-first and stops at the first write it cannot send; a 4xx is dropped rather than retried forever, because an entry the server will never accept otherwise blocks everything behind it. There is **no de-duplication**: if the server commits a write and the response is lost, the flush retries and the row lands twice. The fix is one tap on the entry; the cure would be an idempotency column on four tables.
 
 **Getting your phone to it** is the actual work, and none of it is in this repo. The server binds `127.0.0.1` and has no auth, which is correct for what it is.
 
-1. **Tailscale** — the recommended answer. Phone and laptop join a private mesh; nothing is exposed publicly and there is no port forwarding. `tailscale serve` puts it on HTTPS under a real `*.ts.net` name, and that matters for more than tidiness: service workers require a secure context, so **over a plain `http://192.168.x.x` address the app cannot install as a PWA or open offline**. Everything else — the queue included — works either way.
+1. **Tailscale, with `serve`** — the only answer that gets the whole feature. Phone and laptop join a private mesh; nothing is exposed publicly and there is no port forwarding.
+
+   ```bash
+   tailscale serve --bg --https=443 http://127.0.0.1:8502
+   ```
+
+   This is not a tidiness step. Service workers require a secure context, and a raw address is not one — **over `http://192.168.x.x` *or* `http://100.x.y.z` the app cannot install as a PWA or open offline**, which reduces it to a URL that needs a live laptop to draw a screen at all, with a perfect queue underneath that you cannot reach. `serve` gives it HTTPS on a real `*.ts.net` name and the worker registers. The config persists across reboots in `tailscaled`; the dashboard itself does not, and nothing on the machine starts it.
+
+   Note what this does and does not buy. `serve` runs *on the laptop*: with the laptop off or asleep the name resolves and nothing answers, exactly as before. What it buys is that the phone stops needing an answer — install once over HTTPS and the app opens from cache from then on, on any network or none.
 2. **`[server].host = "0.0.0.0"` on your own wifi** — one line, works immediately, LAN-only, no offline install, and an unauthenticated dashboard on the network. Fine for twenty minutes of deciding whether the thing is worth using.
 3. Public exposure — no.
 
 Then open `/m` and use the browser's *add to home screen*. `display: standalone` in the manifest is what drops the address bar.
 
 **`web/m/sw.js` caches the shell and has a hand-bumped `VERSION`.** Change any file it lists and bump it, or the phone keeps the old copy until the cache is evicted — an edit that does not appear, which is the same failure `StaticAssets`'s `no-cache` exists to prevent on the desktop. The API is deliberately never cached: a stale `GET /api/health` is yesterday's meals presented as today's, and "the server is unreachable" already has an honest answer on that screen.
+
+`SHELL` must cover the phone's whole module graph, because an ES module graph fails whole — one unlisted import is a blank screen, not a degraded one, and it shows up on the first cold open after a `VERSION` bump with no server, which is the one morning the cache exists for. It does not fail on wifi, because the fetch handler caches whatever it fetches on the way past. `tests/js/shell.test.js` walks the imports and asserts the closure, and the rule it enforces is: **nothing under `web/app/` may be imported by `/m` unless it imports nothing itself.** That is why `logs.js` imports nothing and why `applicableSteps`/`parseAmount` live there rather than in `quicklog.js` — the phone pulled them out of `quicklog.js` once, and silently brought `api.js`, `capture.js`, `nav.js`, `store.js` and `tabs.js` with them.
+
+Fetches race a 2s timer against the cache rather than waiting on the network: an unreachable host refuses in milliseconds, but a network that *drops* rather than refuses holds the socket open for tens of seconds per file, and sixteen files of that is an app that appears not to launch. `install` adds each file separately rather than with `addAll`, which is atomic — one 404 in the list above and there would be no cache at all.
 
 `run.cmd` and `.claude/launch.json` both call `run.sh`, so there is one launch path. The port lives only in `config.toml` — `.claude/launch.json` has to repeat it so the preview tool knows where to connect, and a test fails if the two drift apart.
 

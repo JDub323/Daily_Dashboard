@@ -33,17 +33,23 @@
 // body already carries the date and the hour, so a write flushed tomorrow
 // still lands on the right hour of today.
 
+// Everything this screen asks, and the two rules for reading it. All of it out
+// of `logs.js`, which imports nothing — which is the property that matters
+// here rather than a matter of taste. This module's whole import graph has to
+// be in the service worker's `SHELL`, or the app does not open with the laptop
+// off; `applicableSteps` and `parseAmount` used to come from `quicklog.js` and
+// quietly brought the store, the nav ring, the capture stack and the desktop's
+// HTTP client along with them.
 import {
-  BATHROOM_STEPS, CHECKIN_ITEMS, DRINK_STEPS, MEAL_STEPS,
-  RPE_ANCHOR, SESSION_KINDS, toShown, toStored,
+  applicableSteps, BATHROOM_STEPS, CHECKIN_ITEMS, DRINK_STEPS, MEAL_STEPS,
+  parseAmount, RPE_ANCHOR, SESSION_KINDS, toShown, toStored,
 } from "../app/logs.js";
-import { applicableSteps, parseAmount } from "../app/quicklog.js";
 // The dashboard's own title screen, not a copy of it: same module, same
 // markup in index.html, same stylesheet. It imports nothing but `dom.js`,
 // which imports nothing at all — so bringing it here costs exactly the splash
 // and none of the store, the panel harness or the nav ring.
 import { initSplash, paintSplash } from "../app/splash.js";
-import { enqueue, flush, onQueueChange, pendingOn } from "./queue.js";
+import { enqueue, flush, onQueueChange, pending, pendingOn } from "./queue.js";
 import { clock, dayLabel, nowHour, today } from "./when.js";
 
 // --- the smallest possible DOM helper ---------------------------------------
@@ -117,34 +123,93 @@ let session = { kind: null, rpe: null, minutes: "" };
 // --- talking to the server ----------------------------------------------------
 
 /**
- * One write: queued first, then flushed.
+ * One write. It goes in the queue and stops there.
  *
  * Never `fetch` directly, even when the server is plainly reachable. Queue-then-
  * flush is one path with one set of failure modes; posting directly when online
  * and queueing when not is two paths, and the second one is exercised about
  * twice a year on a phone in a basement, which is exactly when you find out it
  * was never right.
+ *
+ * This used to flush on the way out, so a write on a live connection landed
+ * immediately and the queue was a fallback. It is not a fallback any more — see
+ * `sendNow`. The reason is that "try the network on every write" makes every
+ * tap in the app a thing that can hang: on a captive-portal wifi, or a tailnet
+ * whose other end is asleep, the `fetch` sits open and the second question of
+ * the meal you are logging waits on it. Logging is now entirely local and
+ * entirely instant, and reaching the server is one deliberate button.
  */
-async function send(path, body, label) {
+function send(path, body, label) {
   enqueue(path, { date: today(), ...body }, label);
-  draw();
-  const got = await flush({
-    onRefused: (entry, status) =>
-      toast(`the server refused “${entry.label}” (${status}) — it has been dropped`),
-  });
-  if (got) panel = got;
   draw();
 }
 
+/**
+ * How long to wait on the laptop before deciding it is not there.
+ *
+ * There is no good unbounded answer. An unreachable host on a normal network
+ * refuses in milliseconds, but a hotel portal or a network that blackholes
+ * outbound traffic leaves the socket open until the OS gives up, which is tens
+ * of seconds — and on a screen whose entire premise is that the server is
+ * usually absent, tens of seconds of spinner is the app appearing broken in
+ * precisely the situation it was built for. Four seconds is well past a
+ * healthy tailnet round trip and well short of noticing.
+ */
+const REACH_MS = 4000;
+
 async function load() {
   try {
-    const response = await fetch(`/api/health?date=${today()}`);
+    const response = await fetch(`/api/health?date=${today()}`, {
+      signal: AbortSignal.timeout(REACH_MS),
+    });
     if (response.ok) panel = await response.json();
   } catch {
-    /* Offline. `panel` stays as it was — or null on a cold start, which draws
-       the queue alone rather than an error page. There is nothing to do about
-       an unreachable server on a screen whose whole job is to work without
-       one. */
+    /* Offline, or slow enough to count as offline. `panel` stays as it was — or
+       null on a cold start, which draws the queue alone rather than an error
+       page. There is nothing to do about an unreachable server on a screen
+       whose whole job is to work without one. */
+  }
+}
+
+/**
+ * The send button: everything in the queue, then a fresh panel.
+ *
+ * The one place in the app that talks to the server, and it is pressed rather
+ * than triggered. That is the whole design decision — see the note above `send`
+ * — and what it buys is that the failure is *legible*. A flush that fires on
+ * `visibilitychange` fails silently into a counter that does not go down; a
+ * flush you asked for can say "the laptop is not answering", which is a
+ * sentence you can do something about (wake it, check Tailscale) instead of a
+ * number you learn to distrust.
+ *
+ * `flush` stops at the first entry it cannot send and leaves the rest, so a
+ * partial send is normal and is reported as one.
+ */
+let sending = false;
+
+async function sendNow() {
+  if (sending) return;
+  const owed = pending().length;
+  if (!owed) return;
+  sending = true;
+  draw();
+  try {
+    const got = await flush({
+      onRefused: (entry, status) =>
+        toast(`the server refused “${entry.label}” (${status}) — it has been dropped`),
+    });
+    if (got) panel = got;
+    // Only worth a round trip if something actually went; otherwise the panel
+    // we have is as good as the one we would get, and this is a request that
+    // will hang for `REACH_MS` on the connection that just failed.
+    if (got) await load();
+    const left = pending().length;
+    if (left === 0) toast(owed === 1 ? "sent" : `sent ${owed}`);
+    else if (left < owed) toast(`sent ${owed - left}, ${left} still waiting`);
+    else toast("the laptop is not answering — nothing sent");
+  } finally {
+    sending = false;
+    draw();
   }
 }
 
@@ -669,11 +734,37 @@ function hourStrip() {
   return strip;
 }
 
+/**
+ * The send button, and the only control here that is about the server.
+ *
+ * It counts `pending()` and not `pendingOn()`. Everything else on this screen
+ * is scoped to the day being logged, correctly — a meal from Tuesday has no
+ * business in Wednesday's list. This is the exception, and it was a real bug
+ * while it was not: log a day's worth in a gym, open the app the next morning,
+ * and the counter read zero with fourteen entries still stranded, because they
+ * were yesterday's. The queue is not a view of a day. It is everything still
+ * owed, and the button that sends it has to say so.
+ *
+ * Disabled with an empty queue rather than hidden. A control that appears only
+ * when there is something to do is a control you have to go looking for the
+ * first time, and its absence is indistinguishable from the entries having
+ * gone somewhere.
+ */
 function drawNet() {
-  const waiting = pendingOn().length;
+  const waiting = pending().length;
   const node = $("#net");
-  node.className = `net${waiting ? " waiting" : ""}`;
-  node.textContent = waiting ? `${waiting} waiting to send` : "";
+  node.className = `net${waiting ? " waiting" : ""}${sending ? " sending" : ""}`;
+  node.disabled = !waiting || sending;
+  node.textContent = sending
+    ? "sending…"
+    : waiting
+      ? `send ${waiting}`
+      : "nothing to send";
+  node.setAttribute(
+    "aria-label",
+    waiting ? `send ${waiting} queued ${waiting === 1 ? "entry" : "entries"} to the laptop`
+      : "nothing waiting to be sent",
+  );
 }
 
 function drawTabs() {
@@ -714,31 +805,55 @@ function toast(message) {
 
 onQueueChange(drawNet);
 
-// Coming back to the front is the moment everything here is stale: the hour has
-// moved, the queue may have been flushed by another tab, and the laptop may
-// have woken up since. Also the moment a phone in a pocket for four hours is
-// most likely to be reachable again.
+$("#net").addEventListener("click", sendNow);
+
+// Coming back to the front means the hour has moved, and nothing else. It used
+// to also flush and reload, on the theory that a phone returning to the front
+// is a phone that may be reachable again — which is true, and is still not a
+// reason to touch the network. The queue is drained when you say so; a screen
+// that quietly tries every time you unlock your phone is the thing that made
+// "did that send?" unanswerable.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
   hour = nowHour();
-  flush().then((got) => { if (got) panel = got; load().then(draw); });
+  draw();
 });
 
-addEventListener("online", () => {
-  flush().then((got) => { if (got) panel = got; draw(); });
-});
+// `online` is deliberately not listened for. The browser's idea of online is
+// "this interface has a route", which on a phone means a coffee shop portal it
+// has not logged into and a tailnet whose other end is asleep both count. It
+// was never the question this app has — the question is whether one specific
+// laptop is awake — and the honest way to answer it is to press the button and
+// be told.
+
+// The persistence request. `localStorage` is not durable storage: it is subject
+// to eviction under pressure, and on iOS to a seven-day cap on script-writable
+// storage for sites that are merely visited. A home-screen web app is outside
+// that cap, and this call asks for the rest — it is the difference between a
+// queue that is a record and a queue that is a cache. Granted silently or
+// refused silently; there is nothing to say about it on screen and nothing to
+// do about a refusal except be glad the button exists.
+navigator.storage?.persist?.().catch(() => {});
 
 // The service worker is what makes this survive being opened with no server —
 // it serves the shell from cache so the queue is reachable and writes can still
-// be made. It needs a secure context, which `localhost` is and a plain LAN
-// address is not: over `http://192.168.x.x` this registration simply does not
-// happen and everything above still works, minus offline *loading*. Behind
-// `tailscale serve`, which is HTTPS on a real name, it does.
+// be made. It needs a secure context, which `localhost` is and a plain LAN or
+// tailnet *address* is not: over `http://192.168.x.x` or `http://100.x.y.z`
+// this registration simply does not happen, and the app is then a URL that
+// requires a live laptop to produce a screen at all — the queue underneath it
+// is perfect and unreachable. Behind `tailscale serve`, which is HTTPS on a
+// real `*.ts.net` name, it registers and the app opens from cache forever.
+//
+// So this is not a nicety. It is the difference between the feature working and
+// not, and it is worth one line on screen when it has not happened — unlike
+// almost everything else here, the user can fix it, and cannot otherwise know
+// it is wrong until the morning the laptop is off.
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(() => {
-    /* Not a secure context, or the file is missing. Neither is worth a word on
-       screen: nothing on this page depends on it having worked. */
+    toast("no offline copy — open this over https to install it");
   });
+} else if (!self.isSecureContext) {
+  toast("no offline copy — open this over https to install it");
 }
 
 // The title screen goes up first and comes down on a tap, exactly as it does
@@ -747,14 +862,21 @@ if ("serviceWorker" in navigator) {
 // than absent, so the first log is already drawn when the curtain lifts.
 initSplash();
 
+// Drawn from the queue alone, immediately, with no network in the way. That is
+// the cold-start contract now: whatever the laptop knows arrives later or not
+// at all, and either way there is a working screen first.
 draw();
-flush()
-  .then((got) => { if (got) panel = got; return load(); })
-  .then(() => {
-    draw();
-    // FILE 01 · DAY 172, and the fight date along the foot. `HealthPanel`
-    // already carries the plan, so the phone's title screen says the same
-    // thing the laptop's does without a second request for it. Absent when
-    // there is no camp on, which `paintSplash` renders as silence.
-    if (panel?.plan) paintSplash(panel.plan);
-  });
+
+// One read on the way up, and only a read — the queue is not touched. It is
+// worth doing unasked in a way that sending is not: `GET /api/health` is
+// idempotent, it is what fills in the rows logged from the laptop, and it is
+// bounded by `REACH_MS`, so the cost of it failing is four seconds of nothing
+// happening in the background while the title screen is still up.
+load().then(() => {
+  draw();
+  // FILE 01 · DAY 172, and the fight date along the foot. `HealthPanel`
+  // already carries the plan, so the phone's title screen says the same
+  // thing the laptop's does without a second request for it. Absent when
+  // there is no camp on, which `paintSplash` renders as silence.
+  if (panel?.plan) paintSplash(panel.plan);
+});
