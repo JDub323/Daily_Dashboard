@@ -31,7 +31,7 @@
 // something you sit down to; these two are answered on the way past.
 
 import { capturing, endCapture, takeKey } from "./capture.js";
-import { JUMPS, takeArrow } from "./carousel.js";
+import { JUMPS, takeArrow, takeHoverKey } from "./carousel.js";
 import { chipTasks, openNextUnfinished, required, score } from "./chips.js";
 import { $, el } from "./dom.js";
 import * as nav from "./nav.js";
@@ -393,6 +393,15 @@ export function initKeys() {
     // themselves — see `RESERVED` in panel.js — because the rule is about
     // which keys are safe to claim, and that is one fact rather than six.
     if (panelKey(e)) {
+      e.preventDefault();
+      return;
+    }
+
+    // The carousel's own letters, while the pointer is on the card. After the
+    // focused panel and before the table: a panel you have selected outranks a
+    // card you are merely pointing at, and the table's own meanings for these
+    // letters are exactly what pointing at the card is meant to override.
+    if (takeHoverKey(e)) {
       e.preventDefault();
       return;
     }

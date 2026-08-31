@@ -408,3 +408,29 @@ export function takeArrow(e) {
   return false;
 }
 
+
+/**
+ * The five letters, offered while the pointer is on the card.
+ *
+ * Hovering already means "I am looking at this one" — it is what stops the
+ * rotation — and the letter is printed on the tab an inch from the pointer.
+ * Having to type `f` first to use a key you can *see* is the kind of prefix
+ * that only makes sense to whoever wrote it: `f c` is for reaching the
+ * check-in from the other side of the app, and this is for picking a tab on
+ * the card you are already pointing at.
+ *
+ * It steps aside for a capture on one of the slides, which is the same rule
+ * the rotation itself follows and the reason `m` and `p` are safe: mid-ladder
+ * they are the hour's minus and plus (see quicklog.js), and a half-typed meal
+ * is not a card you are choosing between.
+ *
+ * Unmodified keys only — Ctrl-D and friends belong to the browser.
+ */
+export function takeHoverKey(e) {
+  if (!hovering) return false;
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  if (capturing() && slides.some((s) => s.id === captureOwner())) return false;
+  const id = JUMPS[e.key.toLowerCase()];
+  if (!id) return false;
+  return reveal(id);
+}
