@@ -34,12 +34,12 @@
 // classic worker cannot import a module — and `shell.test.js` fails when the
 // two disagree.
 
-const VERSION = "log-v6";
+const VERSION = "log-v7";
 
-/** How long the network gets to beat the cache. Argued for in the fetch
- *  handler; it is the same reasoning as `REACH_MS` in `app.js` and a shorter
- *  number, because this one is spent before anything is on screen. */
-const NETWORK_MS = 2000;
+/** How long a *cold* request gets before the shell falls back to itself.
+ *  Only ever spent on a file that is not in the cache, which after the first
+ *  successful open is none of them. Argued for in the fetch handler. */
+const COLD_MS = 2000;
 
 // Every file the app needs to open with nothing behind it.
 //
@@ -122,26 +122,38 @@ self.addEventListener("fetch", (event) => {
   // The API is never cached — see the note at the top.
   if (url.pathname.startsWith("/api/")) return;
 
-  // Network first, cache as the fallback, and a stopwatch on the first half.
+  // Cache first for anything already in the shell, with the refresh happening
+  // behind the screen rather than in front of it.
   //
-  // Network first because the other way round means an edit to `app.js` never
-  // arriving while the phone is on wifi, which is the whole class of problem
-  // `StaticAssets` sends `no-cache` to avoid.
+  // This was network first with a two-second stopwatch on it, and the reasoning
+  // was sound for one file and wrong for sixteen. The shell is not a flat list
+  // of requests, it is a waterfall six levels deep: the navigation has to
+  // arrive before `style.css` is known, `style.css` has to be *parsed* before
+  // its three `@import`s are asked for, `splash.css` imports `chrome.css`
+  // which imports `tokens.css`, the webfont is not requested until all of that
+  // has resolved, and `app.js` walks its own graph down through `splash.js` to
+  // `dom.js` alongside. Every level waits on the one above it, so the deadline
+  // was never two seconds — it was two seconds *per level*.
   //
-  // The stopwatch because "network first" and "unreachable" are not the same
-  // shape of failure. A laptop that is off refuses the connection in
-  // milliseconds and the fallback is instant. A network that accepts the packet
-  // and drops it — a hotel portal, a locked-down campus wifi, a tailnet whose
-  // other end is asleep behind a firewall that blackholes rather than rejects —
-  // leaves the socket open until the OS gives up, which is tens of seconds, per
-  // file. Sixteen files of that is an app that appears not to launch. So the
-  // network gets two seconds to be better than the cache, and after that the
-  // cached copy wins. Two seconds is far more than a healthy round trip on a
-  // tailnet and far less than a person deciding the icon is broken.
+  // Against a laptop asleep behind a tailnet that drops packets rather than
+  // refusing them — the ordinary case, the phone in a gym — that is ten-odd
+  // seconds of white before the title card, and nothing can paint sooner:
+  // `body.booting` hides the shell, and the splash it hides it in favour of is
+  // drawn by a stylesheet at the bottom of the chain.
   //
-  // The fetch is not aborted when it loses. It is left running so its `cache.put`
-  // still lands, which means the slow network still refreshes the shell for
-  // next time — it just does not make you wait to find out.
+  // Serving the hit immediately makes the whole waterfall free. Every level
+  // resolves out of the cache without a round trip, so the title screen is up
+  // before the phone has finished deciding whether it has a network at all.
+  // Nothing is lost by not waiting: `app.js` already treats the laptop as
+  // optional — it draws from the queue first and folds in `GET /api/health`
+  // when and if it answers — so there is no upstream fact a fresher *shell*
+  // would have got right.
+  //
+  // What it costs is that an edit lands one open later rather than this one.
+  // That was already half true: the browser only re-checks `sw.js` after the
+  // page it is serving has loaded, so a `VERSION` bump has always taken two
+  // opens to show up. The build stamp along the foot of the title screen is
+  // how you tell which one you are on, and it is worth reading twice now.
   const fromNetwork = fetch(request)
     .then((response) => {
       if (response.ok) {
@@ -154,27 +166,40 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     (async () => {
       const hit = await caches.match(request);
-      if (!hit) {
-        // Nothing cached, so there is no deadline to keep — the network is the
-        // only answer there is, and waiting for it is better than failing while
-        // it is still in flight.
-        try {
-          return await fromNetwork;
-        } catch {
-          // A navigation to any path under the scope is the app itself; hand
-          // back the shell rather than the browser's dinosaur.
-          if (request.mode === "navigate") {
-            const shell = await caches.match("./index.html");
-            if (shell) return shell;
-          }
-          return Response.error();
-        }
+      if (hit) {
+        // The refresh has to outlive the response it is not blocking. Without
+        // this the worker is eligible for termination the moment the cached
+        // copy is handed back, and the update in flight dies with it — which
+        // would turn "an edit lands one open later" into "an edit never lands".
+        event.waitUntil(fromNetwork.catch(() => {}));
+        return hit;
       }
+
+      // Nothing cached, so the network is the only answer there is. This is the
+      // first open after an install, and the one place a stopwatch still earns
+      // its keep: a request that is going to hang for the OS's own timeout
+      // should give up while there is still something to show instead.
       const raced = await Promise.race([
-        fromNetwork.then((r) => (r.ok ? r : null)).catch(() => null),
-        new Promise((resolve) => setTimeout(() => resolve(null), NETWORK_MS)),
+        fromNetwork.catch(() => null),
+        new Promise((resolve) => setTimeout(() => resolve(null), COLD_MS)),
       ]);
-      return raced ?? hit;
+      if (raced) return raced;
+
+      // A navigation to any path under the scope is the app itself; hand back
+      // the shell rather than the browser's dinosaur.
+      if (request.mode === "navigate") {
+        const shell = await caches.match("./index.html");
+        if (shell) return shell;
+      }
+
+      // Not a navigation, or there was no shell to fall back to. Wait it out —
+      // failing a module request while its fetch is still in flight breaks the
+      // graph whole, and a slow file beats a blank screen.
+      try {
+        return await fromNetwork;
+      } catch {
+        return Response.error();
+      }
     })(),
   );
 });

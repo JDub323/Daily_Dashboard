@@ -802,7 +802,7 @@ function sessionLog() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v6";
+const BUILD = "log-v7";
 
 /**
  * The build, along the foot of the title screen.
