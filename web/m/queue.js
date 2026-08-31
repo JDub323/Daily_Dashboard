@@ -29,6 +29,15 @@
 // row — is a column on four tables and a lookup on every insert, to protect
 // against something whose manual fix is one tap on the entry you did not
 // mean. Deliberately not built. It is written down here instead.
+//
+// It errs that way on purpose, and that is the whole of the safety argument
+// here: this queue is allowed to send a meal twice and is never allowed to
+// lose one. A duplicate is on screen, in a list you are already reading, one
+// tap from gone. A lost write is a meal you remember logging and cannot find,
+// discovered days later, unrecoverable — there is no second copy of it
+// anywhere. Every judgement call below is settled by that asymmetry, and the
+// one time it was settled the other way (see `flush`, "200 is not delivery")
+// it cost a day of them.
 
 import { localISO } from "./when.js";
 
@@ -64,19 +73,28 @@ export function pending() {
   }
 }
 
+/**
+ * Persist the queue. Returns whether it actually got there.
+ *
+ * The old comment here said an entry survives a failed write "in the array the
+ * caller is holding". It does not, and never did: every read goes back to
+ * storage, so a `setItem` that throws — quota, or storage switched off —
+ * destroys the write outright and the row does not even appear on screen. The
+ * boolean is what lets `send` say so instead of pretending.
+ */
 function write(list) {
+  let ok = true;
   try {
     localStorage.setItem(KEY, JSON.stringify(list));
   } catch {
-    /* Out of quota, or storage disabled. The entry is still in the array the
-       caller is holding and will still be posted this session; what is lost is
-       surviving a reload, and there is nothing useful to say about it here. */
+    ok = false;
   }
   announce();
+  return ok;
 }
 
 /**
- * Add one write. Returns the entry, which carries the id the UI draws it by.
+ * Add one write. Returns the entry, or null if storage would not take it.
  *
  * `at` is when it was *logged*, not when it will be sent, and it is only ever
  * used for the "queued" line on screen — what the row means to the database is
@@ -91,8 +109,7 @@ export function enqueue(path, body, label) {
     at: new Date().toISOString(),
     tries: 0,
   };
-  write([...pending(), entry]);
-  return entry;
+  return write([...pending(), entry]) ? entry : null;
 }
 
 export function drop(id) {
@@ -100,6 +117,25 @@ export function drop(id) {
 }
 
 let draining = false;
+
+/**
+ * What a reply has to look like before a write is considered delivered.
+ *
+ * Every path this queue posts to answers with the whole `HealthPanel` — that
+ * is the shape of the write endpoints and has been since there were any — so
+ * a body carrying one of these keys is the dashboard talking, and a body that
+ * is not is something else wearing its status code.
+ *
+ * Not the `content-type` header, which is the obvious check and the weaker
+ * one: a portal is free to answer `application/json` with its own object, and
+ * a header proves what a middlebox is willing to claim rather than who wrote
+ * the body.
+ */
+const PANEL_KEYS = ["meals_today", "drinks_today", "bathroom_today", "sessions_today", "derived"];
+
+export const isPanel = (body) =>
+  Boolean(body) && typeof body === "object" && !Array.isArray(body)
+  && PANEL_KEYS.some((key) => key in body);
 
 /**
  * Send what is waiting, oldest first.
@@ -118,12 +154,36 @@ let draining = false;
  * everything logged after it. That is the one case where losing the write is
  * better than keeping it.
  *
- * Returns the last good panel the server sent back, or null.
+ * --- 200 is not delivery ----------------------------------------------------
+ *
+ * This dropped a day of meals, so it is worth stating plainly: a 2xx says
+ * something answered, not that the dashboard did. A gym's captive portal
+ * answers every request on the network — POSTs included — with 200 and a login
+ * page, and this loop used to read that as the write having landed: the JSON
+ * parse failed, `.catch(() => null)` swallowed it, and `drop` destroyed the
+ * entry. The queue emptied, the button said "sent 4", and the meals had never
+ * left the phone. It is the worst failure available here, because every part
+ * of the screen agrees the write succeeded.
+ *
+ * So delivery is now the dashboard's own answer and nothing else. Anything
+ * else on a 2xx is `intercepted`, and it stops the drain the way an unreachable
+ * server does: whatever is standing in the way will stand in the way of the
+ * next five too, and the entries are kept.
+ *
+ * Returns `{ panel, panelDate, sent, refused, stopped }`. `sent` is entries the
+ * dashboard actually accepted — counted rather than inferred from how much the
+ * queue shrank, because a write logged *during* the flush makes that
+ * subtraction lie. `panelDate` is the day the panel describes, which is the day
+ * of the entry that produced it and not necessarily today.
  */
 export async function flush({ onRefused } = {}) {
-  if (draining) return null;
+  if (draining) return { panel: null, panelDate: null, sent: 0, refused: 0, stopped: "busy" };
   draining = true;
   let panel = null;
+  let panelDate = null;
+  let sent = 0;
+  let refused = 0;
+  let stopped = null;
   try {
     for (const entry of pending()) {
       let response;
@@ -134,24 +194,35 @@ export async function flush({ onRefused } = {}) {
           body: JSON.stringify(entry.body),
         });
       } catch {
-        break; // unreachable — everything behind this one would fail too
+        stopped = "unreachable"; // everything behind this one would fail too
+        break;
       }
       if (response.ok) {
-        panel = await response.json().catch(() => null);
+        const body = await response.json().catch(() => null);
+        if (!isPanel(body)) {
+          // Something answered; it was not the laptop. Keep the entry.
+          stopped = "intercepted";
+          break;
+        }
+        panel = body;
+        panelDate = entry.body?.date ?? null;
+        sent += 1;
         drop(entry.id);
         continue;
       }
       if (response.status >= 400 && response.status < 500) {
         drop(entry.id);
+        refused += 1;
         onRefused?.(entry, response.status);
         continue;
       }
-      break; // a 5xx is the server having a bad moment, not a bad body
+      stopped = "server"; // a 5xx is the server having a bad moment, not a bad body
+      break;
     }
   } finally {
     draining = false;
   }
-  return panel;
+  return { panel, panelDate, sent, refused, stopped };
 }
 
 /** Queued writes for one day, which is all any screen here draws. */

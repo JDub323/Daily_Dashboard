@@ -519,3 +519,11 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .toast { transition: none; }
 }
+
+/* The hour resolved to yesterday. The picker can only mean what has already
+   happened, so an hour ahead of the clock is last night's — and the one thing
+   that must not happen is the button reading the same either way. */
+.hour.back {
+  color: var(--gold);
+  border-color: var(--gold);
+}

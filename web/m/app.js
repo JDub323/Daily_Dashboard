@@ -49,8 +49,8 @@ import {
 // which imports nothing at all — so bringing it here costs exactly the splash
 // and none of the store, the panel harness or the nav ring.
 import { initSplash, paintSplash } from "../app/splash.js";
-import { enqueue, flush, onQueueChange, pending, pendingOn } from "./queue.js";
-import { clock, dayLabel, nowHour, today } from "./when.js";
+import { enqueue, flush, isPanel, onQueueChange, pending, pendingOn } from "./queue.js";
+import { clock, dateForHour, dayLabel, nowHour, today } from "./when.js";
 
 // --- the smallest possible DOM helper ---------------------------------------
 //
@@ -140,7 +140,12 @@ let session = { kind: null, rpe: null, minutes: "" };
  * entirely instant, and reaching the server is one deliberate button.
  */
 function send(path, body, label) {
-  enqueue(path, { date: today(), ...body }, label);
+  const entry = enqueue(path, { date: today(), ...body }, label);
+  // `null` means storage refused the write — out of quota, or switched off —
+  // and the entry is gone rather than merely unsent. It used to fail here in
+  // silence, which on a screen that draws itself from the queue looks exactly
+  // like a tap that did not register.
+  if (!entry) toast(`could not save that ${label} — the phone’s storage is full`);
   draw();
 }
 
@@ -162,7 +167,15 @@ async function load() {
     const response = await fetch(`/api/health?date=${today()}`, {
       signal: AbortSignal.timeout(REACH_MS),
     });
-    if (response.ok) panel = await response.json();
+    if (!response.ok) return;
+    // The same rule the flush uses, for the same reason: a 200 says something
+    // answered. A portal that hands back JSON of its own would be adopted as
+    // the panel, and `panel?.meals_today` on it is `undefined` — which draws
+    // as "nothing eaten yet today" over a day of meals that are sitting in the
+    // table. Keeping the panel we have is the honest reading of an answer that
+    // did not come from the dashboard.
+    const body = await response.json();
+    if (isPanel(body)) panel = body;
   } catch {
     /* Offline, or slow enough to count as offline. `panel` stays as it was — or
        null on a cold start, which draws the queue alone rather than an error
@@ -187,26 +200,54 @@ async function load() {
  */
 let sending = false;
 
+/**
+ * Why the drain stopped, said to the person holding the phone.
+ *
+ * `intercepted` is the one worth spelling out. It means something on this
+ * network answered the write with a 200 that was not the dashboard — a gym or
+ * hotel portal, almost always — and the entries are still here. Before this
+ * was noticed those writes were counted as delivered and destroyed, so the
+ * sentence is deliberately about the network and not about the laptop: waking
+ * the laptop is the wrong thing to go and do.
+ */
+const WHY = {
+  unreachable: "the laptop is not answering",
+  intercepted: "something on this wifi answered instead of the laptop — sign in to it first",
+  server: "the laptop answered with an error",
+  busy: "already sending",
+};
+
 async function sendNow() {
   if (sending) return;
-  const owed = pending().length;
-  if (!owed) return;
+  if (!pending().length) return;
   sending = true;
   draw();
   try {
-    const got = await flush({
+    const { panel: got, panelDate, sent, stopped } = await flush({
       onRefused: (entry, status) =>
         toast(`the server refused “${entry.label}” (${status}) — it has been dropped`),
     });
-    if (got) panel = got;
+
+    // The panel a write hands back describes the day that write was *for*, and
+    // the queue is not a view of a day — a flush on Wednesday morning may end
+    // on Tuesday's last meal and hand back Tuesday. Adopting that would draw
+    // yesterday's rows under today's heading, so it is only taken when it is
+    // today's, and `load` is what fills the screen in either case.
+    if (got && panelDate === today()) panel = got;
     // Only worth a round trip if something actually went; otherwise the panel
     // we have is as good as the one we would get, and this is a request that
     // will hang for `REACH_MS` on the connection that just failed.
-    if (got) await load();
+    if (sent) await load();
+
+    // Counted, not subtracted. `pending()` before minus `pending()` after is
+    // wrong the moment a meal is logged during the flush — which is exactly
+    // what happens on a slow tailnet, where the round trip is long enough to
+    // go on using the app — and it reported a successful send as "nothing
+    // sent". `sent` is what the dashboard actually took.
     const left = pending().length;
-    if (left === 0) toast(owed === 1 ? "sent" : `sent ${owed}`);
-    else if (left < owed) toast(`sent ${owed - left}, ${left} still waiting`);
-    else toast("the laptop is not answering — nothing sent");
+    if (!sent) toast(`${WHY[stopped] ?? "nothing sent"} — nothing sent`);
+    else if (left) toast(`sent ${sent}, ${left} still waiting — ${WHY[stopped] ?? "stopped"}`);
+    else toast(sent === 1 ? "sent" : `sent ${sent}`);
   } finally {
     sending = false;
     draw();
@@ -223,10 +264,28 @@ async function sendNow() {
 const queuedFor = (path) =>
   pendingOn().filter((e) => e.path === path).map((e) => ({ ...e.body, queued: true, qid: e.id }));
 
-const rowsFor = (path, fromPanel) => [
-  ...(fromPanel ?? []),
-  ...queuedFor(path),
-].sort((a, b) => (a.hour ?? 0) - (b.hour ?? 0));
+/**
+ * Rows the queue is on its way to deleting, by the id they carry on the far
+ * side.
+ *
+ * A delete goes through the queue like every other write, which left the row
+ * it removes sitting on screen until the next successful flush — the tap
+ * looked like it had missed, so it got tapped again, and the second delete
+ * came back a 404 the flush then reported as the server refusing something.
+ * Struck from the list the moment it is queued instead: what is drawn is what
+ * the day will look like once the queue has drained, which is what the rest of
+ * this screen already promises.
+ */
+const deletedBy = (path) =>
+  new Set(pending().filter((e) => e.path === path).map((e) => e.body?.entry_id ?? e.body?.session_id));
+
+const rowsFor = (path, fromPanel, deletePath) => {
+  const going = deletePath ? deletedBy(deletePath) : new Set();
+  return [
+    ...(fromPanel ?? []).filter((row) => !going.has(row.id)),
+    ...queuedFor(path),
+  ].sort((a, b) => (a.hour ?? 0) - (b.hour ?? 0));
+};
 
 // --- the logs -------------------------------------------------------------------
 //
@@ -284,7 +343,11 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
 
       const commit = async () => {
         if (!ready) return;
-        const body = { hour, ...answers };
+        // The date comes from the hour, not from the clock. `dateForHour` says
+        // why: an hour later than now is yesterday's, and stamping it with
+        // today's date files it in the future and loses it off the day it
+        // happened on. `send` fills in today only when a body does not say.
+        const body = { date: dateForHour(hour), hour, ...answers };
         answers = {};
         await send(path, body, label);
       };
@@ -459,7 +522,7 @@ const LOGS = [
     steps: MEAL_STEPS,
     path: "/api/meal",
     empty: "nothing eaten yet today",
-    rows: () => rowsFor("/api/meal", panel?.meals_today),
+    rows: () => rowsFor("/api/meal", panel?.meals_today, "/api/meal/delete"),
     describe: (e) => `${e.size} · quality ${e.quality}`,
     remove: { path: "/api/meal/delete", field: "entry_id" },
   }),
@@ -469,7 +532,7 @@ const LOGS = [
     steps: DRINK_STEPS,
     path: "/api/drink",
     empty: "nothing drunk yet today",
-    rows: () => rowsFor("/api/drink", panel?.drinks_today),
+    rows: () => rowsFor("/api/drink", panel?.drinks_today, "/api/drink/delete"),
     describe: (e) => `${e.kind} · ${say(e.amount)}`,
     remove: { path: "/api/drink/delete", field: "entry_id" },
   }),
@@ -479,7 +542,7 @@ const LOGS = [
     steps: BATHROOM_STEPS,
     path: "/api/bathroom",
     empty: "nothing logged yet today",
-    rows: () => rowsFor("/api/bathroom", panel?.bathroom_today),
+    rows: () => rowsFor("/api/bathroom", panel?.bathroom_today, "/api/bathroom/delete"),
     describe: (e) => `${e.kind} · ${e.solidity ?? e.color} · ${e.volume}`,
     remove: { path: "/api/bathroom/delete", field: "entry_id" },
   }),
@@ -683,7 +746,7 @@ function sessionLog() {
           el("div.row", null, minutes, el("button.go", { text: "log", onclick: commit })),
         ),
         entryList(
-          rowsFor("/api/session", panel?.sessions_today),
+          rowsFor("/api/session", panel?.sessions_today, "/api/session/delete"),
           (e) => `rpe ${e.rpe} · ${e.minutes}m`,
           "nothing trained yet today",
           {
@@ -703,8 +766,20 @@ function sessionLog() {
 
 function drawHour() {
   const button = $("#hour");
-  button.textContent = clock(hour);
+  // An hour ahead of the clock is last night's, and the button has to say so
+  // out loud: it is the difference between a meal filed on the day it was
+  // eaten and one filed nineteen hours into the future, and it is decided by a
+  // control whose label would otherwise read the same either way.
+  const yesterday = dateForHour(hour) !== today();
+  button.textContent = yesterday ? `${clock(hour)} yest` : clock(hour);
   button.classList.toggle("open", hourOpen);
+  button.classList.toggle("back", yesterday);
+  button.setAttribute(
+    "aria-label",
+    yesterday
+      ? `the hour being logged against — ${clock(hour)} yesterday`
+      : "the hour being logged against",
+  );
   button.onclick = () => { hourOpen = !hourOpen; draw(); };
   $("#day").textContent = dayLabel();
 }

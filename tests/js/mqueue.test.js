@@ -29,7 +29,9 @@ globalThis.localStorage = {
 
 const { enqueue, flush, pending, pendingOn } = await import("../../web/m/queue.js");
 
-const reply = (status, body = {}) => ({
+/** A reply from the dashboard. The body has to carry a panel key: `flush`
+ *  treats a 2xx that is not the panel as somebody else answering. */
+const reply = (status, body = { meals_today: [] }) => ({
   ok: status >= 200 && status < 300,
   status,
   json: async () => body,
@@ -117,7 +119,7 @@ describe("the write queue", () => {
     enqueue("/api/meal", { date: "d", hour: 2 }, "b");
     let n = 0;
     globalThis.fetch = mock.fn(async () => reply(200, { meals_today: [++n] }));
-    assert.deepEqual(await flush(), { meals_today: [2] });
+    assert.deepEqual((await flush()).panel, { meals_today: [2] });
   });
 
   it("filters to one day", () => {
@@ -133,8 +135,100 @@ describe("the write queue", () => {
     assert.deepEqual(pending(), []);
   });
 
-  it("survives storage it cannot write to", () => {
+  it("survives storage it cannot write to, and says the write did not stick", () => {
+    // It used to return the entry regardless, on a comment claiming the caller
+    // still held it. Nothing holds it — every read goes back to storage — so
+    // the entry was gone and the screen drew a log that had lost a row.
     storageThrows = true;
     assert.doesNotThrow(() => enqueue("/api/meal", { date: "d", hour: 1 }, "meal"));
+    storageThrows = true;
+    assert.equal(enqueue("/api/meal", { date: "d", hour: 1 }, "meal"), null);
+  });
+
+  // --- 200 is not delivery --------------------------------------------------
+  //
+  // The bug that cost a day of meals. A captive portal answers every request on
+  // the network with 200 and a login page; `flush` read that as the write
+  // having landed, dropped the entry, and the button said "sent".
+
+  it("keeps the writes when something that is not the dashboard answers 200", async () => {
+    enqueue("/api/meal", { date: "d", hour: 8 }, "meal");
+    enqueue("/api/meal", { date: "d", hour: 12 }, "meal");
+    globalThis.fetch = mock.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => { throw new SyntaxError("Unexpected token '<'"); },
+    }));
+
+    const result = await flush();
+
+    assert.equal(result.sent, 0);
+    assert.equal(result.stopped, "intercepted");
+    assert.equal(pending().length, 2, "both meals are still owed");
+  });
+
+  it("is not fooled by a portal that answers 200 with json of its own", async () => {
+    enqueue("/api/meal", { date: "d", hour: 8 }, "meal");
+    globalThis.fetch = mock.fn(async () => reply(200, { status: "ok", redirect: "/login" }));
+
+    const result = await flush();
+
+    assert.equal(result.sent, 0);
+    assert.equal(result.stopped, "intercepted");
+    assert.equal(pending().length, 1);
+  });
+
+  it("stops at the interception rather than offering the rest of the queue to it", async () => {
+    enqueue("/api/meal", { date: "d", hour: 1 }, "a");
+    enqueue("/api/meal", { date: "d", hour: 2 }, "b");
+    enqueue("/api/meal", { date: "d", hour: 3 }, "c");
+    let calls = 0;
+    globalThis.fetch = mock.fn(async () => {
+      calls += 1;
+      return { ok: true, status: 200, json: async () => "<html>" };
+    });
+    await flush();
+    assert.equal(calls, 1);
+    assert.equal(pending().length, 3);
+  });
+
+  // --- counting, rather than subtracting ------------------------------------
+
+  it("counts what it sent, so a write logged mid-flush cannot make it read zero", async () => {
+    // The screen used to report `pending()` before minus after. A meal logged
+    // while the flush was in flight -- normal on a slow tailnet -- made that
+    // difference zero, and a successful send reported itself as "nothing sent".
+    enqueue("/api/meal", { date: "d", hour: 1 }, "a");
+    globalThis.fetch = mock.fn(async () => {
+      enqueue("/api/meal", { date: "d", hour: 2 }, "logged while sending");
+      return reply(200);
+    });
+
+    const result = await flush();
+
+    assert.equal(result.sent, 1);
+    assert.equal(pending().length, 1, "the one logged mid-flush is still owed");
+    assert.equal(pending()[0].label, "logged while sending");
+  });
+
+  it("says which day the panel it hands back describes", async () => {
+    // A flush on Wednesday can end on Tuesday's last meal, and the panel that
+    // comes back is Tuesday's. Drawing it under today's heading is yesterday's
+    // rows presented as today's.
+    enqueue("/api/meal", { date: "2026-08-30", hour: 20 }, "yesterday");
+    globalThis.fetch = mock.fn(async () => reply(200));
+    assert.equal((await flush()).panelDate, "2026-08-30");
+  });
+
+  it("names why it stopped", async () => {
+    enqueue("/api/meal", { date: "d", hour: 1 }, "meal");
+    globalThis.fetch = mock.fn(async () => { throw new TypeError("offline"); });
+    assert.equal((await flush()).stopped, "unreachable");
+
+    globalThis.fetch = mock.fn(async () => reply(500));
+    assert.equal((await flush()).stopped, "server");
+
+    globalThis.fetch = mock.fn(async () => reply(200));
+    assert.equal((await flush()).stopped, null);
   });
 });

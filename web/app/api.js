@@ -40,10 +40,23 @@ async function send(path, init) {
 
 async function unwrap(response) {
   let body = null;
+  let parsed = true;
   try {
     body = await response.json();
   } catch {
     /* a non-JSON body (a proxy page, a crash) — fall through to the status */
+    parsed = false;
+  }
+  // A 2xx says something answered, not that this server did. Every endpoint
+  // here answers JSON — there is no file, no HTML and no empty body among
+  // them — so an ok response that will not parse came from something in
+  // between, and returning `null` for it is the dangerous reading: the panel
+  // writes go `put("health", await api.post(...))`, so a null lands in the
+  // store as the health panel and the tab is dead until a reload. The phone's
+  // queue had the same rule and it was worse there — it counted the write as
+  // delivered and destroyed it. Same reply, same conclusion, said once here.
+  if (response.ok && !parsed) {
+    throw new ApiError("the reply did not come from the dashboard — something is proxying it");
   }
   if (response.ok) return body;
   throw new ApiError(message(body) || `${response.status} ${response.statusText}`);

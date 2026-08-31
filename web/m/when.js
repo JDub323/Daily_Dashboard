@@ -25,6 +25,25 @@ export const today = () => localISO(new Date());
  *  budget of about four. */
 export const nowHour = () => new Date().getHours();
 
+/**
+ * The date an entry picked at that hour actually belongs to.
+ *
+ * These five logs record what has already happened, so an hour later than the
+ * clock cannot mean today — it means the most recent time it *was* that hour,
+ * which is yesterday. The case is the one the picker exists for, arrived at
+ * from the other side: noticing at half past midnight that dinner never got
+ * logged, scrolling back to 8pm, and having the entry filed at 8pm *tonight* —
+ * nineteen hours in the future, and missing from the day it happened on.
+ *
+ * Only the three quick logs use this. The check-in and the two measurements
+ * carry no hour and are always today's.
+ */
+export const dateForHour = (hour, now = new Date()) => {
+  const day = new Date(now);
+  if (hour > now.getHours()) day.setDate(day.getDate() - 1);
+  return localISO(day);
+};
+
 /** `14` -> `2pm`, `0` -> `12am`. */
 export const clock = (hour) => {
   const h = ((hour % 24) + 24) % 24;

@@ -28,7 +28,7 @@
 // does not appear, which is the same symptom `StaticAssets` was written to
 // prevent on the desktop and is worth remembering here for the same reason.
 
-const VERSION = "log-v3";
+const VERSION = "log-v4";
 
 /** How long the network gets to beat the cache. Argued for in the fetch
  *  handler; it is the same reasoning as `REACH_MS` in `app.js` and a shorter
