@@ -34,7 +34,7 @@
 // classic worker cannot import a module — and `shell.test.js` fails when the
 // two disagree.
 
-const VERSION = "log-v5";
+const VERSION = "log-v6";
 
 /** How long the network gets to beat the cache. Argued for in the fetch
  *  handler; it is the same reasoning as `REACH_MS` in `app.js` and a shorter

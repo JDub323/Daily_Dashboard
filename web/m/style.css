@@ -252,9 +252,20 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
    last item on its own line at a different width from its neighbours, which on
    a row of three sizes reads as one of them being special. Equal columns,
    always, and 48px tall — the size a thumb hits without aiming, which is the
-   one measurement on this screen that is not the desktop's. */
-.opts { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s2); }
-.opts-10 { grid-template-columns: repeat(5, 1fr); }
+   one measurement on this screen that is not the desktop's.
+
+   `minmax(0, 1fr)` and not `1fr`, which is the same declaration with a floor of
+   `auto`: a cap whose label is one long unbreakable word — `conditioning`,
+   `electrolyte` — took that floor, widened its own column past its third, and
+   pushed the row out through the side of the panel, where the label was clipped
+   off. "Equal columns, always" was what the rule meant and not what it said. */
+.opts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s2); }
+.opts-10 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+/* Two across, for a row whose words do not fit three. `conditioning` and
+   `electrolyte` are the two, and `optsClass` in app.js decides by measuring the
+   labels rather than by naming the rows, so a kind added to logs.js gets the
+   grid it needs without a second edit here. */
+.opts-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
 /* The desktop's key-cap, at thumb size: square, bevelled, lit along the top
    edge, labelled in the display face, and sinking a pixel when pressed. */
@@ -269,6 +280,12 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   border-radius: 0;
   min-height: 48px;
   padding: var(--s2) 2px;
+  /* The floor under the two rules above: a label that still will not fit breaks
+     inside the cap rather than painting outside it. Nothing in logs.js needs
+     this today — it is what stops the next long word being a bug instead of a
+     word on two lines, and the cap is 48px tall, which is two of these. */
+  line-height: 1.15;
+  overflow-wrap: anywhere;
   background: linear-gradient(180deg, rgba(223,230,242,.07), rgba(0,0,0,.18));
   box-shadow: inset 0 1px 0 rgba(223,230,242,.12), 0 1px 0 rgba(0,0,0,.5);
   cursor: pointer;
@@ -301,6 +318,14 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 .row { display: flex; gap: var(--s2); margin-top: var(--s3); }
 .amount {
   flex: 1;
+  /* `flex: 1` sets `flex-basis: 0` and nothing else, and on an `<input>` that is
+     not enough: its `min-width` is `auto`, which resolves to the intrinsic width
+     of the field — about twenty characters, or 248px of a 309px row. The box
+     therefore refused to shrink, and the button beside it was pushed out
+     through the side of the panel: on the session log `log` ended 9px past the
+     panel's own border, clipped, which is the control that files the workout.
+     `min-width: 0` is what lets a flex item honour the basis it was given. */
+  min-width: 0;
   font-family: "Cascadia Code", Consolas, monospace;
   /* 16px exactly, and it is not on the type scale by accident: iOS zooms the
      page when a field under 16px takes focus and never zooms back out. This is
@@ -403,9 +428,18 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   background: repeating-linear-gradient(90deg, var(--border) 0 3px, transparent 3px 7px)
               top / 100% 1px no-repeat;
 }
+/* Six characters is `11 PM`, which is what this column holds in four of the
+   five logs. The session log has no clock to print — the table records the day
+   and the load, not the hour — so it prints the kind, and `conditioning` is
+   nearly twice as wide as the box reserved for it. It did not truncate: it
+   overflowed, and painted the kind straight over the `rpe 6 · 30m` beside it,
+   so the one screen you read standing in a gym had two strings on top of each
+   other. `.by-kind` widens the column to the longest kind; the wrap is the same
+   floor the caps have, for the same reason. */
 .entry-at {
   flex: none;
   width: 6ch;
+  overflow-wrap: anywhere;
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 10px;
@@ -414,6 +448,7 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
+.entries.by-kind .entry-at { width: 12ch; }
 .entry-what { flex: 1; min-width: 0; }
 /* Written here, not there yet. Dimmed rather than badged in red: it is the
    normal state of an entry made in a gym, not a failure. */

@@ -293,6 +293,25 @@ const rowsFor = (path, fromPanel, deletePath) => {
 // tab bar, the day and the hour are the shell's and are the same for all five.
 
 /**
+ * Which grid a row of caps gets: three across, or two.
+ *
+ * Three is the default and the right answer for `small` `medium` `large`. It is
+ * the wrong one for `conditioning` and `electrolyte`. A third of the panel on a
+ * 375px phone is about eight characters of the display face at 10px, and a word
+ * longer than that has nowhere to break — so the cap overflowed its column and
+ * the label was clipped off at the edge of the panel. In the gym that means the
+ * kind you are reaching for is the one you cannot read.
+ *
+ * Decided by measuring the labels rather than by naming the rows that have the
+ * problem, so a kind added to `logs.js` — the file whose whole point is that it
+ * is edited once — gets the grid it needs without a second edit here.
+ */
+const FITS_IN_A_THIRD = 8;
+
+const optsClass = (labels) =>
+  labels.some((label) => String(label).length > FITS_IN_A_THIRD) ? "div.opts.opts-2" : "div.opts";
+
+/**
  * A row of answer buttons for one step of a quick log.
  *
  * The unrolled ladder: every question visible, answered in any order, and the
@@ -308,7 +327,7 @@ function stepRow(step, draftValues, answer) {
       el("span.q-name", { text: step.name }),
       step.hint ? el("span.q-hint", { text: step.hint }) : null,
     ),
-    el("div.opts", null,
+    el(optsClass(step.options.map(([, , label]) => label)), null,
       ...step.options.map(([, value, label]) =>
         el("button.opt", {
           class: chosen === value ? "on" : "",
@@ -488,9 +507,12 @@ function amountRow(step, answers, answer) {
  * a session posts `session_id`, and a body with the wrong field name is a 422
  * for a row that is sitting right there on screen.
  */
-function entryList(rows, describe, empty, { at = (e) => clock(e.hour), remove } = {}) {
+function entryList(rows, describe, empty, { at = (e) => clock(e.hour), byKind, remove } = {}) {
   if (!rows.length) return el("p.empty", { text: empty });
-  return el("ul.entries", null,
+  // `byKind` widens the left column from a five-character stamp to a word. It
+  // travels with `at`, because the two are the same decision: a list that puts
+  // something other than a clock in that column needs the room for it.
+  return el(byKind ? "ul.entries.by-kind" : "ul.entries", null,
     ...rows.map((entry) =>
       el("li.entry", { class: entry.queued ? "queued" : "" },
         el("span.entry-at", { text: at(entry) }),
@@ -713,7 +735,7 @@ function sessionLog() {
       return [
         el("div.q", null,
           el("div.q-head", null, el("span.q-name", { text: "kind" })),
-          el("div.opts", null,
+          el(optsClass(Object.keys(SESSION_KINDS)), null,
             ...Object.keys(SESSION_KINDS).map((kind) =>
               el("button.opt", {
                 class: session.kind === kind ? "on" : "",
@@ -754,6 +776,7 @@ function sessionLog() {
             // not the clock — so the left column says which session it was
             // rather than printing every one of them as midnight.
             at: (e) => e.kind,
+            byKind: true,
             remove: { path: "/api/session/delete", field: "session_id" },
           },
         ),
@@ -779,7 +802,7 @@ function sessionLog() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v5";
+const BUILD = "log-v6";
 
 /**
  * The build, along the foot of the title screen.
