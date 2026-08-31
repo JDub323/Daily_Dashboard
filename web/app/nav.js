@@ -188,11 +188,26 @@ const DIRECTIONS = {
  * right. The half-cell threshold stops two cards whose centres differ by three
  * pixels — a grid row, in other words — from counting as "below" each other.
  *
- * h/l additionally demand that the candidate share some of the source's rows.
- * Without that, `l` from a full-width hero — which has nothing beside it —
- * scored the leftmost card of the row *below* as "right", because down-and-far-
- * right still beats nothing at all. A sideways key that changes row is a key
- * you stop trusting, so it now simply does nothing there.
+ * Every key additionally demands that the candidate *share the band it is
+ * moving out of*: h/l want a candidate that overlaps the source's rows, j/k one
+ * that overlaps its columns. Without it on h/l, `l` from a full-width hero —
+ * which has nothing beside it — scored the leftmost card of the row *below* as
+ * "right", because down-and-far-right still beats nothing at all.
+ *
+ * The same hole was open on j/k for longer, and it is the one you actually hit,
+ * because the two halves of the health tab sit side by side and are *not* the
+ * same height: the plan on the left is as tall as the day it is describing, and
+ * the logging card on the right is a fixed 505px. Compare only the centres and
+ * the taller card's centre sits below the shorter one's — so `k` out of the
+ * plan went sideways to the log, and `j` out of the log went sideways to the
+ * plan, as though the two cells were stacked. Which of them counted as "below"
+ * the other changed with how much training the day prescribed, so on a light
+ * day the keys behaved and on a heavy one they did not.
+ *
+ * Both holes are one rule: a key that changes the band it was moving along is a
+ * key you stop trusting, so it now simply does nothing there. h and l are still
+ * how you cross between columns, and `k` off the top of a column still reaches
+ * the header through `toTop`.
  */
 function nearest(from, { axis, sign }) {
   const rects = panels().map((card) => [card, card.getBoundingClientRect()]);
@@ -201,14 +216,19 @@ function nearest(from, { axis, sign }) {
   const cy = (r) => r.top + r.height / 2;
   const along = axis === "x" ? cx : cy;
   const across = axis === "x" ? cy : cx;
-  const overlaps = (r) => r.bottom > here.top + 8 && r.top < here.bottom - 8;
+  // The band the move is leaving: rows for a sideways key, columns for a
+  // vertical one. The same 8px of slack at both ends, so a one-pixel grid seam
+  // is not an overlap and two cards flush against each other are.
+  const sharesRows = (r) => r.bottom > here.top + 8 && r.top < here.bottom - 8;
+  const sharesCols = (r) => r.right > here.left + 8 && r.left < here.right - 8;
+  const shares = axis === "x" ? sharesRows : sharesCols;
   const threshold = 8;
 
   let best = null;
   let bestScore = Infinity;
   for (const [card, rect] of rects) {
     if (card === from) continue;
-    if (axis === "x" && !overlaps(rect)) continue;
+    if (!shares(rect)) continue;
     const delta = (along(rect) - along(here)) * sign;
     if (delta < threshold) continue;
     const score = delta + 2 * Math.abs(across(rect) - across(here));
