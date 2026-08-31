@@ -91,6 +91,54 @@ describe("the phone's offline shell", () => {
     assert.deepEqual(missing, [], `the offline app would fail to load:\n  ${missing.join("\n  ")}`);
   });
 
+  it("stamps the title screen with the version that decides the cache", () => {
+    // `app.js` prints `BUILD` along the foot of the splash so the phone can be
+    // asked which build it is running — the question a cached shell otherwise
+    // makes unanswerable, since a stale app and a fresh one look identical and
+    // you find out by hitting the bug again.
+    //
+    // That is only worth reading if it is the same string as the `VERSION` the
+    // shell is cached under. `sw.js` is a classic worker and cannot import a
+    // module, so the constant is declared twice and this is what stops the two
+    // from drifting: a stamp that can lie about the code under it is worse than
+    // no stamp, because it is trusted.
+    const worker = read(path.join(M, "sw.js"));
+    const app = read(path.join(M, "app.js"));
+
+    const version = worker.match(/const VERSION = "([^"]+)"/);
+    const build = app.match(/const BUILD = "([^"]+)"/);
+    assert.ok(version, 'sw.js no longer has a `const VERSION = "..."` to read');
+    assert.ok(build, 'app.js no longer has a `const BUILD = "..."` to read');
+    assert.equal(
+      build[1],
+      version[1],
+      "app.js BUILD and sw.js VERSION have drifted — bump both, or the splash "
+        + "reports a build the phone is not running",
+    );
+  });
+
+  it("paints the build without waiting for the laptop", () => {
+    // The stamp exists to be read with the laptop off, so it cannot be painted
+    // from the health panel. `paintBuild` is called at boot, and again after
+    // `paintSplash` — which is the dashboard's own module and writes the fight
+    // date into the same element on its way past.
+    const app = read(path.join(M, "app.js"));
+    const boot = app.indexOf("initSplash();");
+    assert.ok(boot > 0, "app.js no longer calls initSplash()");
+    assert.match(
+      app.slice(boot, boot + 200),
+      /paintBuild\(\);/,
+      "the build is no longer painted at boot, so it is absent exactly when it is worth reading",
+    );
+    const after = app.indexOf("paintSplash(panel.plan)");
+    assert.ok(after > 0, "app.js no longer calls paintSplash");
+    assert.match(
+      app.slice(after, after + 200),
+      /paintBuild\(\);/,
+      "paintSplash overwrites the foot with the fight date and nothing puts the build back",
+    );
+  });
+
   it("does not reach the desktop's store, nav or HTTP client", () => {
     // A narrower statement of the same rule, and the one worth failing loudly:
     // those four modules are the top of the dashboard's dependency cone, and an

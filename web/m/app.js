@@ -764,6 +764,42 @@ function sessionLog() {
 
 // --- the shell --------------------------------------------------------------------
 
+/**
+ * Which build of this app is running, printed on the title screen.
+ *
+ * The one question the phone could not answer about itself. Everything here is
+ * cached by a service worker so the app opens with the laptop off, which means
+ * "is the fix I just made actually on this phone" has no answer you can read —
+ * a stale shell and a fresh one look identical, and the way you find out is by
+ * hitting the bug again.
+ *
+ * It is `sw.js`'s `VERSION` verbatim, because that string is what decides which
+ * cache the shell is served from, and a version stamp that could disagree with
+ * the thing it is stamping is worse than none. Two declarations, since `sw.js`
+ * is a classic worker and cannot import a module — so `shell.test.js` fails if
+ * they ever drift, which makes the bump a thing you cannot half-do.
+ */
+const BUILD = "log-v5";
+
+/**
+ * The build, along the foot of the title screen.
+ *
+ * It takes the slot the fight date has on the laptop. That date is on the
+ * dashboard, on the health tab and in the camp plan; this is the only surface
+ * that can say which code you are looking at, and it is the one place the
+ * answer matters — you read it standing somewhere with no laptop, wondering
+ * whether the phone caught the change.
+ *
+ * Painted at boot rather than after the panel lands, so it is there with the
+ * laptop off, which is exactly when it is worth reading. Re-applied after
+ * `paintSplash`, which is shared with the dashboard and writes the fight date
+ * into this element on its way past.
+ */
+function paintBuild() {
+  const foot = $("#sp-fight");
+  if (foot) foot.textContent = BUILD;
+}
+
 function drawHour() {
   const button = $("#hour");
   // An hour ahead of the clock is last night's, and the button has to say so
@@ -936,6 +972,7 @@ if ("serviceWorker" in navigator) {
 // raises it. Everything below carries on behind it: the shell is hidden rather
 // than absent, so the first log is already drawn when the curtain lifts.
 initSplash();
+paintBuild();
 
 // Drawn from the queue alone, immediately, with no network in the way. That is
 // the cold-start contract now: whatever the laptop knows arrives later or not
@@ -949,9 +986,16 @@ draw();
 // happening in the background while the title screen is still up.
 load().then(() => {
   draw();
-  // FILE 01 · DAY 172, and the fight date along the foot. `HealthPanel`
-  // already carries the plan, so the phone's title screen says the same
-  // thing the laptop's does without a second request for it. Absent when
-  // there is no camp on, which `paintSplash` renders as silence.
-  if (panel?.plan) paintSplash(panel.plan);
+  // FILE 01 · DAY 172 across the top of the bar. `HealthPanel` already
+  // carries the plan, so the phone's title screen says the same thing the
+  // laptop's does without a second request for it. Absent when there is no
+  // camp on, which `paintSplash` renders as silence.
+  //
+  // The build goes back afterwards: `paintSplash` is the dashboard's own
+  // module and writes the fight date into the foot, and on this screen that
+  // slot is spent on the one fact only this screen can tell you.
+  if (panel?.plan) {
+    paintSplash(panel.plan);
+    paintBuild();
+  }
 });

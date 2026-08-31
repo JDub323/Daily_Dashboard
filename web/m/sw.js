@@ -27,8 +27,14 @@
 // keeps the old copy until the cache is evicted — the symptom is an edit that
 // does not appear, which is the same symptom `StaticAssets` was written to
 // prevent on the desktop and is worth remembering here for the same reason.
+//
+// This string is also printed along the foot of the title screen, so the phone
+// can be asked which build it is running rather than having to be caught out by
+// the bug you thought you had fixed. `app.js` declares it a second time — a
+// classic worker cannot import a module — and `shell.test.js` fails when the
+// two disagree.
 
-const VERSION = "log-v4";
+const VERSION = "log-v5";
 
 /** How long the network gets to beat the cache. Argued for in the fetch
  *  handler; it is the same reasoning as `REACH_MS` in `app.js` and a shorter
