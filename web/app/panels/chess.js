@@ -14,6 +14,13 @@ import { el, link, mount } from "../dom.js";
 import { put, store } from "../store.js";
 import { lastDelta, summaryRow } from "./math.js";
 
+// The "solve it on lichess" anchor of the last render, or null when the panel
+// has nothing to open — before the gather, and once the puzzle is reported.
+// `onEnter` clicks it rather than opening the URL itself, for the reason
+// `takeHint` does: the anchor already carries target and rel, and a click that
+// descends from a keypress is a gesture the popup blocker allows.
+let solveLink = null;
+
 const OUTCOMES = [
   { outcome: "clean", label: "solved clean", cls: "ok" },
   { outcome: "messy", label: "solved w/ mistakes", cls: "" },
@@ -39,6 +46,19 @@ export default {
     return `${chess.summary.rating}${delta} · ${chess.puzzle_id}`;
   },
 
+  /**
+   * Enter opens the puzzle.
+   *
+   * The card holds three report buttons, so `nav.enter` descends into them —
+   * which is what you want *after* you have solved it and useless before, and
+   * the link is the one thing you always do first. Shift-Enter still descends.
+   */
+  onEnter() {
+    if (!solveLink) return false;
+    solveLink.click();
+    return true;
+  },
+
   async render(node) {
     const chess = store.state.chess;
     const head = summaryRow(chess.summary);
@@ -48,6 +68,7 @@ export default {
     // so a second fetch would replace a puzzle you are part way through with
     // a different one and keep the rating it was opened against.
     if (!chess.puzzle_id) {
+      solveLink = null;
       mount(node, head, opener("chess"));
       return;
     }
@@ -59,6 +80,7 @@ export default {
     );
 
     if (chess.status !== "open") {
+      solveLink = null;
       mount(node, head,
         el("div.ok", null, "done for today ✓ ", lastDelta(chess.summary)),
         puzzleLine,
@@ -77,8 +99,9 @@ export default {
       }),
     );
 
+    solveLink = link(chess.puzzle_url, "solve it on lichess ↗", { class: "big" });
     mount(node, head, puzzleLine,
-      el("div.row", null, link(chess.puzzle_url, "solve it on lichess ↗", { class: "big" })),
+      el("div.row", null, solveLink),
       el("div.faint", { text: "then report how it went:" }),
       el("div.row", null, ...buttons),
     );
