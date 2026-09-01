@@ -41,6 +41,7 @@
 import * as api from "../api.js";
 import { beginCapture, endCapture } from "../capture.js";
 import { el, mount } from "../dom.js";
+import { answeredKeys } from "../logs.js";
 import { notify, put, store } from "../store.js";
 
 const OWNER = "plan";
@@ -62,7 +63,11 @@ const RPE_ANCHOR = {
  */
 export function cards(plan, sessions) {
   if (!plan?.today.length) return [];
-  const done = new Set(sessions.filter((s) => s.plan_key).map((s) => s.plan_key));
+  // `answeredKeys` rather than a set built here: the phone answers prescribed
+  // blocks too, and the two clients deciding separately what "already logged"
+  // means is exactly the drift that would leave one of them asking for a
+  // session the other had recorded.
+  const done = answeredKeys(sessions);
   const logged = new Map(sessions.filter((s) => s.plan_key).map((s) => [s.plan_key, s]));
 
   return [...new Set(plan.today.map((b) => b.slot))]

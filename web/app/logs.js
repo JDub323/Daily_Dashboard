@@ -209,6 +209,34 @@ export const RPE_ANCHOR = {
   6: "working", 7: "hard", 8: "very hard", 9: "near maximal", 10: "everything",
 };
 
+// --- what the plan is still owed --------------------------------------------
+//
+// Both clients can answer a prescribed block now, so both have to agree on
+// which ones are already answered. They agree by construction rather than by
+// eye: this is the only definition of it, and `panels/plan.js` and `m/app.js`
+// each ask it rather than each building their own set out of `plan_key`.
+//
+// The reason it is here at all is worth stating. The phone posted sessions with
+// no plan key on them, so a lift logged in the gym left the laptop's card open
+// all evening asking for a lift that had already happened — and that is a wrong
+// answer which by construction only ever appears on the screen you did *not*
+// log from, so nothing about logging it looks amiss at the time.
+
+/** The plan keys a set of sessions has answered. Freehand rows carry none and
+ *  answer nothing, which is the point: a session logged off-plan must not close
+ *  a block, because pairing the two up by kind would be the load model
+ *  guessing. */
+export const answeredKeys = (sessions) =>
+  new Set((sessions ?? []).map((s) => s.plan_key).filter(Boolean));
+
+/** Today's prescribed rows that nothing has answered yet. `plan` is the panel's
+ *  `TrainingPlan`, or null when there is no camp on — which is silence rather
+ *  than an error, and reads here as a day that asks for nothing. */
+export const openBlocks = (plan, sessions) => {
+  const answered = answeredKeys(sessions);
+  return (plan?.today ?? []).filter((block) => !answered.has(block.key));
+};
+
 // --- reading the tables above -----------------------------------------------
 //
 // Two pure functions, and they live here for the same reason the tables do:

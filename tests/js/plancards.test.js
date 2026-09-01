@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { answeredKeys, openBlocks } from "../../web/app/logs.js";
 import { cards, incomplete, partsFrom } from "../../web/app/panels/plan.js";
 
 const block = (over) => ({
@@ -40,6 +41,56 @@ const PRACTICE = [
 
 const logged = (key, over = {}) => ({
   id: 1, kind: "conditioning", rpe: 7, minutes: 40, note: null, plan_key: key, ...over,
+});
+
+// The two clients' shared answer to "is this block done". The phone offers
+// exactly what `openBlocks` returns and the laptop closes exactly what
+// `answeredKeys` names, so a disagreement between them is a block one screen
+// asks for and the other has already ticked off — which is the bug that put
+// this pair in `logs.js` to begin with.
+describe("answeredKeys", () => {
+  it("names the blocks a set of sessions has answered", () => {
+    assert.deepEqual(
+      [...answeredKeys([logged("d:HIIT"), logged("d:TECH")])],
+      ["d:HIIT", "d:TECH"],
+    );
+  });
+
+  it("ignores freehand sessions, and copes with no sessions at all", () => {
+    assert.deepEqual([...answeredKeys([logged(null), logged(undefined)])], []);
+    assert.deepEqual([...answeredKeys([])], []);
+    assert.deepEqual([...answeredKeys(undefined)], []);
+  });
+});
+
+describe("openBlocks", () => {
+  it("drops the blocks already logged and keeps the rest", () => {
+    const open = openBlocks({ today: PRACTICE }, [logged("d:HIIT")]);
+    assert.deepEqual(open.map((b) => b.token), ["TECH", "SPAR", "N"]);
+  });
+
+  it("offers the extras, which the plan never owes but the phone can log", () => {
+    // Sparring is not prescribed and does not hold a card open. It still
+    // carries a key, so logging one from the gym has to be able to say so.
+    const open = openBlocks({ today: PRACTICE }, []);
+    assert.deepEqual(open.filter((b) => b.extra).map((b) => b.token), ["SPAR", "N"]);
+  });
+
+  it("is empty when nothing is left, and when there is no camp on", () => {
+    const all = PRACTICE.map((b) => logged(b.key));
+    assert.deepEqual(openBlocks({ today: PRACTICE }, all), []);
+    assert.deepEqual(openBlocks(null, []), []);
+    assert.deepEqual(openBlocks({ today: [] }, []), []);
+  });
+
+  it("is not answered by a freehand session", () => {
+    // The phone used to post every session without a key, which is what left
+    // the laptop asking for a lift that had already happened. A session with no
+    // key must go on leaving every block open, or the fix would be the guess it
+    // replaced.
+    const open = openBlocks({ today: PRACTICE }, [logged(null, { kind: "strength" })]);
+    assert.equal(open.length, PRACTICE.length);
+  });
 });
 
 describe("cards", () => {

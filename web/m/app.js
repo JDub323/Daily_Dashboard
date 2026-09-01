@@ -42,7 +42,7 @@
 // HTTP client along with them.
 import {
   applicableSteps, BATHROOM_STEPS, CHECKIN_ITEMS, DRINK_STEPS, MEAL_STEPS,
-  parseAmount, RPE_ANCHOR, SESSION_KINDS, toShown, toStored,
+  openBlocks, parseAmount, RPE_ANCHOR, SESSION_KINDS, toShown, toStored,
 } from "../app/logs.js";
 // The dashboard's own title screen, not a copy of it: same module, same
 // markup in index.html, same stylesheet. It imports nothing but `dom.js`,
@@ -116,9 +116,19 @@ function setDraft(answers) {
   } catch { /* see queue.js — a screen that will not draw is worse */ }
 }
 
-/** The session being built. Not persisted: it is answered in one sitting on the
- *  way out of a gym, and a stale kind from Tuesday is worse than an empty form. */
-let session = { kind: null, rpe: null, minutes: "" };
+/** The session being built: which prescribed block it answers, if any, then the
+ *  three things every session is. Not persisted: it is answered in one sitting
+ *  on the way out of a gym, and a stale kind from Tuesday is worse than an
+ *  empty form. */
+let session = { pick: null, kind: null, rpe: null, minutes: "" };
+
+/** `session.pick` for a session the plan never asked for.
+ *
+ *  A value rather than `null` so the button can light up. "Nothing picked yet"
+ *  and "deliberately off-plan" offer an identical form, and without a name for
+ *  the second the only way to say you had chosen it would be a button that
+ *  never lights — which reads as a tap that did not register. */
+const FREEHAND = "free";
 
 // --- talking to the server ----------------------------------------------------
 
@@ -286,6 +296,11 @@ const rowsFor = (path, fromPanel, deletePath) => {
     ...queuedFor(path),
   ].sort((a, b) => (a.hour ?? 0) - (b.hour ?? 0));
 };
+
+/** Today's sessions as this screen understands them: what the laptop has, plus
+ *  what is still queued, minus what a queued delete is on its way to removing. */
+const sessionRows = () =>
+  rowsFor("/api/session", panel?.sessions_today, "/api/session/delete");
 
 // --- the logs -------------------------------------------------------------------
 //
@@ -703,12 +718,60 @@ function measure(metric, unit, name) {
   );
 }
 
-/** A training session: what, how hard, how long. */
+/**
+ * The plan's own notation for a session that answered it — `LFC`, `A3`.
+ *
+ * Out of the key rather than looked up in the plan, so it reads the same for a
+ * row still sitting in the queue as for one the laptop has taken. Empty for a
+ * freehand session, which answered nothing.
+ */
+const planToken = (entry) => String(entry.plan_key ?? "").split(":")[1] ?? "";
+
+/**
+ * A training session: what, how hard, how long.
+ *
+ * --- answering the plan -----------------------------------------------------
+ *
+ * The first question is which of today's prescribed blocks this was, and it is
+ * the whole reason this card was changed. Without it every session logged here
+ * went up with no `plan_key` — a load the day counted, and a box the laptop's
+ * plan card went on asking for, because a block is only closed by a session
+ * carrying its key and matching them up by kind afterwards would be the load
+ * model guessing (see `panels/plan.js`).
+ *
+ * A block per button rather than the laptop's one card per outing. There, the
+ * rows of an outing are one form with one submit because the desktop is filling
+ * in an evening's training at a keyboard. Here you are standing in a doorway
+ * having just done one of them, and the parts of a practice are logged as you
+ * finish them — so each is its own entry, and the card on the laptop closes
+ * once all of its rows have arrived.
+ *
+ * `something else` is the way back to what this card always was: a pickup
+ * session, a walk, a day the schedule got abandoned. That form is unchanged and
+ * is still what you get on a day the plan asks for nothing.
+ */
 function sessionLog() {
   return {
     id: "session",
     label: "session",
     render() {
+      const open = openBlocks(panel?.plan, sessionRows());
+      // A block answered somewhere else while this form sat half-filled — from
+      // the laptop, or by a flush landing rows logged earlier — loses its
+      // button, and a pick with no button behind it would post a key the unique
+      // index refuses and the queue then drops as a 4xx. Dropping the pick
+      // instead costs one tap and cannot lose the entry.
+      if (session.pick && session.pick !== FREEHAND
+          && !open.some((b) => b.key === session.pick)) {
+        session = { ...session, pick: null };
+      }
+      const block = open.find((b) => b.key === session.pick) ?? null;
+      // What is left to ask about the kind: nothing when the plan names one,
+      // the plan's shortlist where it deliberately does not — cardio is
+      // roadwork or shadowboxing and the difference is only recoverable if it
+      // is recorded now — and everything for a session logged off-plan.
+      const kinds = block ? block.choose : Object.keys(SESSION_KINDS);
+
       const minutes = el("input.amount", {
         type: "text",
         inputmode: "numeric",
@@ -728,23 +791,75 @@ function sessionLog() {
           return void minutes.classList.add("bad");
         }
         const body = { kind: session.kind, rpe: session.rpe, minutes: mins };
-        session = { kind: null, rpe: null, minutes: "" };
+        // The one line the laptop's plan card is waiting for.
+        if (block) body.plan_key = block.key;
+        session = { pick: null, kind: null, rpe: null, minutes: "" };
         send("/api/session", body, "session");
       };
 
+      /** Answer "what did you do" with one of today's prescribed blocks. */
+      const choose = (chosen) => {
+        // The kind comes with the block where the plan names one, and is asked
+        // for where it does not. Cleared either way, because a kind picked
+        // freehand a moment ago may not be one this block offers at all.
+        session = { ...session, pick: chosen.key, kind: chosen.kind ?? null };
+        draw();
+      };
+
       return [
-        el("div.q", null,
-          el("div.q-head", null, el("span.q-name", { text: "kind" })),
-          el(optsClass(Object.keys(SESSION_KINDS)), null,
-            ...Object.keys(SESSION_KINDS).map((kind) =>
-              el("button.opt", {
-                class: session.kind === kind ? "on" : "",
-                "aria-pressed": session.kind === kind,
-                text: kind,
-                onclick: () => { session.kind = kind; draw(); },
-              })),
-          ),
-        ),
+        // Absent on a rest day, on the eleven unwritten weeks, and once every
+        // block has been logged — all three are days on which there is nothing
+        // to answer, and a row of no buttons above the form would be the card
+        // asking a question with no answers in it.
+        open.length
+          ? el("div.q", null,
+              el("div.q-head", null,
+                el("span.q-name", { text: "on the plan" }),
+                // The block's own words, once one is picked: what it actually
+                // is, what it will be logged as, and how long it asked for.
+                // `asks` is printed and never pre-filled, exactly as on the
+                // laptop — load is rpe x minutes and both halves are things you
+                // measure rather than things the plan decides.
+                el("span.q-hint", {
+                  text: block
+                    ? [block.name, block.kind, block.asks].filter(Boolean).join(" · ")
+                    : "what today asked for",
+                }),
+              ),
+              el(optsClass([...open.map((b) => b.label), "something else"]), null,
+                ...open.map((b) =>
+                  el("button.opt", {
+                    class: session.pick === b.key ? "on" : "",
+                    "aria-pressed": session.pick === b.key,
+                    text: b.label,
+                    onclick: () => choose(b),
+                  })),
+                el("button.opt", {
+                  class: session.pick === FREEHAND ? "on" : "",
+                  "aria-pressed": session.pick === FREEHAND,
+                  text: "something else",
+                  onclick: () => { session = { ...session, pick: FREEHAND }; draw(); },
+                }),
+              ),
+            )
+          : null,
+        // Gone entirely when the block names its own kind. There is one legal
+        // answer then, it is stated in the hint above, and a row of one button
+        // you have to press anyway is a question pretending to be asked.
+        kinds.length
+          ? el("div.q", null,
+              el("div.q-head", null, el("span.q-name", { text: "kind" })),
+              el(optsClass(kinds), null,
+                ...kinds.map((kind) =>
+                  el("button.opt", {
+                    class: session.kind === kind ? "on" : "",
+                    "aria-pressed": session.kind === kind,
+                    text: kind,
+                    onclick: () => { session.kind = kind; draw(); },
+                  })),
+              ),
+            )
+          : null,
         el("div.q", null,
           el("div.q-head", null,
             el("span.q-name", { text: "rpe" }),
@@ -768,8 +883,13 @@ function sessionLog() {
           el("div.row", null, minutes, el("button.go", { text: "log", onclick: commit })),
         ),
         entryList(
-          rowsFor("/api/session", panel?.sessions_today, "/api/session/delete"),
-          (e) => `rpe ${e.rpe} · ${e.minutes}m`,
+          sessionRows(),
+          // The token, where there is one. It is the receipt for the thing this
+          // card was changed to do: it says the block was answered and not
+          // merely that some training happened, which is the difference the
+          // laptop's plan card turns on and the one you cannot otherwise see
+          // from here.
+          (e) => [`rpe ${e.rpe} · ${e.minutes}m`, planToken(e)].filter(Boolean).join(" · "),
           "nothing trained yet today",
           {
             // A session has no hour — the table records the day and the load,
@@ -802,7 +922,7 @@ function sessionLog() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v7";
+const BUILD = "log-v8";
 
 /**
  * The build, along the foot of the title screen.
