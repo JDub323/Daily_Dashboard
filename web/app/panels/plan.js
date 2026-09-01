@@ -165,6 +165,21 @@ export default {
   },
 
   async render(node) {
+    // The headline is what the plan actually asks for -- `lower french
+    // contrast`, not the plainer `strength training` bucket a log of it lands
+    // in. The bucket is the thing you can be nudged about, but it is not the
+    // thing you go and do, and by the time this row is on screen the nudge has
+    // already worked. The two qualifiers ride along in the same string because
+    // each changes what is being asked: an optional block is one you may skip,
+    // and a regression is the lighter thing you can drop to that still counts
+    // as done.
+    const headline = (block) => {
+      const parts = [block.name];
+      if (block.optional && !block.extra) parts.push("(optional)");
+      if (block.regress_to) parts.push(`(Regression: ${block.regress_to})`);
+      return parts.join(" ");
+    };
+
     const health = store.state.health;
     const plan = health.plan;
     const list = cards(plan, health.sessions_today);
@@ -183,7 +198,7 @@ export default {
     const fields = new Map();
 
     function cardNode(card) {
-      const heading = card.group ?? card.rows[0]?.label ?? "training";
+      const heading = card.group ?? (card.rows[0] ? headline(card.rows[0]) : "training");
 
       if (card.done) {
         return el("div.plan-card.done", null,
@@ -193,7 +208,7 @@ export default {
               text: card.rows
                 .map((b) => {
                   const s = card.logged.get(b.key);
-                  return `${b.label} rpe ${s.rpe} × ${s.minutes}m`;
+                  return `${b.name} rpe ${s.rpe} × ${s.minutes}m`;
                 })
                 .join(" · "),
             }),
@@ -207,9 +222,9 @@ export default {
 
       const extraNodes = card.extras.map((block) =>
         el("button.tiny", {
-          text: block.label,
+          text: headline(block),
           class: chosen.has(block.key) ? "on" : "",
-          title: `${block.name} — offered, never owed`,
+          title: "offered, never owed",
           onclick: (e) => {
             if (chosen.has(block.key)) chosen.delete(block.key);
             else chosen.add(block.key);
@@ -312,13 +327,11 @@ export default {
       return el("div.plan-row", null,
         el("div.row.spread.gap", null,
           el("span", null,
-            el("span.value", { text: block.label }),
+            el("span.value", { text: headline(block) }),
             block.extra ? el("span.faint", { text: " (extra)" }) : null,
           ),
           el("span.faint", {
-            text: [block.name, block.asks, block.regress_to ? `or ${block.regress_to}` : null]
-              .filter(Boolean)
-              .join(" · "),
+            text: [block.label, block.asks].filter(Boolean).join(" · "),
           }),
         ),
         kindRow,
@@ -378,7 +391,7 @@ export default {
 
     function label() {
       const { block } = current();
-      return `plan ▸ ${block ? `${block.label} ${stage.field}` : "done"}`;
+      return `plan ▸ ${block ? `${block.name} ${stage.field}` : "done"}`;
     }
 
     function paint() {
