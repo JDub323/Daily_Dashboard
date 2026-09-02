@@ -316,16 +316,24 @@ The counterpart to `MEAL_KCAL` and meant to be read the same way: the drink
 log records a count, and this is the one line that turns counts into a volume.
 It applies to four of the five kinds. Alcohol is measured in standard drinks
 rather than in twelve-ounce servings -- a shot and a beer are both 1 -- so
-there is no volume to convert, which is why `HYDRATING` exists rather than
+there is no volume to convert, which is why `NOT_FLUID` exists rather than
 this constant simply being multiplied through."""
 
-HYDRATING = frozenset({"water", "electrolyte", "gatorade", "coffee"})
-"""The kinds that count toward the day's fluid.
+NOT_FLUID = frozenset({"alcohol"})
+"""The tags that take a drink out of the day's fluid -- there is one.
 
-Coffee is in, which surprises people. The diuretic effect of caffeine is real
+Stated as what is excluded rather than as what counts, which is the way round
+it was written when a drink had a single kind. The reason is that everything
+in this log is water with something in it: a plain glass carries no tags at
+all, so a list of the tags that *do* hydrate would have nothing to say about
+the commonest row in the table.
+
+Coffee counts, which surprises people. The diuretic effect of caffeine is real
 and it is smaller than the water the coffee arrives in; net, a mug hydrates.
 Alcohol is out for the opposite reason and also for a duller one: its unit is
-not a volume at all, so there is no honest number to add."""
+not a volume at all, so there is no honest number to add. It excludes the whole
+row rather than its share of it -- a rum and coke is alcohol and sugar, and the
+mixer is not worth pretending we can measure."""
 
 MIN_DRINK_DAYS = 5
 """Out of seven, and the same gate the gut read uses. A week with two days of
@@ -435,8 +443,12 @@ def drink_logged_days(logs: Sequence[d.DrinkLog], today: dt.date, days: int = AC
 
 
 def day_fluid_ml(logs: Sequence[d.DrinkLog]) -> float:
-    """One day's fluid, in ml. Alcohol contributes nothing -- see `HYDRATING`."""
-    return sum(entry.amount * DRINK_ML for entry in logs if str(entry.kind) in HYDRATING)
+    """One day's fluid, in ml. Alcohol contributes nothing -- see `NOT_FLUID`."""
+    return sum(
+        entry.amount * DRINK_ML
+        for entry in logs
+        if not NOT_FLUID.intersection(str(tag) for tag in entry.tags)
+    )
 
 
 def fluid_mean(logs: Sequence[d.DrinkLog], today: dt.date) -> float | None:
@@ -466,7 +478,7 @@ def caffeine_mean(logs: Sequence[d.DrinkLog], today: dt.date) -> float | None:
     if drink_logged_days(logs, today) < MIN_DRINK_DAYS:
         return None
     days = [
-        sum(entry.amount for entry in entries if entry.kind == "coffee")
+        sum(entry.amount for entry in entries if "coffee" in entry.tags)
         for entries in _by_day(logs, today, ACUTE_DAYS).values()
         if entries
     ]
@@ -484,7 +496,7 @@ def alcohol_week(logs: Sequence[d.DrinkLog], today: dt.date) -> float | None:
         return None
     start = today - dt.timedelta(days=ACUTE_DAYS - 1)
     return sum(
-        entry.amount for entry in logs if entry.kind == "alcohol" and start <= entry.date <= today
+        entry.amount for entry in logs if "alcohol" in entry.tags and start <= entry.date <= today
     )
 
 

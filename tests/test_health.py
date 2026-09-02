@@ -369,35 +369,52 @@ def test_hydration_mean_is_silent_under_three_readings():
 # -- what you drank ----------------------------------------------------------
 
 
-def drink(days_ago: int, hour: int, kind: str = "water", amount: float = 1.0) -> d.DrinkLog:
+def drink(
+    days_ago: int, hour: int, tags: list[str] | None = None, amount: float = 1.0
+) -> d.DrinkLog:
+    """One drink. No tags is the default because no tags is a glass of water,
+    which is what most of these fixtures want to be."""
     return d.DrinkLog(
         id=days_ago * 100 + hour,
         date=TODAY - dt.timedelta(days=days_ago),
         hour=hour,
-        kind=kind,
+        tags=tags or [],
         amount=amount,
     )
 
 
-def days_of_drinks(days: int, per_day: int = 6, kind: str = "water", amount: float = 1.0):
-    return [
-        drink(n, 8 + i, kind, amount) for n in range(days) for i in range(per_day)
-    ]
+def days_of_drinks(
+    days: int, per_day: int = 6, tags: list[str] | None = None, amount: float = 1.0
+):
+    return [drink(n, 8 + i, tags, amount) for n in range(days) for i in range(per_day)]
 
 
 def test_a_drink_is_twelve_ounces_of_it():
-    assert health.day_fluid_ml([drink(0, 9, "water", 2.0)]) == pytest.approx(710.0)
+    assert health.day_fluid_ml([drink(0, 9, amount=2.0)]) == pytest.approx(710.0)
 
 
 def test_alcohol_is_not_fluid():
-    """The one kind whose `amount` is not a volume at all -- a shot and a beer
+    """The one tag whose `amount` is not a volume at all -- a shot and a beer
     are both 1 -- so there is no honest number to add to the day's total."""
-    day = [drink(0, 20, "alcohol", 3.0), drink(0, 9, "water", 1.0)]
+    day = [drink(0, 20, ["alcohol"], 3.0), drink(0, 9, amount=1.0)]
     assert health.day_fluid_ml(day) == pytest.approx(health.DRINK_ML)
 
 
-def test_coffee_counts_as_fluid():
-    assert health.day_fluid_ml([drink(0, 7, "coffee", 1.0)]) == pytest.approx(health.DRINK_ML)
+def test_alcohol_takes_the_whole_row_out_and_not_its_share():
+    """A rum and coke is `alcohol` and `sugar`, and the mixer is not a volume
+    this log can separate out -- so the row counts for nothing rather than for
+    the part of it that was coke."""
+    assert health.day_fluid_ml([drink(0, 20, ["alcohol", "sugar"], 2.0)]) == 0
+
+
+def test_coffee_counts_as_fluid_however_it_was_taken():
+    plain = health.day_fluid_ml([drink(0, 7, ["coffee"], 1.0)])
+    sweet = health.day_fluid_ml([drink(0, 7, ["sugar", "coffee"], 1.0)])
+    assert plain == sweet == pytest.approx(health.DRINK_ML)
+
+
+def test_milk_counts_as_fluid():
+    assert health.day_fluid_ml([drink(0, 7, ["milk"], 1.0)]) == pytest.approx(health.DRINK_ML)
 
 
 def test_fluid_is_silent_until_the_log_was_being_kept():
@@ -415,15 +432,15 @@ def test_a_day_of_nothing_but_beer_counts_as_a_dry_day():
     the mean quietly report the days you did drink.
     """
     # Six ordinary days, and a seventh with two beers on it and nothing else.
-    logs = [*days_of_drinks(6, per_day=6), drink(6, 21, "alcohol", 2.0)]
+    logs = [*days_of_drinks(6, per_day=6), drink(6, 21, ["alcohol"], 2.0)]
     assert health.drink_logged_days(logs, TODAY) == 7
     assert health.fluid_mean(logs, TODAY) == pytest.approx(6 * health.DRINK_ML * 6 / 7)
 
 
 def test_caffeine_is_a_mean_over_the_days_you_logged():
     logs = [
-        *days_of_drinks(7, per_day=1, kind="water"),
-        *days_of_drinks(7, per_day=2, kind="coffee"),
+        *days_of_drinks(7, per_day=1),
+        *days_of_drinks(7, per_day=2, tags=["coffee"]),
     ]
     assert health.caffeine_mean(logs, TODAY) == pytest.approx(2.0)
 
@@ -431,7 +448,7 @@ def test_caffeine_is_a_mean_over_the_days_you_logged():
 def test_alcohol_is_a_week_total_and_not_a_mean():
     """Nobody counts alcohol per day, and a mean of 1.1 hides the Saturday
     that is the whole of it."""
-    logs = [*days_of_drinks(7, per_day=3), drink(2, 21, "alcohol", 4.0)]
+    logs = [*days_of_drinks(7, per_day=3), drink(2, 21, ["alcohol"], 4.0)]
     assert health.alcohol_week(logs, TODAY) == pytest.approx(4.0)
 
 
@@ -444,7 +461,7 @@ def test_a_dry_week_reads_zero_rather_than_silence():
 
 
 def test_last_months_drinking_is_outside_the_week():
-    logs = [*days_of_drinks(7, per_day=3), drink(20, 21, "alcohol", 10.0)]
+    logs = [*days_of_drinks(7, per_day=3), drink(20, 21, ["alcohol"], 10.0)]
     assert health.alcohol_week(logs, TODAY) == 0.0
 
 

@@ -16,7 +16,7 @@ import datetime as dt
 import json
 import random
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from .. import scoring
@@ -26,7 +26,7 @@ from ..models.common import (
     ChessOutcome,
     ChessStatus,
     Deck,
-    DrinkKind,
+    DrinkTag,
     EntrySource,
     Game,
     HealthMetric,
@@ -41,6 +41,7 @@ from ..models.common import (
     Track,
     UrineColor,
     Volume,
+    canonical_tags,
 )
 from .connection import transaction
 
@@ -2496,21 +2497,55 @@ class Repository:
         ).fetchall()
         return [d.MealLog(**dict(r)) for r in rows]
 
+    def _drinks(self, rows: Sequence[sqlite3.Row]) -> list[d.DrinkLog]:
+        """Attach each drink's tags to it, in one more query rather than one
+        per row.
+
+        `group_concat` in the main query would save the round trip and give no
+        promise about the order the tags come back in, which is the one thing
+        this has to get right -- so the tags are fetched flat and
+        `canonical_tags` puts them in order, the same call the boundary makes
+        on the way in.
+        """
+        if not rows:
+            return []
+        ids = [r["id"] for r in rows]
+        tags: dict[int, list[str]] = {entry_id: [] for entry_id in ids}
+        holes = ",".join("?" * len(ids))
+        for drink_id, tag in self.conn.execute(
+            f"SELECT drink_id, tag FROM drink_tag WHERE drink_id IN ({holes})", ids
+        ):
+            tags[drink_id].append(tag)
+        return [d.DrinkLog(**dict(r), tags=canonical_tags(tags[r["id"]])) for r in rows]
+
     def add_drink(
         self,
         date: dt.date,
         hour: int,
-        kind: DrinkKind,
+        tags: Iterable[DrinkTag],
         amount: float,
     ) -> d.DrinkLog:
-        """Append one drink. `amount` is in drinks; see `DrinkLog`."""
+        """Append one drink. `amount` is in drinks; see `DrinkLog`.
+
+        No tags is a glass of water and writes no `drink_tag` rows at all --
+        the absence is the answer, not a missing one.
+        """
         row = self.conn.execute(
-            "INSERT INTO drink_log (date, hour, kind, amount) VALUES (?, ?, ?, ?) RETURNING *",
-            (_iso(date), hour, DrinkKind(kind).value, float(amount)),
+            "INSERT INTO drink_log (date, hour, amount) VALUES (?, ?, ?) RETURNING *",
+            (_iso(date), hour, float(amount)),
         ).fetchone()
-        return d.DrinkLog(**dict(row))
+        written = canonical_tags(tags)
+        self.conn.executemany(
+            "INSERT INTO drink_tag (drink_id, tag) VALUES (?, ?)",
+            [(row["id"], tag.value) for tag in written],
+        )
+        return d.DrinkLog(**dict(row), tags=written)
 
     def delete_drink(self, entry_id: int) -> bool:
+        # The tags go with it, through ON DELETE CASCADE -- which is why this is
+        # still one statement. `PRAGMA foreign_keys` is ON in `connection.py`;
+        # without it this would leave the tags behind to be inherited by
+        # whatever row is next handed that id.
         cur = self.conn.execute("DELETE FROM drink_log WHERE id = ?", (entry_id,))
         return cur.rowcount > 0
 
@@ -2518,7 +2553,7 @@ class Repository:
         rows = self.conn.execute(
             "SELECT * FROM drink_log WHERE date = ? ORDER BY hour, id", (_iso(date),)
         ).fetchall()
-        return [d.DrinkLog(**dict(r)) for r in rows]
+        return self._drinks(rows)
 
     def drink_history(self, days: int = 60, before: dt.date | None = None) -> list[d.DrinkLog]:
         """As `bathroom_history`, and windowed for the same reason -- more so:
@@ -2527,13 +2562,13 @@ class Repository:
             rows = self.conn.execute(
                 "SELECT * FROM drink_log ORDER BY date DESC, hour DESC LIMIT ?", (days * 16,)
             ).fetchall()
-            return [d.DrinkLog(**dict(r)) for r in reversed(rows)]
+            return self._drinks(list(reversed(rows)))
         start = before - dt.timedelta(days=days - 1)
         rows = self.conn.execute(
             "SELECT * FROM drink_log WHERE date BETWEEN ? AND ? ORDER BY date, hour, id",
             (_iso(start), _iso(before)),
         ).fetchall()
-        return [d.DrinkLog(**dict(r)) for r in rows]
+        return self._drinks(rows)
 
     def daylog(self, date: dt.date) -> str | None:
         row = self.conn.execute("SELECT text FROM daylog WHERE date = ?", (_iso(date),)).fetchone()

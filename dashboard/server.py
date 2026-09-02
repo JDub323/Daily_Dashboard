@@ -2134,7 +2134,7 @@ def _register(app: FastAPI) -> None:
     def drink_add(cfg: Cfg, repo: Repo, body: api.DrinkRequest) -> api.HealthPanel:
         """One drink. `amount` is in drinks; the bounds are the request
         model's and the table's, which agree."""
-        repo.add_drink(body.date, body.hour, body.kind, body.amount)
+        repo.add_drink(body.date, body.hour, body.tags, body.amount)
         return state.health_panel(cfg, repo, body.date)
 
     @app.post("/api/drink/delete")

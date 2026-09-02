@@ -74,10 +74,14 @@ export const MEAL_STEPS = [
 //   number you can read off the label would be throwing away accuracy that
 //   cost nothing to have.
 //
-//   **`electrolyte` and `gatorade` differ on sugar and nothing else.** Which
-//   is why a Gatorade Zero is `electrolyte` whatever the bottle says. Two
-//   hundred calories is either a mid-session necessity or a soft drink, and
-//   the log cannot tell them apart if they share a row.
+//   **A drink is a set of tags, and none of them is a real answer.** Every
+//   drink here is water with something in it, so `water` was a tag that would
+//   have been true of every row and told you nothing — an untagged row *is*
+//   the glass of water. `gatorade` is gone for the neighbouring reason: it was
+//   `electrolyte` and `sugar` together and nothing else, so now that a row can
+//   be both, the word would only be a second spelling free to disagree with
+//   the first. Two hundred calories of sugar is either a mid-session necessity
+//   or a soft drink, and `sugar` is the tag that keeps them countable.
 //
 //   **`coffee` counts as fluid.** The diuretic effect is real and smaller than
 //   the water it arrives in. It is its own kind because the caffeine is worth
@@ -91,32 +95,36 @@ export const MEAL_STEPS = [
 /**
  * `[key, value, label]`, in the order they are reached for.
  *
- * Four of the five keys are the first letter. Gatorade is `s`, for *sports
- * drink*, and the reason is the same one that made the old in-and-out tab `p`:
- * `g` is spent. It is half of `gg`, which is "first panel of this section" and
- * one of the keys `panel.js` will not let a card claim — so a `g` bound here
- * would answer while the ladder was up and do nothing at all at a card sitting
- * idle, which is worse than a letter you have to learn once.
+ * Every key is the first letter, which is what dropping `water` and `gatorade`
+ * bought: `w` is not needed because the answer for water is *no answer*, and
+ * `g` was never available — it is half of `gg`, "first panel of this section",
+ * one of the keys `panel.js` will not let a card claim, which is why gatorade
+ * used to be `s` for *sports drink*. `s` is now sugar, on its own initial.
  */
-export const DRINK_KIND = [
-  ["w", "water", "water"],
+export const DRINK_TAGS = [
+  ["m", "milk", "milk"],
+  ["s", "sugar", "sugar"],
   ["e", "electrolyte", "electrolyte"],
-  ["s", "gatorade", "gatorade"],
   ["c", "coffee", "coffee"],
   ["a", "alcohol", "alcohol"],
 ];
 
 /**
- * Two questions: which, and how many.
+ * Two questions: what was in it, and how many.
  *
- * The box is preset to `1` and selected the moment the ladder reaches it, so
- * the common answer — one can, one mug, one beer — is `w` then Enter, and the
- * uncommon one is `w` `1` `.` `4` Enter. That keeps the budget: two keystrokes
- * for the case that happens ten times a day, and typing only when there is
+ * `multi` is the difference from every other step in this file, and it is the
+ * whole point of the change that introduced it: the answers are not exclusive,
+ * because coffee with sugar in it is both and a sports drink is salt and sugar
+ * both. Anything reading these steps has to treat a `multi` step as answered
+ * from the start — its answer is an array, and the empty array is the
+ * commonest drink of the day rather than a question left blank.
+ *
+ * The box is preset to `1`, so the common answer — one can, one mug, one glass
+ * of water — is the amount alone, and typing happens only when there is
  * actually something to say.
  */
 export const DRINK_STEPS = [
-  { name: "kind", options: DRINK_KIND },
+  { name: "tags", hint: "none = water", multi: true, options: DRINK_TAGS },
   { name: "amount", field: { unit: "drinks", preset: "1", max: 20 } },
 ];
 

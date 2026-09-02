@@ -1874,6 +1874,79 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE health_entry_v4 RENAME TO health_entry;
         """,
     ),
+    (
+        32,
+        """
+        -- A drink stops being one of five kinds and becomes a set of tags.
+        --
+        -- The old column made every drink pick exactly one word, and the drinks
+        -- actually drunk here do not have one word: coffee with sugar in it is
+        -- both, and it was being filed as `coffee` because that is the answer
+        -- the thumb reaches first. The sugar went unrecorded, and the whole
+        -- point of separating sugar out was to count it.
+        --
+        -- `water` does not survive the move and it is not lost. Every row in
+        -- this table is water with something in it, so `water` was the one
+        -- value true of all of them -- as a tag it would be on every row and
+        -- would separate nothing. A plain glass is a row with no tags at all,
+        -- which is the same claim the old `water` made, said by the absence
+        -- rather than by a word.
+        --
+        -- `gatorade` does not survive either, and this is the migration's one
+        -- opinion: it was `electrolyte` plus `sugar` from the day it was
+        -- defined -- the sugar was the entire difference between it and
+        -- electrolyte water, which is why a Gatorade Zero was always filed as
+        -- `electrolyte` -- so every gatorade row gets both tags and the series
+        -- stays comparable across the change. Keeping the word as well would
+        -- leave two spellings of one drink free to disagree.
+        --
+        -- A separate table rather than a delimited column, because a set in a
+        -- string is a set the database cannot check: the CHECK below is the
+        -- same guarantee the old `kind IN (...)` gave, and the primary key is
+        -- what stops one drink carrying `sugar` twice. ON DELETE CASCADE means
+        -- `delete_drink` stays the one-line delete it was.
+        --
+        -- Old table renamed rather than copied-from-in-place because the new
+        -- one has to exist under the final name *before* `drink_tag`
+        -- references it -- a foreign key written against a name that is about
+        -- to change is a foreign key to argue with later.
+        ALTER TABLE drink_log RENAME TO drink_log_kinded;
+        DROP INDEX drink_log_date;
+
+        CREATE TABLE drink_log (
+            id      INTEGER PRIMARY KEY,
+            date    TEXT NOT NULL
+                         CHECK (date IS strftime('%Y-%m-%d', date)),
+            hour    INTEGER NOT NULL CHECK (hour BETWEEN 0 AND 23),
+            amount  REAL NOT NULL CHECK (amount > 0 AND amount <= 20)
+        ) STRICT;
+
+        CREATE INDEX drink_log_date ON drink_log (date);
+
+        -- Ids are carried across rather than reassigned: the tags below are
+        -- inserted against them, and a row on screen is deleted by the id the
+        -- panel is already holding.
+        INSERT INTO drink_log (id, date, hour, amount)
+            SELECT id, date, hour, amount FROM drink_log_kinded;
+
+        CREATE TABLE drink_tag (
+            drink_id  INTEGER NOT NULL REFERENCES drink_log (id) ON DELETE CASCADE,
+            tag       TEXT NOT NULL CHECK (tag IN (
+                          'milk', 'sugar', 'electrolyte', 'coffee', 'alcohol')),
+            PRIMARY KEY (drink_id, tag)
+        ) STRICT;
+
+        INSERT INTO drink_tag (drink_id, tag)
+            SELECT id, kind FROM drink_log_kinded
+                WHERE kind IN ('electrolyte', 'coffee', 'alcohol')
+            UNION ALL
+            SELECT id, 'electrolyte' FROM drink_log_kinded WHERE kind = 'gatorade'
+            UNION ALL
+            SELECT id, 'sugar' FROM drink_log_kinded WHERE kind = 'gatorade';
+
+        DROP TABLE drink_log_kinded;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

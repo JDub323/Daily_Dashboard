@@ -27,7 +27,7 @@ from .common import (
     Base,
     BathroomKind,
     ChessOutcome,
-    DrinkKind,
+    DrinkTag,
     EntrySource,
     HealthMetric,
     InputState,
@@ -40,6 +40,7 @@ from .common import (
     UrineColor,
     Url,
     Volume,
+    canonical_tags,
 )
 from .domain import (
     MAX_SENTENCES,
@@ -479,12 +480,36 @@ class DrinkRequest(DateBody):
     and for why alcohol counts differently."""
 
     hour: int = Field(ge=0, le=23)
-    kind: DrinkKind
+
+    tags: list[DrinkTag] = Field(default_factory=list, max_length=len(DrinkTag))
+    """What was in it, and none of it is a legitimate answer: an empty list is
+    a glass of water. That is why this has a default rather than being required
+    -- the commonest drink of the day posts no tags at all, and a required
+    field would make the plain case the one that needs a special value.
+
+    Order and repeats are the client's business to get wrong and this model's
+    to fix: `canonical_tags` below dedupes and sorts, so a phone that sends
+    `[coffee, sugar]` and a script that sends `[sugar, sugar, coffee]` write
+    the same row. The `max_length` is the fat-finger guard the amount box has
+    -- there are five tags, and a body with fifty is not a drink."""
+
     amount: float = Field(gt=0, le=20)
     """The bounds are the table's, restated here so a typo comes back as a 422
     naming the field rather than as a CHECK constraint in a 500. The panel
     parses the box itself and will not post a number outside them, which makes
     this the guard for everything that is not the panel."""
+
+    @model_validator(mode="after")
+    def canonicalise(self) -> DrinkRequest:
+        """One spelling per drink, decided at the boundary.
+
+        Here rather than in the repository because this is the edge every
+        client comes through, and a row that reached the table with its tags in
+        posting order would be a row read back in an order that depends on who
+        wrote it.
+        """
+        self.tags = canonical_tags(self.tags)
+        return self
 
 
 class LogDeleteRequest(DateBody):

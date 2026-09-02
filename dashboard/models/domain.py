@@ -16,7 +16,7 @@ from .common import (
     BathroomKind,
     ChessStatus,
     Deck,
-    DrinkKind,
+    DrinkTag,
     EntrySource,
     HealthMetric,
     MathStatus,
@@ -769,28 +769,35 @@ class MealLog(Base):
 
 
 class DrinkLog(Base):
-    """One drink: when, which, and how many.
+    """One drink: when, what was in it, and how many.
 
     `hour` is the browser's and rounded, as on both logs beside this one.
 
-    `amount` is in *drinks*, and a drink is twelve ounces of whatever the kind
-    is -- a can, roughly, so a 16.9oz bottle is 1.4 and a mug is about 0.8.
-    Decimals because the number is printed on the bottle: this is the one field
-    in either log that is measured rather than estimated, and bucketing a
+    `tags` is what was in it and it is a *set* -- coffee with sugar is both,
+    and a sports drink is `electrolyte` and `sugar` together. Empty is a real
+    answer and the commonest one: no tags is a glass of water, because every
+    drink in this log is water with something in it and a tag saying so would
+    be on every row. Always in `DrinkTag` order; `canonical_tags` is what puts
+    it there, on the way in.
+
+    `amount` is in *drinks*, and a drink is twelve ounces of whatever it was --
+    a can, roughly, so a 16.9oz bottle is 1.4 and a mug is about 0.8. Decimals
+    because the number is printed on the bottle: this is the one field in
+    either log that is measured rather than estimated, and bucketing a
     measurement is throwing away accuracy nobody had to work for.
 
     Alcohol is the exception and it is a real one. There the unit is the
     standard drink -- a shot, a beer and a glass of wine are all 1 -- because
     twelve ounces of spirits is not a quantity anybody means. The two units
     share a column because they share a question ("how many"), and nothing
-    reads `amount` without first reading `kind`: see `health.DRINK_ML`, which
-    refuses to convert this kind to a volume at all.
+    reads `amount` without first reading `tags`: see `health.DRINK_ML`, which
+    refuses to convert a row carrying `alcohol` to a volume at all.
     """
 
     id: int
     date: dt.date
     hour: int = Field(ge=0, le=23)
-    kind: DrinkKind
+    tags: list[DrinkTag] = Field(default_factory=list)
     amount: float = Field(gt=0, le=20)
 
     @computed_field  # type: ignore[prop-decorator]

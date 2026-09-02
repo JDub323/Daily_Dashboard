@@ -8,6 +8,7 @@ that only fails three layers later in the browser.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import StrEnum
 from typing import Annotated
 
@@ -456,29 +457,55 @@ class Volume(StrEnum):
     large = "large"
 
 
-class DrinkKind(StrEnum):
-    """The five, and the cut between them is what each one does to you.
+class DrinkTag(StrEnum):
+    """What was in it -- and a drink can be several of these at once.
 
-    `electrolyte` and `gatorade` are separated on the sugar and nothing else --
-    a Gatorade Zero is electrolyte water by this definition, whatever is on the
-    bottle. It is the distinction that matters on a cut, where the salt is
-    wanted and the two hundred calories are the thing being counted.
+    These were five mutually exclusive *kinds* until it became clear that a lot
+    of what actually gets drunk is two of them: coffee with sugar in it, a
+    sports drink that is salt and sugar both. One column forced a choice
+    between two true answers, and the one that got recorded was whichever the
+    thumb reached first -- so the sugar in the coffee was simply never written
+    down.
+
+    Water is not a tag. Every drink here is water with something in it, which
+    makes `water` the one label that would be true of all of them and
+    informative about none. A plain glass is a row with no tags, and that is
+    exactly what an untagged row means read back.
+
+    `gatorade` is gone the same way. It was `electrolyte` and `sugar` together
+    -- that was the entire distinction between it and electrolyte water -- and
+    now that a row can be both, keeping the word would be inviting two
+    spellings of one drink to disagree. The rows already logged as gatorade
+    carry both tags; see the migration.
 
     `coffee` counts as fluid despite the folklore. The diuretic effect of
-    caffeine is real and smaller than the water it arrives in; it is here as
-    its own kind because the *caffeine* is worth counting, not because the
-    water in it is suspect.
+    caffeine is real and smaller than the water it arrives in; it is a tag
+    because the *caffeine* is worth counting, not because the water in it is
+    suspect.
 
-    `alcohol` is the odd one out twice over: it is the only kind whose unit is
-    not twelve ounces (see `DrinkLog.amount`), and the only one that does not
-    count toward the day's fluid at all.
+    `alcohol` is the odd one out twice over: it is the only tag that changes
+    what `amount` means (see `DrinkLog.amount`), and the only one that takes
+    the row out of the day's fluid entirely -- whatever else is on it, a rum
+    and coke hydrates you by nothing.
     """
 
-    water = "water"
+    milk = "milk"
+    sugar = "sugar"
     electrolyte = "electrolyte"
-    gatorade = "gatorade"
     coffee = "coffee"
     alcohol = "alcohol"
+
+
+def canonical_tags(tags: Iterable[str]) -> list[DrinkTag]:
+    """One drink's tags, deduplicated and put in `DrinkTag` order.
+
+    The order is decided here so that a row written by the phone and a row
+    written by a script read back identically, and `sugar + coffee` is never
+    also stored as `coffee + sugar`. A set is the honest type and a poor thing
+    to send over JSON, so the canonical *list* is what crosses the wire.
+    """
+    order = list(DrinkTag)
+    return sorted({DrinkTag(tag) for tag in tags}, key=order.index)
 
 
 class MealSize(StrEnum):

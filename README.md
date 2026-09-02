@@ -235,17 +235,23 @@ answer (a stool is asked for solidity, urine for colour), and the drinks one
 ends in a **typed** answer rather than a row of buttons.
 
 **Drinks are counted in drinks**, where a drink is twelve ounces of it — a can.
-Water, electrolyte water, gatorade, coffee, alcohol; the box takes `1.5`, `.5`
-and `1 1/2` alike, and it arrives holding `1` with the text selected, so `w ⏎`
-is one drink of water and the number is only typed when there is something to
-say. It is the one bucketless field in either log, and the reason is that the
-answer is *printed on the bottle*: sizes and volumes are buckets because nobody
-knows how big their lunch was, and rounding a measurement to small/medium/large
-would throw away accuracy that cost nothing. Alcohol changes the unit to the
-standard drink — a shot, a beer and a glass of wine are each 1 — and is the one
-kind that counts toward none of the day's fluid. Those two rules and the
-sugar/no-sugar line between electrolyte water and gatorade live behind the `?`
-on the card rather than on it, for the reason the calendar's sheet gives: a
+What was in it is a set of **tags** rather than a kind: milk, sugar,
+electrolyte, coffee, alcohol, any of them together, because coffee with sugar
+in it is both and a sports drink is salt and sugar both. There is no `water`
+tag — every drink here is water with something in it, so a tag saying so would
+be on every row — and an untagged entry *is* the glass of water, which makes
+the commonest drink of the day the one that needs no answer at all. `gatorade`
+is gone the same way: it was `electrolyte` and `sugar` together and nothing
+else, and the rows already logged under it carry both tags now. The box takes
+`1.5`, `.5` and `1 1/2` alike and arrives holding `1`, so the number is only
+typed when there is something to say. It is the one bucketless field in either
+log, and the reason is that the answer is *printed on the bottle*: sizes and
+volumes are buckets because nobody knows how big their lunch was, and rounding
+a measurement to small/medium/large would throw away accuracy that cost
+nothing. Alcohol changes the unit to the standard drink — a shot, a beer and a
+glass of wine are each 1 — and takes the whole row out of the day's fluid,
+mixer included. Those rules live behind the `?` on the card rather than on it,
+for the reason the calendar's sheet gives: a
 panel whose whole claim is that it costs nothing cannot open with a paragraph
 of definitions. The tab carries no dot and asks nothing of the day — a
 hydration target you hit by *logging* is a target that teaches you to log, and

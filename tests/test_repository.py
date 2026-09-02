@@ -780,26 +780,62 @@ def test_deleting_a_visit_reports_whether_there_was_one(repo):
 def test_a_drink_keeps_its_decimal(repo):
     """The one field in either log that is measured rather than bucketed, so
     the whole point of it is that 1.4 comes back as 1.4."""
-    bottle = repo.add_drink(TODAY, 9, "water", 1.4)
+    bottle = repo.add_drink(TODAY, 9, [], 1.4)
     assert bottle.amount == 1.4
     assert bottle.at == "09:00"
 
 
+def test_a_glass_of_water_is_a_drink_with_nothing_on_it(repo):
+    """No tags is the commonest row in the table and it is a complete answer:
+    every drink here is water with something in it, so what makes one plain
+    water is the absence."""
+    plain = repo.add_drink(TODAY, 9, [], 1.0)
+    assert plain.tags == []
+    assert repo.drinks_on(TODAY)[0].tags == []
+
+
+def test_a_drink_can_be_two_things_at_once(repo):
+    """The whole reason the column became a table -- coffee with sugar in it
+    was being filed as one or the other, and the sugar was the half that went
+    missing."""
+    repo.add_drink(TODAY, 9, ["coffee", "sugar"], 1.0)
+    assert repo.drinks_on(TODAY)[0].tags == ["sugar", "coffee"]
+
+
+def test_tags_come_back_in_one_order_however_they_went_in(repo):
+    """`canonical_tags` order, not posting order and not whatever the join
+    happens to yield: two rows of the same drink have to read the same."""
+    repo.add_drink(TODAY, 9, ["coffee", "sugar"], 1.0)
+    repo.add_drink(TODAY, 10, ["sugar", "coffee", "sugar"], 1.0)
+    assert [entry.tags for entry in repo.drinks_on(TODAY)] == [
+        ["sugar", "coffee"],
+        ["sugar", "coffee"],
+    ]
+
+
 def test_drinks_are_appended_never_upserted(repo):
-    first = repo.add_drink(TODAY, 9, "water", 1.0)
-    second = repo.add_drink(TODAY, 9, "coffee", 1.0)
+    first = repo.add_drink(TODAY, 9, [], 1.0)
+    second = repo.add_drink(TODAY, 9, ["coffee"], 1.0)
     assert first.id != second.id
     assert len(repo.drinks_on(TODAY)) == 2
 
     assert repo.delete_drink(first.id) is True
     assert repo.delete_drink(first.id) is False
-    assert [entry.kind for entry in repo.drinks_on(TODAY)] == ["coffee"]
+    assert [entry.tags for entry in repo.drinks_on(TODAY)] == [["coffee"]]
+
+
+def test_deleting_a_drink_takes_its_tags_with_it(repo, db):
+    """Through ON DELETE CASCADE. Tags left behind would be inherited by
+    whatever row SQLite next hands that id to."""
+    entry = repo.add_drink(TODAY, 9, ["sugar", "coffee"], 1.0)
+    assert repo.delete_drink(entry.id) is True
+    assert db.conn.execute("SELECT count(*) FROM drink_tag").fetchone()[0] == 0
 
 
 def test_drinks_come_back_in_time_order(repo):
-    repo.add_drink(TODAY, 21, "alcohol", 2.0)
-    repo.add_drink(TODAY, 7, "coffee", 1.0)
-    repo.add_drink(TODAY, 13, "gatorade", 1.5)
+    repo.add_drink(TODAY, 21, ["alcohol"], 2.0)
+    repo.add_drink(TODAY, 7, ["coffee"], 1.0)
+    repo.add_drink(TODAY, 13, ["electrolyte", "sugar"], 1.5)
     assert [entry.hour for entry in repo.drinks_on(TODAY)] == [7, 13, 21]
 
 
@@ -808,10 +844,7 @@ def test_the_file_itself_refuses_a_drink_of_nothing(db):
     then describes nothing about it -- and it would drag every weekly mean
     toward whatever number those rows are counted as."""
     with pytest.raises(sqlite3.IntegrityError):
-        db.conn.execute(
-            "INSERT INTO drink_log (date, hour, kind, amount) "
-            "VALUES ('2026-07-26', 9, 'water', 0)"
-        )
+        db.conn.execute("INSERT INTO drink_log (date, hour, amount) VALUES ('2026-07-26', 9, 0)")
 
 
 def test_the_file_itself_refuses_a_misplaced_decimal_point(db):
@@ -819,22 +852,27 @@ def test_the_file_itself_refuses_a_misplaced_decimal_point(db):
     a single row of it would move the week's mean by more than a real day
     could."""
     with pytest.raises(sqlite3.IntegrityError):
-        db.conn.execute(
-            "INSERT INTO drink_log (date, hour, kind, amount) "
-            "VALUES ('2026-07-26', 9, 'water', 150)"
-        )
+        db.conn.execute("INSERT INTO drink_log (date, hour, amount) VALUES ('2026-07-26', 9, 150)")
 
 
-def test_the_file_itself_refuses_a_drink_it_has_never_heard_of(db):
+def test_the_file_itself_refuses_a_tag_it_has_never_heard_of(db):
+    """The guarantee the old `kind IN (...)` gave, kept when the column became
+    a table -- which is the argument against a delimited string, where the
+    database could not have checked this at all."""
+    db.conn.execute("INSERT INTO drink_log (id, date, hour, amount) VALUES (1, '2026-07-26', 9, 1)")
     with pytest.raises(sqlite3.IntegrityError):
-        db.conn.execute(
-            "INSERT INTO drink_log (date, hour, kind, amount) "
-            "VALUES ('2026-07-26', 9, 'milk', 1)"
-        )
+        db.conn.execute("INSERT INTO drink_tag (drink_id, tag) VALUES (1, 'gatorade')")
+
+
+def test_the_file_itself_refuses_the_same_tag_twice(db):
+    db.conn.execute("INSERT INTO drink_log (id, date, hour, amount) VALUES (1, '2026-07-26', 9, 1)")
+    db.conn.execute("INSERT INTO drink_tag (drink_id, tag) VALUES (1, 'sugar')")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.conn.execute("INSERT INTO drink_tag (drink_id, tag) VALUES (1, 'sugar')")
 
 
 def test_the_drink_window_is_clipped_to_the_browsers_today(repo):
     for offset in (0, 3, 40):
-        repo.add_drink(TODAY - dt.timedelta(days=offset), 9, "water", 1.0)
+        repo.add_drink(TODAY - dt.timedelta(days=offset), 9, [], 1.0)
     got = repo.drink_history(28, before=TODAY)
     assert [entry.date for entry in got] == [TODAY - dt.timedelta(days=3), TODAY]

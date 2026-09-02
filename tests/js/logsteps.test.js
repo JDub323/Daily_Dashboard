@@ -71,28 +71,44 @@ describe("the meal ladder", () => {
 });
 
 describe("the drinks ladder", () => {
-  it("asks which, then how many, and nothing else", () => {
-    assert.deepEqual(names(applicableSteps(DRINKS, {})), ["kind", "amount"]);
+  it("asks what was in it, then how many, and nothing else", () => {
+    assert.deepEqual(names(applicableSteps(DRINKS, {})), ["tags", "amount"]);
   });
 
-  it("answers the common case in two keystrokes", () => {
-    // `w` opens the card and answers the kind; the box arrives holding 1 with
-    // the text selected, so Enter logs one drink of water. That is the whole
-    // claim of this panel — the number is only typed when there is something
-    // to say — and a preset that was blank would cost a keystroke on every
-    // single entry to save one on the occasional 1.4.
+  it("asks for the tags as a set rather than a choice", () => {
+    // The whole change: coffee with sugar in it is both, and a step that is
+    // not `multi` is a step where answering the second one throws away the
+    // first. A client reading these steps decides between a radio row and a
+    // toggle row on this flag alone.
+    const [tags] = DRINKS;
+    assert.equal(tags.multi, true);
+  });
+
+  it("offers no tag for water and none for gatorade", () => {
+    // Water is the untagged row — a tag true of every drink in the log tells
+    // you nothing about any of them — and gatorade is `electrolyte` and
+    // `sugar` together, which is now something a row can say directly. Either
+    // one offered here would post a body the server refuses with a 422.
+    const values = DRINKS[0].options.map(([, value]) => value);
+    assert.deepEqual(values, ["milk", "sugar", "electrolyte", "coffee", "alcohol"]);
+  });
+
+  it("answers the common case with the amount alone", () => {
+    // No tags is a glass of water, so the fastest entry is the amount and
+    // nothing else — and the box arrives holding 1. That is the whole claim of
+    // this log: the number is only typed when there is something to say.
     const [, amount] = DRINKS;
     assert.equal(parseAmount(amount.field.preset), 1);
   });
 
   it("keeps its first question on the keyboard", () => {
     // The first step's keys are what open the card from the focus ring, and
-    // `panel.js` will not hand a panel any of these — so a kind bound to one
+    // `panel.js` will not hand a panel any of these — so a tag bound to one
     // would answer while the ladder was up and do nothing at a card sitting
-    // idle. `g` is the trap here: gatorade is `s` for exactly this reason.
+    // idle. `g` is the trap here, and it is why gatorade was ever `s`.
     const reserved = new Set(["h", "j", "k", "l", "i", "f", "g", "n"]);
     for (const [key] of DRINKS[0].options) {
-      assert.ok(!reserved.has(key), `drinks ▸ kind binds ${key}, which never reaches the panel`);
+      assert.ok(!reserved.has(key), `drinks ▸ tags binds ${key}, which never reaches the panel`);
     }
   });
 });

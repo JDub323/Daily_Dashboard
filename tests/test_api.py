@@ -1705,17 +1705,39 @@ def test_a_meal_quality_outside_the_scale_is_a_422(client):
 
 def test_a_drink_comes_back_in_the_rebuilt_panel(client):
     panel = client.post(
-        "/api/drink", json={"date": DATE, "hour": 9, "kind": "water", "amount": 1.4}
+        "/api/drink", json={"date": DATE, "hour": 9, "tags": ["coffee"], "amount": 1.4}
     ).json()
-    assert [(e["at"], e["kind"], e["amount"]) for e in panel["drinks_today"]] == [
-        ("09:00", "water", 1.4)
+    assert [(e["at"], e["tags"], e["amount"]) for e in panel["drinks_today"]] == [
+        ("09:00", ["coffee"], 1.4)
     ]
 
 
+def test_a_drink_with_no_tags_is_a_glass_of_water(client):
+    """The commonest entry of the day, and it posts no tags at all -- which is
+    why `tags` has a default rather than being required."""
+    panel = client.post("/api/drink", json={"date": DATE, "hour": 9, "amount": 1}).json()
+    assert [e["tags"] for e in panel["drinks_today"]] == [[]]
+
+
+def test_a_drink_can_carry_more_than_one_tag(client):
+    panel = client.post(
+        "/api/drink", json={"date": DATE, "hour": 9, "tags": ["coffee", "sugar"], "amount": 1}
+    ).json()
+    assert panel["drinks_today"][0]["tags"] == ["sugar", "coffee"]
+
+
+def test_tags_are_canonicalised_at_the_boundary(client):
+    """Posting order and repeats are the client's to get wrong and the request
+    model's to fix, so one drink has one spelling in the table."""
+    panel = client.post(
+        "/api/drink",
+        json={"date": DATE, "hour": 9, "tags": ["sugar", "electrolyte", "sugar"], "amount": 1},
+    ).json()
+    assert panel["drinks_today"][0]["tags"] == ["sugar", "electrolyte"]
+
+
 def test_a_drink_of_nothing_is_a_422(client):
-    response = client.post(
-        "/api/drink", json={"date": DATE, "hour": 9, "kind": "water", "amount": 0}
-    )
+    response = client.post("/api/drink", json={"date": DATE, "hour": 9, "amount": 0})
     assert response.status_code == 422
     assert "amount" in response.text
 
@@ -1723,22 +1745,24 @@ def test_a_drink_of_nothing_is_a_422(client):
 def test_a_misplaced_decimal_point_is_a_422_rather_than_a_500(client):
     """The bound is on the table too. Refused here so the browser gets a
     sentence naming the field, exactly as a stool without a solidity is."""
-    response = client.post(
-        "/api/drink", json={"date": DATE, "hour": 9, "kind": "water", "amount": 150}
-    )
+    response = client.post("/api/drink", json={"date": DATE, "hour": 9, "amount": 150})
     assert response.status_code == 422
 
 
-def test_a_drink_nobody_has_defined_is_a_422(client):
-    response = client.post(
-        "/api/drink", json={"date": DATE, "hour": 9, "kind": "milk", "amount": 1}
-    )
-    assert response.status_code == 422
+def test_a_tag_nobody_has_defined_is_a_422(client):
+    """`water` and `gatorade` are the two that will be typed out of habit, and
+    both are gone on purpose -- water is the untagged row, gatorade is
+    `electrolyte` and `sugar` together."""
+    for tag in ("water", "gatorade", "kombucha"):
+        response = client.post(
+            "/api/drink", json={"date": DATE, "hour": 9, "tags": [tag], "amount": 1}
+        )
+        assert response.status_code == 422, tag
 
 
 def test_deleting_a_drink_removes_it(client):
     panel = client.post(
-        "/api/drink", json={"date": DATE, "hour": 9, "kind": "coffee", "amount": 1}
+        "/api/drink", json={"date": DATE, "hour": 9, "tags": ["coffee"], "amount": 1}
     ).json()
     entry_id = panel["drinks_today"][0]["id"]
     after = client.post(
@@ -1761,7 +1785,7 @@ def test_the_quick_logs_are_quiet_until_they_have_history(client):
     be wrong in the direction that reads as a problem.
     """
     client.post("/api/meal", json={"date": DATE, "hour": 12, "size": "large", "quality": 1})
-    client.post("/api/drink", json={"date": DATE, "hour": 21, "kind": "alcohol", "amount": 6})
+    client.post("/api/drink", json={"date": DATE, "hour": 21, "tags": ["alcohol"], "amount": 6})
     panel = client.post(
         "/api/bathroom",
         json={"date": DATE, "hour": 8, "kind": "urine", "color": "darker", "volume": "small"},

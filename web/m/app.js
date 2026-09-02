@@ -346,7 +346,24 @@ const optsClass = (labels) =>
  * animations to say "a large clean meal".
  */
 function stepRow(step, draftValues, answer) {
-  const chosen = draftValues[step.name];
+  // A `multi` step holds an array and a plain one holds a value. The two are
+  // told apart by the step rather than by what is in the draft, because the
+  // empty array — no tags, a glass of water — is a real answer and an
+  // unanswered step is `undefined` on both.
+  const held = draftValues[step.name];
+  const picked = step.multi ? new Set(held ?? []) : null;
+  const isOn = (value) => (step.multi ? picked.has(value) : held === value);
+  const press = (value) => {
+    if (!step.multi) return answer(step.name, value);
+    // Toggling in place: tapping a tag that is on takes it off, so a wrong tap
+    // costs the tap that undoes it and nothing else. Rebuilt from the step's
+    // own order rather than from tap order, so the row reads the same whichever
+    // way round it was answered.
+    const next = new Set(picked);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    answer(step.name, step.options.map(([, v]) => v).filter((v) => next.has(v)));
+  };
   return el("div.q", null,
     el("div.q-head", null,
       el("span.q-name", { text: step.name }),
@@ -355,10 +372,10 @@ function stepRow(step, draftValues, answer) {
     el(optsClass(step.options.map(([, , label]) => label)), null,
       ...step.options.map(([, value, label]) =>
         el("button.opt", {
-          class: chosen === value ? "on" : "",
-          "aria-pressed": chosen === value,
+          class: isOn(value) ? "on" : "",
+          "aria-pressed": isOn(value),
           text: label,
-          onclick: () => answer(step.name, value),
+          onclick: () => press(value),
         }),
       ),
     ),
@@ -383,7 +400,12 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
     render() {
       const asked = applicableSteps(steps, answers);
 
-      const ready = asked.every((step) => answers[step.name] != null);
+      // A `multi` step is answered from the moment it is drawn: its answer is a
+      // set, the empty set means something ("water"), and holding the commit
+      // button hostage to it would make the commonest drink of the day the one
+      // entry you cannot log without touching a tag you did not mean.
+      const missing = asked.filter((step) => !step.multi && answers[step.name] == null);
+      const ready = missing.length === 0;
 
       const commit = async () => {
         if (!ready) return;
@@ -422,7 +444,7 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
         // that is greyed the whole time you are answering is a progress
         // indicator you never have to read.
         el("button.go.commit", {
-          text: ready ? `log ${label}` : `pick ${asked.filter((s) => answers[s.name] == null).length} more`,
+          text: ready ? `log ${label}` : `pick ${missing.length} more`,
           disabled: !ready,
           onclick: commit,
         }),
@@ -580,7 +602,11 @@ const LOGS = [
     path: "/api/drink",
     empty: "nothing drunk yet today",
     rows: () => rowsFor("/api/drink", panel?.drinks_today, "/api/drink/delete"),
-    describe: (e) => `${e.kind} · ${say(e.amount)}`,
+    // "water" is written out rather than left blank, because a row reading
+    // just `· 1` looks like a row that lost something. It is the one label on
+    // this screen that is not a value the table holds — the absence of tags is
+    // what says it, here and in `DrinkTag`.
+    describe: (e) => `${e.tags?.length ? e.tags.join(" + ") : "water"} · ${say(e.amount)}`,
     remove: { path: "/api/drink/delete", field: "entry_id" },
   }),
   quickLog({
@@ -952,7 +978,7 @@ function sessionLog() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v9";
+const BUILD = "log-v10";
 
 /**
  * The build, along the foot of the title screen.
