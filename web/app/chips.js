@@ -55,10 +55,9 @@
 // puzzle and the word are a real sitting each, and a Wordle is a Wordle.
 
 import * as api from "./api.js";
-import { markTabs } from "./carousel.js";
 import { el, mount } from "./dom.js";
 import { focusPanel, markDone } from "./panel.js";
-import { weightToday } from "./panels/checkin.js";
+import { weightToday } from "./panels/health.js";
 import { completionWrite, store } from "./store.js";
 
 /**
@@ -110,7 +109,7 @@ function planTasks(s) {
       id: "training",
       label: owed.length > 1 ? `training (${owed.length})` : "training",
       done: owed.every((b) => logged.has(b.key)),
-      panel: "plan",
+      panel: "health",
     });
   }
 
@@ -120,7 +119,7 @@ function planTasks(s) {
       id: `plan:${group.name}`,
       label: group.name,
       done: group.keys.every((key) => logged.has(key)),
-      panel: "plan",
+      panel: "health",
       points: group.points,
       provisional: group.provisional,
     });
@@ -196,7 +195,7 @@ function tasks() {
       id: "checkin",
       label: "morning check-in",
       done: weightToday(s) !== null && Boolean(s.health.readiness_today),
-      panel: "checkin",
+      panel: "health",
     },
     {
       // Three meals, and required rather than worth points.
@@ -219,7 +218,7 @@ function tasks() {
       id: "meals",
       label: `meals (${Math.min(s.health.meals_today.length, MEALS_A_DAY)}/${MEALS_A_DAY})`,
       done: s.health.meals_today.length >= MEALS_A_DAY,
-      panel: "meals",
+      panel: "health",
     },
 
     // The training plan's own tasks. Placed here rather than in the list below
@@ -363,6 +362,14 @@ export function score(list) {
  * False when there is nothing left at all, so the caller can say so rather
  * than silently doing nothing — which is indistinguishable from a broken
  * binding.
+ *
+ * Three of these now land somewhere you cannot finish them. The check-in, the
+ * meals and the day's training all point at the health panel, which reads and
+ * takes nothing — they are answered on the phone. That is the honest version
+ * rather than a regression: `n` has always meant "show me the next thing the
+ * day is waiting on", and the panel it lands on is the one that will stop
+ * saying it is waiting once you have. The alternative was dropping them off
+ * the list, which would have quietly shrunk what a day is.
  */
 export function openNextUnfinished() {
   const list = tasks();
@@ -409,12 +416,6 @@ export async function renderChips() {
     byPanel.set(task.panel, (byPanel.get(task.panel) ?? true) && task.done);
   }
   for (const [panel, done] of byPanel) markDone(panel, done);
-
-  // The logging carousel shows one of its four at a time, so the same fact has
-  // to reach its tab bar or three quarters of it is unreadable without waiting
-  // for the rotation. Which task speaks for which tab is carousel.js's table,
-  // not this one's — here it is only the list.
-  markTabs(list);
 
   // The old client fired a save on every page load: it recomputed `pct` as a
   // float and compared it against a stored float, which differed often enough

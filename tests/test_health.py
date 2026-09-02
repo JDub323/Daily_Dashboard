@@ -16,7 +16,7 @@ import pytest
 
 from dashboard import health
 from dashboard.models import domain as d
-from dashboard.models.common import SessionKind
+from dashboard.models.common import InputState, SessionKind
 
 from .conftest import TODAY
 
@@ -549,3 +549,289 @@ def test_a_missing_morning_breaks_a_scalar_run():
     values[-3:] = [70.0, 70.0, 70.0]
     points = [p for p in scalars(values) if p[0] != TODAY - dt.timedelta(days=1)]
     assert health.scalar_run(points, TODAY, above=True) == 1
+
+
+# --- the rail --------------------------------------------------------------
+#
+# Four composites, on a panel whose first two passes refused to build any. The
+# tests here are almost all about the refusal rather than the arithmetic,
+# because the arithmetic is a mean and the refusal is the whole design:
+#
+# 1. **A score is the mean of what scored, and never fills a gap in.** An
+#    absent input must not be a zero and must not be a neutral 50 -- both of
+#    those are a number about the watch dressed up as a number about him.
+# 2. **A hole says which kind of hole it is.** `no_watch_data` and `not_asked`
+#    are the same absence on screen unless something insists otherwise, and
+#    they are opposite facts: one is a charger night, one is a rest day.
+# 3. **Nothing scores before its gate.** HRV without a fortnight behind it
+#    reports `no_baseline`, not a number computed off four mornings.
+
+
+def zone_input(score, key):
+    return next(item for item in score.inputs if item.key == key)
+
+
+def states(score):
+    return {item.key: item.state for item in score.inputs}
+
+
+# -- how a bar is folded together -------------------------------------------
+
+
+def test_a_bar_is_the_mean_of_whatever_scored():
+    """Equal weights, over the inputs that could speak. Two inputs at 80 and 40
+    is 60 whether or not the other four had anything to say."""
+    score = health.hydration_score(
+        fluid=2600.0,  # exactly the base target, nothing sweated: 100
+        sweat=None,
+        visits=[],
+        caffeine=0.0,  # nothing drunk: 100
+        alcohol=None,
+        today=TODAY,
+    )
+    assert score.value == 100.0
+    assert states(score)["urine"] is InputState.not_logged
+    assert states(score)["alcohol"] is InputState.not_logged
+
+
+def test_a_bar_with_nothing_behind_it_is_none_and_never_zero():
+    """The distinction the whole rail rests on. An empty bar and a bar at zero
+    are the same picture, and they are opposite facts -- one is a watch that
+    said nothing and one is a week that went badly."""
+    score = health.hydration_score(None, None, [], None, None, TODAY)
+    assert score.value is None
+    assert all(item.value is None for item in score.inputs)
+
+
+def test_a_finished_bar_says_nothing_about_itself():
+    """`note` names what is missing, and goes unsaid when nothing is. A panel
+    that annotates a complete answer is a panel you learn to skim."""
+    complete = health.fuel_score(days_of_meals(7), balance=-400.0, today=TODAY)
+    assert complete.note is None
+
+    partial = health.fuel_score(days_of_meals(7), balance=None, today=TODAY)
+    assert partial.note is not None
+    assert "energy balance" in partial.note
+
+
+# -- recovery ---------------------------------------------------------------
+
+
+def test_recovery_scores_off_the_check_in_alone_in_week_one():
+    """The state this panel will actually be in for a month.
+
+    HRV and resting heart rate need a fortnight of their own before they mean
+    anything, and until the watch has been worn that long they must report
+    `no_baseline` rather than a number. The morning check-in has been kept for
+    months, so it is what the bar stands on meanwhile -- which is the whole
+    reason it is an input at all.
+    """
+    score = health.recovery_score(
+        hrv=scalars([50.0] * 4),
+        rhr=scalars([48.0] * 4),
+        sleep_score=[],
+        battery=[],
+        stress=[],
+        readiness=[readiness(0, 4)],
+        today=TODAY,
+    )
+    assert states(score)["hrv"] is InputState.no_baseline
+    assert states(score)["rhr"] is InputState.no_baseline
+    # 20 of 25, x4.
+    assert score.value == 80.0
+    assert "not enough history yet" in score.note
+
+
+def test_a_night_on_the_charger_is_not_the_same_absence_as_a_young_series():
+    """[PART 5] The one distinction the deletions made load-bearing. With the
+    laptop's boxes gone a missing reading is a hole rather than a hand entry
+    that may still arrive, and blaming the watch for the calendar -- or the
+    calendar for the watch -- is how a panel stops being read."""
+    mature = scalars([50.0, 55.0, 45.0, 52.0, 48.0] * 4)
+    charger = [point for point in mature if point[0] != TODAY]
+
+    score = health.recovery_score(charger, charger, [], [], [], [], TODAY)
+    assert states(score)["hrv"] is InputState.no_watch_data
+
+    young = health.recovery_score(scalars([50.0] * 4), [], [], [], [], [], TODAY)
+    assert states(young)["hrv"] is InputState.no_baseline
+
+
+def test_stress_is_scored_upside_down_from_how_garmin_reports_it():
+    """Garmin's scale counts up in the thing you do not want; every bar on this
+    rail counts up in the thing you do. A stress of 20 is a calm day."""
+    score = health.recovery_score([], [], [], [], scalars([20.0]), [], TODAY)
+    assert zone_input(score, "stress").value == 80.0
+
+
+def test_the_check_in_and_the_watch_are_allowed_to_disagree():
+    """Both are inputs and neither corrects the other. A sleep score of 88
+    beside a wretched check-in is the diagnostic -- see the KEEP note in the
+    check-in's own questions -- and averaging them into one number without
+    showing both would be the panel hiding its most interesting morning."""
+    score = health.recovery_score(
+        hrv=[],
+        rhr=[],
+        sleep_score=scalars([88.0]),
+        battery=[],
+        stress=[],
+        readiness=[readiness(0, 1)],  # 5 of 25: the worst morning available
+        today=TODAY,
+    )
+    assert zone_input(score, "sleep_score").value == 88.0
+    assert zone_input(score, "checkin").value == 20.0
+    assert score.value == pytest.approx(54.0)
+
+
+def test_a_reading_is_printed_beside_every_normalised_bar():
+    """The half a 0-100 throws away. A 34 you can't check is a 34 you either
+    believe or ignore."""
+    mature = scalars([50.0, 55.0, 45.0, 52.0, 48.0] * 4)
+    score = health.recovery_score(mature, [], [], [], [], [], TODAY)
+    assert "against a" in zone_input(score, "hrv").reading
+
+
+# -- load -------------------------------------------------------------------
+
+
+def test_an_unwritten_week_is_not_a_failure_to_train():
+    """`not_asked`, not zero.
+
+    Eleven of the camp's twenty-eight weeks have no block written for them, and
+    scoring those at zero would have a quarter of the year read as three months
+    of not training. A week that prescribed nothing is a week you cannot fail.
+    """
+    score = health.load_score(daily(30), plan_open=0, plan_total=0, jump=[], today=TODAY)
+    assert states(score)["prescribed"] is InputState.not_asked
+    assert zone_input(score, "prescribed").value is None
+
+
+def test_the_prescription_scores_as_the_weeks_fraction_logged():
+    """A week's blocks, not a day's — `state.health_panel` sums the last seven
+    prescriptions before handing them over.
+
+    Daily was the first version and it was wrong in a way the panel showed
+    immediately: with the other three inputs still behind their history gates,
+    the bar *was* this number, and at nine on a Tuesday it read 0 next to a
+    week's load of 1356.
+    """
+    score = health.load_score(daily(30), plan_open=3, plan_total=12, jump=[], today=TODAY)
+    assert zone_input(score, "prescribed").value == 75.0
+    assert "9 of 12" in zone_input(score, "prescribed").reading
+
+
+def test_the_vertical_jump_never_gates_the_load_bar():
+    """It is measured every six weeks and the bar is read every morning. Below
+    ten points it reports `no_baseline` and contributes nothing -- and the bar
+    is a number regardless, which is the property being pinned."""
+    thin = [(TODAY - dt.timedelta(days=42 * n), 28.0) for n in range(3)]
+    score = health.load_score(daily(30), plan_open=0, plan_total=9, jump=thin, today=TODAY)
+    assert states(score)["vert_jump"] is InputState.no_baseline
+    assert score.value is not None
+
+
+def test_a_workload_ratio_inside_the_band_is_a_hundred():
+    """The band is a *range*, so both a spike and a deload are departures from
+    it and an ordinary week is not 'only 80% right'."""
+    assert health._band_score(1.0, 0.8, 1.3, 0.4, 1.8) == 100.0
+    assert health._band_score(1.3, 0.8, 1.3, 0.4, 1.8) == 100.0
+    assert health._band_score(1.8, 0.8, 1.3, 0.4, 1.8) == 0.0
+    assert health._band_score(0.4, 0.8, 1.3, 0.4, 1.8) == 0.0
+
+
+def test_load_says_nothing_at_all_in_week_one():
+    """Every one of its inputs is behind a history gate except the plan, so a
+    fortnight in the bar is the prescription and nothing else."""
+    score = health.load_score(daily(3), plan_open=0, plan_total=9, jump=[], today=TODAY)
+    assert states(score)["acwr"] is InputState.no_baseline
+    assert states(score)["monotony"] is InputState.no_baseline
+    assert score.value == 100.0
+
+
+# -- fuel -------------------------------------------------------------------
+
+
+def test_a_cut_inside_the_band_scores_full_and_a_surplus_does_not():
+    """The one number on the rail with a target rather than a baseline, and the
+    target is a judgement about *this* camp: a surplus is wrong, and so is a
+    hole big enough to cost training."""
+    meals = days_of_meals(7)
+    assert health.fuel_score(meals, -400.0, TODAY).inputs[0].value == 100.0
+    assert health.fuel_score(meals, -750.0, TODAY).inputs[0].value == 100.0
+    assert health.fuel_score(meals, 750.0, TODAY).inputs[0].value == 0.0
+    assert health.fuel_score(meals, -1500.0, TODAY).inputs[0].value == 0.0
+
+
+def test_a_week_with_meals_missing_scores_as_a_week_with_meals_missing():
+    """The reason this input exists. A balance computed off a log with holes in
+    it does not read as incomplete, it reads as a light week, and
+    `implied_lb_per_week` believes it -- so the completeness of the log is
+    scored beside the conclusion drawn from it."""
+    full = health.fuel_score(days_of_meals(7), -400.0, TODAY)
+    thin = health.fuel_score(days_of_meals(7, per_day=1), -400.0, TODAY)
+    assert zone_input(full, "meals").value == 100.0
+    assert zone_input(thin, "meals").value == pytest.approx(33.3, abs=0.1)
+    assert thin.value < full.value
+
+
+# -- hydration --------------------------------------------------------------
+
+
+def test_the_fluid_target_moves_with_what_was_sweated_out():
+    """The whole argument for `sweat_loss_ml` replacing the watch's glyph.
+
+    The drink log spent a paragraph refusing to invent a hydration target, on
+    the grounds that a number you hit by logging teaches you to log. What
+    answers that is a target that is not invented: two litres on a rest day and
+    the same two litres after a hard spar are different days, and now they
+    score differently without anybody having decided that they should.
+    """
+    rest = health.hydration_score(2600.0, None, [], None, None, TODAY)
+    sparred = health.hydration_score(2600.0, 1300.0, [], None, None, TODAY)
+    assert zone_input(rest, "fluid").value == 100.0
+    assert zone_input(sparred, "fluid").value == pytest.approx(66.7, abs=0.1)
+    assert "sweated" in zone_input(sparred, "fluid").reading
+
+
+def test_urine_colour_is_scored_off_days_dense_enough_to_ask():
+    """`day_darkness` throws the first void of each day away -- it is
+    concentrated on everybody -- so a day with one reading contributes nothing
+    rather than contributing a bad one."""
+    one_each = [visit(n, 7) for n in range(7)]
+    assert health._week_darkness(one_each, TODAY) is None
+
+    dark = [log for n in range(7) for log in day_of_urine(n, "light", "darker", "darker")]
+    assert health._week_darkness(dark, TODAY) == 4.0
+    score = health.hydration_score(None, None, dark, None, None, TODAY)
+    assert zone_input(score, "urine").value == 0.0
+
+
+# -- the two slow trends ----------------------------------------------------
+
+
+def test_vo2max_is_the_last_reading_on_file_not_todays():
+    """The one number on this tab deliberately exempt from "today or nothing".
+    It only updates after an outdoor run with heart rate, so today-or-nothing
+    would blank it about twenty-eight days in thirty -- and the date comes back
+    with it so the panel can say how old it is rather than implying it is
+    fresh."""
+    points = [(TODAY - dt.timedelta(days=9), 52.4)]
+    latest, when, change = health.vo2max_trend(points, TODAY)
+    assert latest == 52.4
+    assert when == TODAY - dt.timedelta(days=9)
+    assert change is None
+
+
+def test_a_vo2max_change_needs_two_readings_far_enough_apart():
+    """This estimate moves by fractions. A week-on-week difference is noise
+    with a sign on it, and printing it as a direction would have the panel
+    announce a trend every time it rained."""
+    near = [(TODAY - dt.timedelta(days=n), 52.0 + n * 0.1) for n in (5, 0)]
+    assert health.vo2max_trend(near, TODAY)[2] is None
+
+    apart = [(TODAY - dt.timedelta(days=80), 50.0), (TODAY, 52.5)]
+    assert health.vo2max_trend(apart, TODAY)[2] == pytest.approx(2.5)
+
+
+def test_no_readings_at_all_is_none_rather_than_a_zero_trend():
+    assert health.vo2max_trend([], TODAY) is None

@@ -22,21 +22,19 @@
 //
 // Shift is not in that list either, because Shift-Tab is a binding.
 //
-// `b` and `m` are the two bindings here that do not merely move the focus
-// ring: they switch section, land on a logging panel and start its ladder, all
-// on one press. That is a deliberate exception to how everything else in this
-// table behaves, and it is bought by the same argument the panels themselves
-// are built on — a meal log that costs a tab switch, four arrow keys and an
-// Enter is a meal log kept for nine days. The rest of the day's work is
-// something you sit down to; these two are answered on the way past.
+// The table used to carry `b` and `m`, which did not merely move the focus
+// ring: each switched section, landed on a logging panel and started its
+// ladder on one press. Both are gone with the panels they reached — logging
+// happens on the phone now — and nothing here writes anything any more. Every
+// binding below moves the ring, switches a view, or opens a thing to read.
 
 import { capturing, endCapture, takeKey } from "./capture.js";
-import { JUMPS, takeArrow, takeHoverKey } from "./carousel.js";
 import { chipTasks, openNextUnfinished, required, score } from "./chips.js";
 import { $, el } from "./dom.js";
 import * as nav from "./nav.js";
 import { nudgeCount, openNudge } from "./nudges.js";
-import { focusPanel, panelEnter, panelKey, quickStart } from "./panel.js";
+import { focusPanel, panelEnter, panelKey } from "./panel.js";
+import { ZOOMS, zoom } from "./panels/health.js";
 import { splashOpen } from "./splash.js";
 import { TABS, activateNth, cycle } from "./tabs.js";
 import { openModal, toast } from "./ui.js";
@@ -132,16 +130,6 @@ const BINDINGS = [
     },
   },
   {
-    keys: ["1", "…", "5"],
-    hint: "on the check-in and the session log: answer the highlighted row and "
-      + "drop to the next one · esc gives the digits back to the tabs",
-    // Dispatched by the capture layer, ahead of the table. Listed here because
-    // the sheet is the map, and a mode whose keys are undocumented is one you
-    // will not use twice.
-    match: () => false,
-    run: () => {},
-  },
-  {
     keys: ["i"],
     hint: "type in this panel's first text box · tab walks the rest of them",
     match: (e) => e.key === "i",
@@ -150,20 +138,10 @@ const BINDINGS = [
   {
     keys: ["f"],
     hint: "letter every link in this panel, then press its letter to open it "
-      + "· c d l m p select one of the logging card's five tabs, which print "
-      + "their letter · a digit opens that numbered notification",
+      + "· c l m d expand one of the health rail's four scores in place, and "
+      + "print their letter · a digit opens that numbered notification",
     match: (e) => e.key === "f",
     run: () => nav.hint(nudgeCount()),
-  },
-  {
-    keys: ["←", "→"],
-    hint: "step the logging card to the tab beside this one, once the ring is "
-      + "on it — f and a letter go straight to one · it stops turning by "
-      + "itself whenever it is lit: hovered, held, or being filled in",
-    // Dispatched ahead of the table, like the capture and the hints. Listed
-    // here because the sheet is the map.
-    match: () => false,
-    run: () => {},
   },
   {
     keys: ["gg", "G"],
@@ -189,12 +167,6 @@ const BINDINGS = [
     run: () => {
       if (!openNextUnfinished()) toast("everything is done — nice day ✦", "info");
     },
-  },
-  {
-    keys: ["m"],
-    hint: "log a meal from wherever you are — size, then how processed",
-    match: (e) => e.key === "m",
-    run: () => quickStart("meals"),
   },
   {
     keys: ["?"],
@@ -360,14 +332,19 @@ export function initKeys() {
         openNudge(Number(key));
         return;
       }
-      // Five letters are the carousel rather than a link, and `nav` has been
-      // told not to paint them, so the two can never mean the same key.
-      // `focusPanel` rather than `quickStart`: `f c` is "show me the
-      // check-in", and starting its ladder as well would be answering a
-      // question you had only asked to look at.
-      if (JUMPS[key]) {
+      // Five letters open a health score rather than a link, and `nav` has
+      // been told not to paint them, so the two can never mean the same key.
+      //
+      // They are the logging carousel's own letters, inherited when that card
+      // was deleted — see `ZONES` in panels/health.js for why reusing them was
+      // the cheap answer and picking mnemonic ones was not. `focusPanel` goes
+      // first, so `f l` works from the maths tab: the zoom is on a card you
+      // may not be looking at, and expanding something off screen is the same
+      // as doing nothing.
+      if (ZOOMS[key]) {
         nav.exitHints();
-        focusPanel(JUMPS[key]);
+        zoom(ZOOMS[key]);
+        focusPanel("health");
         return;
       }
       if (/^[a-z]$/i.test(key)) nav.takeHint(key);
@@ -375,33 +352,15 @@ export function initKeys() {
       return;
     }
 
-    // The arrows steer the logging card, and only while the ring is on it.
-    // Ahead of the table because the table has no entry for them and the
-    // browser would otherwise scroll the pane sideways.
-    if (takeArrow(e)) {
-      e.preventDefault();
-      return;
-    }
-
     // A key the focused panel would have taken *after* an Enter takes it
-    // without one: pressing `b` on the session log starts it on boxing,
-    // rather than starting it on nothing and waiting to be told again.
-    //
-    // Offered after the hints and the arrows and before the table, which is
-    // the one ordering that works: a panel may claim any key the table has
-    // not already spent on *going somewhere else*. Panels enforce that half
-    // themselves — see `RESERVED` in panel.js — because the rule is about
-    // which keys are safe to claim, and that is one fact rather than six.
+    // without one. No panel claims one today — the five that did were the
+    // logging cards — but the ordering is the part that was hard to get right:
+    // after the hints and before the table, so a panel may claim any key the
+    // table has not already spent on *going somewhere else*. Panels enforce
+    // that half themselves, through `RESERVED` in panel.js, because the rule
+    // is about which keys are safe to claim and that is one fact rather than
+    // one per panel.
     if (panelKey(e)) {
-      e.preventDefault();
-      return;
-    }
-
-    // The carousel's own letters, while the pointer is on the card. After the
-    // focused panel and before the table: a panel you have selected outranks a
-    // card you are merely pointing at, and the table's own meanings for these
-    // letters are exactly what pointing at the card is meant to override.
-    if (takeHoverKey(e)) {
       e.preventDefault();
       return;
     }

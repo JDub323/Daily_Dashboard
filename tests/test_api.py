@@ -1804,10 +1804,25 @@ def test_a_typed_reading_is_not_reported_as_synced(client, repo):
     assert panel["synced_today"] == ["hrv"]
 
 
-def test_the_sync_endpoint_says_so_when_the_feature_is_off(client):
+def test_the_sync_endpoint_says_so_when_the_feature_is_off(settings):
     """409 with a sentence rather than a silent no-op: the button is only ever
-    pressed by somebody who expected numbers."""
-    response = client.post("/api/garmin/sync", json={"date": DATE})
+    pressed by somebody who expected numbers.
+
+    Builds its own disabled app rather than taking the `client` fixture. That
+    fixture reads the real `config.toml`, which had `[garmin] enabled = false`
+    until the watch was on the wrist -- so this test passed on a premise it
+    never stated, and turning the feature on for real broke a test about the
+    feature being off. A test about a switch sets the switch.
+    """
+    from fastapi.testclient import TestClient
+
+    from dashboard.server import create_app
+
+    off = settings.model_copy(
+        update={"garmin": settings.garmin.model_copy(update={"enabled": False})}
+    )
+    with TestClient(create_app(off), raise_server_exceptions=False) as client:
+        response = client.post("/api/garmin/sync", json={"date": DATE})
     assert response.status_code == 409
     assert "config.toml" in response.json()["error"]
 

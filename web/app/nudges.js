@@ -29,10 +29,15 @@
 //   finished.
 //
 //   **Every one of them is a door.** Clicking a nudge goes to the panel it is
-//   about — through `focusPanel`, so it crosses sections, stops the logging
-//   carousel on the right card, and lands the focus ring there. A notification
-//   that tells you about a thing and then makes you go and find it has spent
-//   your attention and given nothing back for it.
+//   about — through `focusPanel`, so it crosses sections and lands the focus
+//   ring there. A notification that tells you about a thing and then makes you
+//   go and find it has spent your attention and given nothing back for it.
+//
+//   Three of these doors now open onto a panel that takes no input, because
+//   the check-in and the meal log moved to the phone. The reminder is still
+//   worth having — it is the *noticing* that was the point, and the laptop is
+//   where you are when you fail to notice — and the door still lands on the
+//   card that will stop saying you are owed once the phone has been used.
 //
 // --- why not the toast -------------------------------------------------------
 //
@@ -108,7 +113,11 @@ const lastShown = (id) => memory().at[id] ?? 0;
 const RULES = [
   {
     id: "checkin",
-    panel: "checkin",
+    // The health panel, which is where the *answer* shows up — the check-in
+    // itself is answered on the phone now. Every door on this shelf still
+    // opens, and this one opens onto the thing that is waiting rather than
+    // onto a form.
+    panel: "health",
     // Late enough that a slow morning is not a failure, early enough that the
     // weight is still a fasted one and the sleep is still last night's.
     after: 10,
@@ -137,7 +146,7 @@ const RULES = [
     ["dinner", 21],
   ].map(([meal, at], i) => ({
     id: `meal-${meal}`,
-    panel: "meals",
+    panel: "health",
     after: at,
     // Once each. Three named reminders that all repeat would be nine a day by
     // bedtime, and the third one is not more persuasive than the first.

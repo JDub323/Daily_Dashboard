@@ -1,6 +1,5 @@
 // The panel harness: mount, render, and turn a thrown error into a retry.
 
-import * as carousel from "./carousel.js";
 import { el, mount } from "./dom.js";
 import { focusPanelNode, focusedPanel, repaint } from "./nav.js";
 import { activate, slotNode } from "./tabs.js";
@@ -115,21 +114,11 @@ export function mountAll() {
 
     const body = el("div.body");
     card.append(...(head ? [head] : []), body);
-    // A hosted panel goes into the rotation rather than into the grid. The
-    // shell is built on the first one, which lands it exactly where that
-    // panel would have gone — so the layout is still decided by the order in
-    // main.js and there is no second table saying where the widget sits.
-    if (def.host) {
-      carousel.slot(slotNode(def.tab, def.slot)).append(card);
-      carousel.addSlide(def.id, card, def.title ?? def.id);
-    } else {
-      slotNode(def.tab, def.slot).append(card);
-    }
+    slotNode(def.tab, def.slot).append(card);
     def.node = body;
     def.card = card;
     draw(def);
   }
-  carousel.startCarousel();
 }
 
 // --- collapsing a finished panel -------------------------------------------
@@ -167,11 +156,6 @@ export function focusPanel(id) {
   const def = registry.get(id);
   if (!def?.card) return;
   activate(def.tab);
-  // Before anything below touches the card: a slide that is not the one
-  // showing is `hidden`, and a hidden card can neither take the focus ring
-  // nor be scrolled to. Asking for one of the four *is* asking the rotation
-  // to stop on it.
-  carousel.reveal(id);
   // Asking for a panel is asking to see it. Scrolling to a one-line summary
   // and flashing its border would be the shortcut appearing not to work, so a
   // collapsed panel opens — and counts as manual, since you asked for it.
@@ -217,24 +201,18 @@ export function panelEnter() {
  * stops working you are stuck on a panel with no way off it but Alt-hjkl,
  * which is the key you press when something has already gone wrong.
  *
- * The two casualties are worth naming, because both look like omissions:
+ * The **digits** are in here and are the interesting entry, because they are
+ * the one exclusion that has cost something real. They are the section
+ * switches, printed on the tabs, and a `3` that means one thing on one card
+ * and "go to maths" on every other is the exact hazard `capture.js` exists to
+ * avoid. It is what kept the check-in's ladder behind an Enter for as long as
+ * the check-in was on this machine, and it is why the health tab's four zooms
+ * are reached with `f` and a letter rather than with a digit — `f`-then-digit
+ * was already spent on the notification stack, and a bare digit was never
+ * available to spend.
  *
- *   - `l` cannot start a **l**arge meal, so that one still costs the `m` that
- *     brings you here first. Not a regression — `m` `l` is the same two
- *     keystrokes `Enter` `l` was.
- *   - the **digits** cannot start the check-in, which is the bigger loss and
- *     the easier call. They are the section switches, printed on the tabs, and
- *     a `3` that means "fatigue 3" on one card and "go to maths" on every
- *     other one is the exact hazard `capture.js` was written to avoid. Once
- *     the ladder is up the capture owns them properly, and it is one Enter
- *     away.
- *
- * `m` is deliberately *not* here, though it is a global binding. It takes you
- * to the meal log — so on every card but that one it is a key that moves you
- * and the panel has no claim on it, which is what the list is protecting. On
- * the meal log itself there is nowhere left to go, and `m` is that panel's own
- * word for *minus an hour*. Leaving it out of the set is what lets the card
- * under the ring win, and nothing else claims `m`, so nowhere else changes.
+ * `m` came out of this set when the meal log claimed it as *minus an hour*,
+ * and stays out now that both are gone. Nothing claims it, so nothing changes.
  */
 const RESERVED = new Set(["h", "j", "k", "l", "i", "f", "g", "G", "n", "?", "/"]);
 
@@ -242,10 +220,17 @@ const RESERVED = new Set(["h", "j", "k", "l", "i", "f", "g", "G", "n", "?", "/"]
  * Offer a key to the focused panel, ahead of the global table.
  *
  * A panel may export `onKey(event)`, returning true for a key it consumed.
- * That is the "one keystroke, not two" rule: the six session kinds and the
- * first rung of either quick log start their ladder *and* answer with it,
- * where before they needed an Enter to open the ladder and then the same key
+ * That was the "one keystroke, not two" rule — the six session kinds and the
+ * first rung of either quick log started their ladder *and* answered with it,
+ * where before each needed an Enter to open the ladder and then the same key
  * again.
+ *
+ * **No panel exports one today.** All five that did were the laptop's logging
+ * cards, and they are on the phone now. The hook stays because it is the
+ * harness's, not theirs: `keys.js` offers every key here before the bindings
+ * table sees it, and that ordering — after the hints and the panel ring,
+ * before the globals — is the part that was hard to get right and is worth
+ * keeping correct for the next card that wants it.
  *
  * Never while a capture is running — a panel that is already filling something
  * in is served by `takeKey`, and this would be a second, competing route to
@@ -260,25 +245,6 @@ export function panelKey(event) {
     if (def.card?.id === cardId) return Boolean(def.onKey?.(event));
   }
   return false;
-}
-
-/**
- * Show a panel *and* start it: the one-keystroke path to a log entry.
- *
- * `focusPanel` then `onEnter`, in that order and never the reverse — switching
- * section ends any capture that was running (see `capture.js`), so a ladder
- * begun before the move would be torn down by the move itself.
- *
- * This is what makes `b` and `m` work from the markets tab. Everything else in
- * the app reaches a panel and then asks you to press Enter; the two quick logs
- * cannot afford the second keystroke, because their whole claim is that an
- * entry costs about as much as not bothering.
- */
-export function quickStart(id) {
-  const def = registry.get(id);
-  if (!def?.card) return false;
-  focusPanel(id);
-  return Boolean(def.onEnter?.());
 }
 
 export function markDone(id, done) {

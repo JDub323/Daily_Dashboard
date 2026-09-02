@@ -179,10 +179,7 @@ body::before {
    card in a 600px pane is 200px wide. Halves, then singles. */
 @media (max-width: 1000px) {
   .grid { grid-template-columns: repeat(2, 1fr); }
-  /* The logging carousel is a grid item without being a `.panel` -- see
-     carousel.js -- so it has to be named beside them wherever spans are
-     decided, or it keeps a six-column span in a two-column grid. */
-  .grid > .panel, .grid > .cyc { grid-column: span 1; }
+  .grid > .panel { grid-column: span 1; }
   /* Heroes stack rather than halving. Half of a 900px pane is 450px, and the
      year heatmap alone is most of that by December. */
   .pane > .hero { grid-template-columns: 1fr; }
@@ -719,8 +716,6 @@ kbd { font: inherit; font-size: var(--t-meta); border: 1px solid var(--border); 
 #toast.info { border-color: var(--accent-dim); }
 
 /* ---- charts ---- */
-.chart-block { margin: var(--s2) 0 var(--s1); }
-.chart-title { font-size: var(--t-meta); color: var(--dim); display: flex; justify-content: space-between; }
 /* `display: block` is load-bearing, not tidiness: an inline SVG is a
    non-replaced inline box, and ResizeObserver silently declines to observe
    those — no callback, ever, not even the initial one. `charts.js` fits its
@@ -728,118 +723,29 @@ kbd { font: inherit; font-size: var(--t-meta); border: 1px solid var(--border); 
    would sit at its fallback 300px forever on a 547px card. */
 .line-chart { display: block; width: 100%; max-height: 80px; }
 svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(--faint); }
-/* Two charts side by side on the training hero, stacking under ~560px —
-   they answer different questions and are never compared to each other. */
-.chart-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--s4); }
-.load-bars { width: 100%; max-height: 60px; }
+/* The daily-load bars, now the last thing on the health card rather than half
+   of a two-chart row. Shorter than they were: at the foot of a panel that has
+   to fit one screen this is a *shape* — where the rest days fell — and not a
+   chart anybody reads a value off. */
+.load-bars { width: 100%; max-height: 40px; }
 
-/* ---- the logging carousel ----
-   One card in the health grid holding four, showing one. The shell carries the
-   border and the padding; the cards inside give both up, or every slide would
-   be a panel drawn inside a panel. */
-/* Painted as a panel without being one — see carousel.js on why it must not
-   carry the class. Everything `.panel` gives it is repeated here rather than
-   shared, because the two are the same *look* and not the same thing: this
-   is a frame around cards, and the cards are what the focus ring addresses. */
-.cyc { position: relative; background: var(--panel); border: 1px solid var(--border);
-       border-radius: var(--r-md); padding: var(--s4);
-       display: flex; flex-direction: column; gap: var(--s2); }
-.grid > .cyc { grid-column: span var(--span, 3); }
-.cyc > .cyc-track > .panel {
-  background: transparent; border: none; padding: 0; box-shadow: none;
-}
+/* ---- health: one panel, three zones ----
+   The tab is a single hero card now, and the budget it is built against is one
+   1080p screen with no scrolling. That is not a stylistic preference — the
+   panel's whole claim is that you can read the state of the day at a glance,
+   and a glance does not include a scroll. Everything below is sized against
+   that: the rail is 40px a row, the zoom expands *inside* the rail rather than
+   pushing it down the page, and the verdicts are the only block allowed to
+   grow, because they are the only block that says something you did not know.
 
-/* ---- lit means still ----
-   The ring still *lands* on the slide — it is the slide, not the shell, that
-   owns the keyboard — but it is drawn on the shell. A ring around the inner
-   card was a box inside a box: it lit a sub-cell of a cell, when what you have
-   selected is the whole cell and everything on it.
+   What used to be here: a plan card, five logging cards in a rotating shell,
+   and a strip of overnight numbers. All three are gone — the logs to the
+   phone, the strip into the recovery zoom. */
 
-   Hover gets the same treatment one step dimmer, and that is the point of the
-   pair. All three things that stop the rotation — the pointer, the ring, a
-   capture running inside — now say so, where before the card simply stopped,
-   and a widget that stops for no visible reason reads as a broken one. One
-   rule to hold: a lit cell is a still cell.
-
-   `:has` because nav.js puts the class on the slide and knows nothing about
-   the shell; this is the shell answering for its own contents. */
-.cyc:hover, .cyc:focus-within {
-  border-color: var(--accent-dim); box-shadow: 0 0 0 1px var(--accent-dim);
-}
-.cyc:has(> .cyc-track > .panel.nav-panel) {
-  border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent);
-}
-/* All four in the same cell, so the shell is as tall as the tallest and does
-   not resize as it turns. `visibility` and not `display`, or the three that
-   are off screen would contribute no height and we would be back to a card
-   that jumps 200px every three seconds. */
-.cyc-track { display: grid; }
-.cyc-track > .panel { grid-area: 1 / 1; visibility: hidden; pointer-events: none; }
-.cyc-track > .panel.cyc-on { visibility: visible; pointer-events: auto; }
-
-/* The tab bar sits where a heading would, and is the same height as one, so
-   the four slides do not each start at a different y. */
-.cyc-bar { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap;
-           border-bottom: 1px solid var(--border-soft);
-           padding-bottom: var(--s2); margin-bottom: var(--s1); }
-/* `.tab` does all of the work — these *are* the section tabs, and everything
-   below is the four of them fitting inside a card rather than across a page.
-   Four dots and two chevrons answered "which of the four is showing" only for
-   somebody who already knew the order, and made choosing one a matter of
-   stepping past the ones you did not want. */
-.cyc > .cyc-bar > .tab { padding: var(--s1) var(--s2); letter-spacing: .12em; gap: var(--s1); }
-/* The documented fallback in addSlide: a hosted panel with no entry in `TABS`
-   gets a working tab rather than one carrying an empty key box. */
-.cyc > .cyc-bar > .tab[data-key=""]::before { content: none; }
-
-/* ---- which of the four today still wants ----
-   The card shows one slide at a time, so without this the other three can only
-   be read by waiting for them. Gold and filled is done, hollow is owed, absent
-   is not asked of today at all — the in-and-out log has no target and never
-   carries one. */
-.cyc-mark {
-  width: 5px; height: 5px; border-radius: 50%; box-sizing: border-box;
-  border: 1px solid transparent; flex: none;
-}
-.cyc-mark[data-state="none"] { display: none; }
-.cyc-mark[data-state="owed"] { border-color: var(--dim); }
-.cyc-mark[data-state="done"] { border-color: var(--gold); background: var(--gold); }
-
-/* Cyan where the section tabs are gold, and the dot above is why. Gold means
-   *finished* everywhere in this app — it is what a done panel's border goes,
-   and it is now what a done tab's dot is — so a gold selection sitting two
-   pixels from a gold completion would be one colour saying two things. Which
-   tab you are on is a statement about where the cursor is, and cyan is what
-   that means: the focus ring, the item ring, every link. The bar upstairs can
-   keep gold because nothing on it is ever finished. */
-.cyc > .cyc-bar > .tab.active {
-  color: var(--accent); border-color: var(--accent-dim);
-  background: linear-gradient(180deg, rgba(92,207,230,.12), rgba(92,207,230,.02));
-  box-shadow: inset 0 -2px 0 var(--accent), inset 0 1px 0 rgba(223,230,242,.10);
-}
-
-/* The rotation, made visible. Short and small — this is a card changing, not
-   a transition anybody should be waiting on, and at 5s dwell an animation of
-   any length is on screen a noticeable fraction of the time. */
-@keyframes cyc-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: none; }
-}
-.cyc-in { animation: cyc-in .22s ease-out; }
-
-@media (prefers-reduced-motion: reduce) {
-  .cyc-in { animation: none; }
-}
-
-/* ---- health: the readout and the two logging panels ---- */
-
-/* The verdicts. Body-sized rather than --t-meta on purpose: these are the
-   sentences the tab exists to produce, and the charts under them are the
-   supporting evidence, not the other way round. */
 /* ---- the camp ----
    The countdown reuses .figure-row wholesale, so "175 days out" is set in the
-   same type as "1420 load this week" — they are the same kind of fact and the
-   tab would read as two panels stapled together if they were not.
+   same type as every other hero figure in the app — they are the same kind of
+   fact, and the tab would read as two panels stapled together if they were not.
 
    .asks is one row per outing. The plain label sits left and the real name of
    the session sits right, dimmed: the left column is what you are being nudged
@@ -848,90 +754,128 @@ svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(-
 .asks { display: flex; flex-direction: column; gap: var(--s1); }
 .asks > .row { margin: 0; align-items: baseline; }
 
-/* ---- the day's cards ----
-   One card per outing. The border is what makes a practice's two rows read as
-   one thing you did rather than two things you owe — the whole argument for
-   putting them behind a single button. A finished card keeps its box and loses
-   its contents, so the column does not reflow as the evening goes on. */
-.plan-card { border: 1px solid var(--border-soft); border-radius: var(--r-md);
-             padding: var(--s2); margin-bottom: var(--s2);
-             display: flex; flex-direction: column; gap: var(--s1); }
-.plan-card.done { border-style: dashed; color: var(--dim); }
-.plan-card > .row { margin: 0; }
-.plan-row { display: flex; flex-direction: column; gap: 2px; }
-.plan-row .scale { margin: 0; }
-/* The minutes box sits beside a ten-button RPE row, so it must not flex with
-   it — a number box wide enough to hold "45" is wide enough. */
-.plan-row .mins { flex: 0 0 5.5em; }
+/* ---- the flag line ----
+   One line, under the hero and above the rule, and it currently always says
+   the same thing. Given room rather than tucked into the hero because what
+   goes here eventually is the sentence that would interrupt you — and a line
+   that appears in a place nothing has ever appeared before is a line you do
+   not see. It occupies its slot now so that it is already part of the shape
+   when it starts having something to say. */
+.flag { margin: var(--s2) 0 var(--s1); }
 
-/* ---- last night, as the watch measured it ----
-   A strip of small figures, not a row of .figure — these are readings the
-   panel is showing you, and the hero's one big number is the thing it is
-   telling you. Setting them at hero size would have five cheap numbers shout
-   louder than the sentence underneath, which is the failure mode this whole
-   tab was rewritten to avoid.
+/* ---- the rail ----
+   Four bars on the left, two trends on the right. `minmax(0, …)` on the first
+   column because a grid track defaults to `min-content` and a long absence
+   note — "no watch data: hrv, resting hr, sleep score" — would otherwise push
+   the trends off the card rather than wrapping.
 
-   auto-fit rather than a fixed count because the strip is as long as the
-   readings that exist: a night the watch spent on the charger renders two
-   cells, not five with dashes in them. */
-.scalars { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-           gap: var(--s2) var(--s3); margin: var(--s3) 0 var(--s2); }
-.scalar { display: flex; flex-direction: column; gap: 1px; }
-.scalar-value { font-size: var(--t-lede); font-variant-numeric: tabular-nums; }
-.scalar-label { font-size: var(--t-meta); color: var(--faint); letter-spacing: .04em; }
+   2fr/1fr rather than halves: the bars are the thing, and the trends are two
+   numbers that move about once a fortnight. */
+.rail { display: grid; grid-template-columns: minmax(0, 2fr) minmax(140px, 1fr);
+        gap: var(--s4) var(--s5); align-items: start; }
+.zones { display: flex; flex-direction: column; gap: var(--s2); }
 
+.zone { display: flex; flex-direction: column; gap: 2px; }
+
+/* The head is a button because it is one — `f`+letter and a click do the same
+   thing, and a div with an onclick is a control the keyboard cannot see. It
+   gives up every button style it would otherwise inherit: this is a row of
+   text with a number on the end of it, and a bordered box around each of the
+   four would make the rail read as a form. */
+.zone-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  width: 100%; background: none; border: none; padding: 0;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.zone-head:hover .zone-name { color: var(--accent); }
+/* The letter, printed on the control it operates — the same rule as the digit
+   on a section tab, and drawn the same way. A shortcut you have to look up is
+   one you never learn. */
+.zone-head::before {
+  content: attr(data-key);
+  color: var(--accent-dim); font-size: var(--t-meta);
+  margin-right: var(--s2); flex: none;
+}
+.zone-name { font-size: var(--t-meta); letter-spacing: .1em; text-transform: uppercase;
+             color: var(--dim); margin-right: auto; }
+/* Which single input a one-input zone is actually reporting. Lower case and
+   faint against the zone's own uppercase label, because it is a qualification
+   of that word and not a second one: `LOAD · plan logged` reads as one
+   heading, `LOAD PLAN LOGGED` reads as a zone nobody named properly.
+
+   The spacer moves from the name to this, so the two sit together and the
+   number stays hard right. `:has` rather than a modifier class on the name,
+   because whether it is there is a fact about the *score* and the panel
+   already decides it once. */
+.zone-only { margin-right: auto; margin-left: var(--s2); letter-spacing: 0; }
+.zone-head:has(.zone-only) .zone-name { margin-right: 0; }
+.zone-value { font-size: var(--t-lede); font-variant-numeric: tabular-nums; color: var(--fg); }
+
+/* Why the absence gets a line of its own rather than a dash in the number:
+   with the laptop's boxes deleted, a missing metric is a hole rather than
+   something you have not typed yet, and "no watch data: hrv" is a different
+   morning from "not logged: meals". A dash says neither. */
+.zone-note { line-height: 1.4; }
+
+/* The lit border for an open zoom, on the left, matching the ladder cursor
+   this card used to carry. Cyan because it means *current* — this is where you
+   are looking — and gold is spoken for by completion everywhere in the app. */
+.zone-open { border-left: 2px solid var(--accent); padding-left: var(--s2);
+             margin-left: calc(-1 * var(--s2) - 2px); }
+
+/* ---- the zoom ----
+   Each input of one zone, as its own small bar with the raw reading beside it.
+   Indented under the score it belongs to, and capped in height with its own
+   scroll: six inputs at 26px is 156px, which fits, but nothing here should be
+   able to push the verdicts off a 1080p screen if a reading ever runs long. */
+.zoom { margin: var(--s2) 0 var(--s1); display: flex; flex-direction: column; gap: var(--s2);
+        max-height: 200px; overflow-y: auto; }
+.zoom-row { display: flex; flex-direction: column; gap: 1px; }
+.zoom-row > .row { margin: 0; }
+/* A rule rather than an empty track. An unfilled bar reads as a zero at a
+   glance and a zero is a measurement — which is the exact confusion the whole
+   `InputState` vocabulary exists to prevent. */
+.bar-absent { background: none; border-bottom: 1px dashed var(--border); height: 0; }
+
+/* ---- the two slow trends ----
+   Not bars, and they are set apart rather than beside them so that is obvious.
+   Neither weight nor VO2max has a 0-100 direction without a target and nobody
+   has set one — a weight of 172 is not 60% of anything. So they are a figure
+   and a direction, which is all either supports.
+
+   --t-display rather than --t-hero: the hero number on this card is the
+   countdown, and two things at 44px is neither of them being the hero. */
+.trends { display: flex; flex-direction: column; gap: var(--s4); }
+.trend { display: flex; flex-direction: column; gap: 1px; }
+.trend-head { letter-spacing: .1em; text-transform: uppercase; }
+.trend > .figure-row { margin: 0; }
+.trend-value { font-size: var(--t-display); line-height: 1.1;
+               font-variant-numeric: tabular-nums; color: var(--fg); }
+
+/* Under the six-column width the rail stacks. The trends go below the bars
+   rather than beside them at half the room: two 32px figures in a 120px
+   column wrap their units onto a second line and read as broken. */
+@media (max-width: 1000px) {
+  .rail { grid-template-columns: 1fr; }
+  .trends { flex-direction: row; gap: var(--s5); }
+}
+
+/* ---- the verdicts ----
+   Body-sized rather than --t-meta on purpose: these are the sentences the tab
+   exists to produce, and everything above them is the state they are drawn
+   from. The rail says what is true; these say the handful of things worth
+   interrupting you about, and a sentence still beats a bar for anything that
+   took three days in a row to become true. */
 .verdicts { margin: var(--s3) 0 var(--s2); display: flex; flex-direction: column; gap: var(--s2); }
 .verdict-line { line-height: 1.55; border-left: 2px solid var(--border); padding-left: var(--s3); }
 .verdict-line.bad { border-left-color: var(--bad); }
 .verdict-line.dim { border-left-color: var(--border); color: var(--dim); }
 
-/* A 1–5 or 1–10 row. Wraps rather than scrolls: on a narrow window a second
-   line of buttons is fine, and a scroller hides the 5 you were reaching for. */
-.scale { display: flex; flex-wrap: wrap; gap: var(--s1); margin: var(--s1) 0 var(--s3); }
-.scale > button { flex: 1 1 auto; min-width: 2.2em; }
-/* Cyan, not gold: an answered item is *current*, not finished. Gold has one
-   job in this app and it is completion — the chip going gold is the day's
-   check-in being done, which is a different statement from "you tapped 4". */
-.scale > button.on { border-color: var(--accent-dim); color: var(--accent); background: var(--panel2); }
-.scale-row { margin-bottom: var(--s1); }
-.scale-row > .row { margin: 0; }
-
-/* The row the keyboard is on while a panel is filling itself in — the ladder
-   cursor. Cyan and a left bar rather than the item ring: this is a cursor
-   *inside* a card, and boxing the whole row in an outline read as a second
-   focused panel sitting inside the focused one.
-
-   The negative margin cancels the padding, so the labels stay on the same
-   left edge whether or not the row is current — a cursor that shifts the text
-   it lands on is a cursor you notice for the wrong reason. */
-.scale-row.on-row, .scale.on-row {
-  border-left: 2px solid var(--accent);
-  padding-left: var(--s2);
-  margin-left: calc(-1 * var(--s2) - 2px);
-}
-
-/* The letter that picks a session kind, printed on the button — same argument
-   as the digit on a tab: a shortcut you have to look up is one you never
-   learn. */
-button.tiny.keyed::before { content: attr(data-key) " "; color: var(--accent-dim); }
-
-/* The one typed answer in a quick log — the drink amount. Sized to the number
-   rather than stretched like the buttons beside it: a box four characters wide
-   says "1.5 goes here" without a placeholder having to, and one that filled
-   the row would read as a note field and get sentences typed into it.
-
-   It keeps the row's baseline (`align-items` on `.scale` is the default
-   stretch, which would make a lone input as tall as nothing at all) and the
-   unit sits after it in the same line, so the row reads `[1.5] drinks`. */
-.scale > input.qlog-field {
-  flex: 0 0 auto;
-  width: 4.5em;
-  text-align: right;
-  font-size: var(--t-meta);
-  padding: 1px var(--s1);
-}
-.scale > input.qlog-field:focus { outline: 1px solid var(--accent-dim); outline-offset: -1px; }
-.scale > input.qlog-field + .faint { align-self: center; }
+/* The foot: the week's load and when the watch last spoke. Both are footnotes
+   — the first is a number the rail already scores, and the second is only ever
+   read on a morning something is missing. */
+.foot { margin-top: var(--s3); padding-top: var(--s2);
+        border-top: 1px solid var(--border-soft); }
 
 /* ---- wordle / pokedoku trophy grids ---- */
 .wgrid { display: inline-grid; grid-template-columns: repeat(5, 16px); gap: 2px; margin: var(--s1) var(--s2) var(--s1) 0; vertical-align: top; }
@@ -1570,27 +1514,6 @@ button.cal-retrain { flex: 0 0 auto; font-size: var(--t-meta); white-space: nowr
 .panel.done-gold { --bracket-color: var(--gold); }
 .panel.nav-panel { --bracket-color: var(--accent); }
 
-/* The rotating cell is one plate, not four of them stacked inside a frame.
-   The slides hand their brackets up to the shell, which is the thing that
-   actually has the edges — and which is now also the thing that lights when
-   the ring is on one of them. Same reason the inset ring went: the cell is
-   the unit, and drawing its parts separately made it read as several. */
-.cyc {
-  border-radius: 0;
-  border-color: rgba(92,207,230,.14);
-  background:
-    linear-gradient(180deg, rgba(223,230,242,.045), transparent 38%),
-    var(--panel);
-  box-shadow: inset 0 1px 0 rgba(223,230,242,.10);
-}
-.cyc > .cyc-track > .panel::before, .cyc > .cyc-track > .panel::after { content: none; }
-.cyc::before, .cyc::after {
-  content: ""; position: absolute; width: var(--bracket); height: var(--bracket);
-  pointer-events: none; border: 0 solid var(--bracket-color, rgba(92,207,230,.34));
-}
-.cyc::before { top: -1px; left: -1px; border-top-width: 2px; border-left-width: 2px; }
-.cyc::after { bottom: -1px; right: -1px; border-bottom-width: 2px; border-right-width: 2px; }
-.cyc:has(> .cyc-track > .panel.nav-panel) { --bracket-color: var(--accent); }
 
 /* ---- headings ----
    A panel heading is a machine label now: display face, uppercase, wide

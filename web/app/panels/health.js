@@ -1,29 +1,49 @@
 // Am I recovering, am I training enough, which way is my weight going.
 //
-// Three questions, and this panel exists to answer those three and stay quiet
-// about everything else. It used to be two number inputs over two line charts,
-// which is a different thing entirely: a chart asks you to do the reading, and
-// what you actually want at 7am is a sentence.
+// Three questions, and this panel still exists to answer those three and stay
+// quiet about everything else. What changed in this pass is that it is now the
+// *only* thing on the tab: the plan card, the five-tab logging card and the
+// overnight strip are all gone, and their content is either here or on the
+// phone. So the rule the panel was built on — **nothing is said until it can
+// be said honestly** — is extended rather than repealed, and it had to be,
+// because it now has to cover a screen that used to have five other cards on
+// it to be quiet next to.
 //
-// The rule here is that **nothing is said until it can be said honestly.**
-// Every derived field arrives null until it has the history behind it (see
-// dashboard/health.py), and a null renders as nothing at all — not a dash, not
-// a zero, not "collecting data". Week one of a camp shows a weight chart and
-// silence, and that is the correct week-one panel. The alternative is a screen
-// full of numbers computed off four days, which you would read, believe, and
-// train differently because of.
+// --- what was repealed, and what it cost -------------------------------------
 //
-// What is deliberately absent: a daily readiness score, a recovery percentage,
-// and anything resembling a single "are you ready" number. The watch already
-// offers Body Battery for that. Those numbers move for reasons that have
-// nothing to do with training and everything to do with when you happened to
-// fall asleep, and the honest window for this kind of signal is a week.
+// This file used to say, at some length, that there would be no readiness
+// score, no recovery percentage and nothing resembling a single "are you
+// ready" number — on the grounds that a composite of five things that all move
+// for unrelated reasons is exactly the figure you learn to check every morning
+// and act on every week. That argument was right about composites and wrong
+// about this screen, and what made it wrong was the deletions: a panel that
+// speaks only when it has a fortnight of history is a *fine* panel next to
+// four cards you are filling in, and a blank one when it is the whole tab.
+//
+// So there are four scores now, and the objection is answered three ways
+// rather than by not building them. The argument is written out in full at the
+// head of the rail section in dashboard/health.py; the half that lives here is
+// the third one: **every part is one keystroke away.** `f` then a letter opens
+// a zone in place and draws each of its inputs as its own bar against its own
+// baseline, with the raw reading printed next to it. A composite you cannot
+// take apart is a composite you end up believing.
+//
+// --- and what did not change -------------------------------------------------
+//
+// Every derived field still arrives null until it has the history behind it,
+// and a null still renders as nothing at all — not a dash, not a zero, not
+// "collecting data". What is new is that it now renders as *words saying which
+// kind of nothing it is*, which is [PART 5] of this pass and is the one thing
+// the deletions made unavoidable: while there were boxes on this tab, a
+// missing reading was a hand entry that had not arrived yet. Now nothing is
+// typed here, so a missing reading is a hole — and a night the watch spent on
+// the charger renders identically to a rest day unless something insists
+// otherwise. `InputState` is what insists.
 
 import * as api from "../api.js";
-import { lineChart } from "../charts.js";
 import { el, mount, svg } from "../dom.js";
-import { put, store } from "../store.js";
-import { toast } from "../ui.js";
+import { rerender } from "../panel.js";
+import { store } from "../store.js";
 
 const BAND = { low: 0.8, high: 1.5 };
 const MONOTONY_FLAG = 2.0;
@@ -65,11 +85,98 @@ const whole = (n) => Math.round(n).toLocaleString();
 const trim = (n) => String(Math.round(n * 10) / 10);
 
 /**
+ * The four zones of the rail, in the order they are read.
+ *
+ * `key` is the letter `f` waits for, and it is printed on the zone — the same
+ * argument as the digit on a section tab, that a shortcut you have to look up
+ * is one you never learn.
+ *
+ * The letters are the logging carousel's, inherited rather than invented. That
+ * card is gone and its five letters came free, and four of them land on
+ * roughly what they used to reach: `c` opened the check-in and recovery is
+ * where the check-in's answers now surface, `l` opened the session log and
+ * load is what sessions make, `m` was meals and `d` was drinks. `p` — the old
+ * in-and-out tab — is kept as a second way to say hydration, since urine
+ * colour is one of that zone's inputs and `p` is the letter that used to reach
+ * it.
+ *
+ * Inheriting them is not sentiment, it is what keeps `nav.HINT_KEYS` correct:
+ * those five letters are already withheld from the link alphabet, so this
+ * table spends nothing new. Picking mnemonic letters instead — r, o, u, y —
+ * would have taken four letters *out* of the hint alphabet and dropped it
+ * under the twenty a headline list needs, which `tests/js/keys.test.js`
+ * guards. See the note there.
+ */
+export const ZONES = [
+  { key: "c", id: "recovery", label: "recovery" },
+  { key: "l", id: "load", label: "load" },
+  { key: "m", id: "fuel", label: "fuel" },
+  { key: "d", id: "hydration", label: "hydration", alias: "p" },
+];
+
+/** `key: zone id`, for the hint layer in keys.js. Derived rather than written
+ *  out a second time, so the letter printed on the zone and the letter that
+ *  works are one fact. */
+export const ZOOMS = Object.fromEntries(
+  ZONES.flatMap((zone) => [
+    [zone.key, zone.id],
+    ...(zone.alias ? [[zone.alias, zone.id]] : []),
+  ]),
+);
+
+/**
+ * Which zone is expanded, or null.
+ *
+ * Module-level because the panel re-renders underneath it — every store change
+ * rebuilds this body, and a cursor held in a render closure would be thrown
+ * away by the write that opened it.
+ */
+let zoomed = null;
+
+/**
+ * Open a zone's zoom in place, or close it if it is already open. True when
+ * the key meant something, so the caller knows whether to swallow it.
+ *
+ * Redraws through the harness rather than through the store, and that is the
+ * distinction worth keeping: opening a zoom changes nothing the server knows
+ * about, so a `notify` would be announcing a write that never happened.
+ */
+export function zoom(id) {
+  if (!ZONES.some((zone) => zone.id === id)) return false;
+  zoomed = zoomed === id ? null : id;
+  rerender("health");
+  return true;
+}
+
+/** Today's reading for one metric, or null.
+ *
+ * The series is oldest-first, so the last point is today's only if its date
+ * says so — which is the whole check: "the most recent weight" and "this
+ * morning's weight" are the same number on most days and very different ones
+ * on the day you skipped.
+ *
+ * Lives here rather than on the check-in panel, which is gone. `chips.js` is
+ * the caller: the day's required list still asks whether a weight was logged,
+ * and the answer still comes off the store rather than off any panel. */
+export function metricToday(state, metric) {
+  const series = state.health.series.find((s) => s.metric === metric);
+  const last = series?.points?.[series.points.length - 1];
+  return last && last[0] === state.date ? last[1] : null;
+}
+
+export const weightToday = (state) => metricToday(state, "weight");
+
+/**
  * The verdicts, in the order the questions matter.
  *
  * Each returns a line or nothing. The thresholds live here rather than on the
  * server because they are editorial — what counts as worth mentioning — while
  * the numbers behind them are not.
+ *
+ * These are the panel's older half and they are unchanged. The rail says what
+ * the state *is*; these say the handful of things worth interrupting you
+ * about, and a sentence still beats a bar for anything that took three days in
+ * a row to become true.
  */
 function verdicts(d) {
   const lines = [];
@@ -155,18 +262,15 @@ function verdicts(d) {
   // -- hydration. Speaks only on a run, and only off days with enough
   //    readings to have thrown the first one away — see health.day_darkness.
   if (d.dark_urine_days >= DARK_DAYS) {
-    // The drink log first and the watch second, because the two are answering
-    // the same question and only one of them is a measurement of what you
-    // drank. `hydration_ml` is a glyph you remember to tap; `fluid_ml` is the
-    // thing you were going to log anyway, and a day you did not tap the watch
-    // is indistinguishable from a day you drank nothing. The watch stays as
-    // the fallback rather than being dropped: on a week the drink log was not
-    // kept, a rough number beats silence.
+    // The drink log first and the watch second, and the watch's half of this
+    // is now what it sweated out rather than what its glyph was tapped for.
+    // `fluid_ml` is the thing you were going to log anyway; `sweat_loss_ml` is
+    // the thing nobody had to remember at all, and it is the reason the
+    // sentence can say what the day *asked* for rather than only what went in.
     const water = d.fluid_ml != null
-      ? ` you logged about ${whole(d.fluid_ml)} ml a day.`
-      : d.hydration_ml != null
-        ? ` the watch has you at about ${whole(d.hydration_ml)} ml a day.`
-        : "";
+      ? ` you logged about ${whole(d.fluid_ml)} ml a day`
+        + (d.sweat_loss_ml != null ? ` and sweated about ${whole(d.sweat_loss_ml)}.` : ".")
+      : "";
     lines.push([
       "bad",
       `urine has read dark ${d.dark_urine_days} days running, first of the morning `
@@ -215,17 +319,6 @@ function verdicts(d) {
       `nothing logged in that column for ${d.days_since_stool} days, in a week you were `
       + `otherwise keeping the log.`,
     ]);
-  }
-
-  // -- weight. Stated flatly whenever there is a trend, since it is the one
-  //    number with a deadline attached to it.
-  if (d.weight_ema != null && d.weight_per_week != null) {
-    const rate = d.weight_per_week;
-    const direction =
-      Math.abs(rate) < 0.15
-        ? "holding steady"
-        : `${rate < 0 ? "down" : "up"} ${Math.abs(rate).toFixed(1)} lb a week`;
-    lines.push(["plain", `weight ${one(d.weight_ema)} lb trend, ${direction}.` + balance(d)]);
   }
 
   // -- what the week's food was made of. Under the flag only, and last,
@@ -286,20 +379,33 @@ export function emptyLine(plan, today) {
     : "no plan written for this week.";
 }
 
+// --- the hero ----------------------------------------------------------------
+
 /**
- * The camp: how far out the fight is, and what today is asking for.
+ * Today's session in large type, how long the camp has left, and the phase.
  *
- * Read-only. Filling these in is the session panel's job; this is the panel
- * that answers "what is the state of my training", the countdown belongs to
- * that question, and the day's list belongs beside it because the first thing
- * a plan is for is remembering what you are supposed to be doing.
+ * Display only. This is the content the plan card used to carry, minus every
+ * box: the plan card was a nudge and a form in one object, and the form half
+ * has moved to the phone, where the session actually gets logged from — see
+ * `sessionLog` in `m/app.js`, which answers prescribed blocks by key.
+ *
+ * What survives is the nudge half, and it is the right half to keep on a
+ * laptop. "What am I supposed to be doing today" is a thing you read at a desk
+ * with coffee; "I have just finished the lift" is a thing you say standing in
+ * a doorway with a phone.
+ *
+ * The phase is one word out of `[program]` in training.toml, printed as it is
+ * written. It is also in the header on every tab, and the repetition is
+ * deliberate: on this tab it is the frame the whole rail is read against, and
+ * a header segment is not something you look at.
  */
-function camp(plan) {
+function hero(plan) {
   if (!plan) return null;
 
   const asks = plan.today;
   const outings = [...new Set(asks.map((b) => b.slot))].sort((a, b) => a - b);
   const empty = emptyLine(plan, api.today());
+  const phase = store.config?.phase;
 
   return el("div.camp", null,
     el("div.figure-row", null,
@@ -312,6 +418,10 @@ function camp(plan) {
       plan.week != null
         ? el("span.figure-label", { text: `week ${plan.week} of ${plan.weeks}` })
         : null,
+      // Empty rather than "phase: " with nothing after it, for the same reason
+      // the header does it: a label with no value reads as a value that failed
+      // to load.
+      phase ? el("span.figure-label", { text: phase.toLowerCase() }) : null,
     ),
     empty
       ? el("div.faint.gap", { text: empty })
@@ -351,98 +461,203 @@ function camp(plan) {
   );
 }
 
-/**
- * Last night, as the watch measured it.
- *
- * A strip of numbers rather than sentences, and that is a different kind of
- * thing from everything above it on purpose: the verdicts are the panel
- * telling you something, and this is the panel showing you what it has. These
- * five are worth having on screen because they are *cheap* — nobody typed
- * them, they cost a glance, and Body Battery in particular is a number the
- * watch is better at than any model this app could build.
- *
- * What they are not is a readiness score. There is no sum here, no percentage,
- * and no traffic light. The judgement stays in the verdicts, where it has a
- * baseline and a run length behind it; a composite of five numbers that all
- * move for reasons unrelated to training is exactly the kind of figure you
- * would learn to check every morning and act on every week.
- *
- * Absent readings render as nothing, so a night on the charger shows a shorter
- * strip rather than a row of dashes. All five absent renders no strip at all.
- */
-function overnight(d) {
-  const cells = [
-    d.sleep_last != null
-      ? [
-          `${one(d.sleep_last)}h`,
-          d.in_bed_last != null ? `asleep of ${one(d.in_bed_last)} in bed` : "asleep",
-        ]
-      : null,
-    d.sleep_score_last != null ? [String(Math.round(d.sleep_score_last)), "sleep score"] : null,
-    d.hrv_last != null ? [`${Math.round(d.hrv_last)}`, "hrv, ms"] : null,
-    d.rhr_last != null ? [`${Math.round(d.rhr_last)}`, "resting bpm"] : null,
-    d.body_battery_last != null ? [String(Math.round(d.body_battery_last)), "body battery"] : null,
-  ].filter(Boolean);
+// --- the flag line -----------------------------------------------------------
 
-  if (!cells.length) return null;
-  return el("div.scalars", null,
-    ...cells.map(([value, label]) =>
-      el("div.scalar", null,
-        el("span.scalar-value", { text: value }),
-        el("span.scalar-label", { text: label }),
-      ),
+/**
+ * One line under the hero: is anything wrong that nothing else has noticed.
+ *
+ * **This is a placeholder and is meant to look like one.** It renders one
+ * sentence and consults nothing, and that is deliberate — the anomaly
+ * detection this seam is for gets its own pass, because it is the one part of
+ * this tab where a hasty version is worse than none. A flag that fires on
+ * noise is a flag you learn to ignore inside a fortnight, and by then it has
+ * also taught you to ignore the real one.
+ *
+ * What will go here: something that reads the *shape* of the last few weeks
+ * rather than any one threshold — a metric that has left its own distribution,
+ * two that have started disagreeing when they normally track, a series that
+ * has simply stopped arriving. Every one of those needs a model of normal, and
+ * `health.py` is where it will live, next to the baselines it will be built
+ * out of. Nothing about that belongs on the client.
+ *
+ * The seam is the signature: this takes the derived block and returns a line
+ * or null, and the day it stops being a placeholder is the day the argument
+ * gets used.
+ */
+export function flagLine(_derived) {
+  return "everything looks normal.";
+}
+
+// --- the rail ----------------------------------------------------------------
+
+/**
+ * One score as a bar, plus the zoom when it is open.
+ *
+ * The bar is drawn *only* when there is a number. A zone with nothing behind
+ * it renders its sentence instead, because an empty bar and a bar at zero are
+ * the same picture and they are opposite facts — one is a watch that said
+ * nothing, one is a week that went badly. That distinction is the whole of
+ * [PART 5] and it is why `ZoneScore.value` is nullable rather than defaulted.
+ *
+ * --- a mean of one is not a mean -------------------------------------------
+ *
+ * The other rule here, and it was found on the screen rather than reasoned to.
+ * In week three of a camp every history-gated input is silent, so the load
+ * zone was a single number — the fraction of the week's prescribed blocks that
+ * had been logged — wearing the word `load`. It read `load 0` beside `1356
+ * load this week`, which is two contradictory statements about the same
+ * fortnight, and only one of them was about load at all.
+ *
+ * So a zone standing on exactly one input says which one: `load · plan logged`.
+ * The number is unchanged and still honest; what it stops doing is claiming to
+ * be a summary of four things when it is a reading of one. The threshold is
+ * one rather than two because the fix is to the *label*, not to the score —
+ * blanking these zones would be the panel going quiet through exactly the
+ * weeks it was rebuilt to fill.
+ */
+function zoneNode(zone, score) {
+  const open = zoomed === zone.id;
+  const has = score.value != null;
+  const scored = score.inputs?.filter((i) => i.value != null) ?? [];
+  const alone = scored.length === 1 ? scored[0].label : null;
+
+  return el(`div.zone${open ? ".zone-open" : ""}`, { dataset: { zone: zone.id } },
+    el("button.zone-head", {
+      // The letter, printed on the control it operates — same argument as the
+      // digit on a section tab. `.tab`'s own `data-key` styling draws it.
+      dataset: { key: zone.key },
+      "aria-expanded": String(open),
+      onclick: () => zoom(zone.id),
+    },
+      el("span.zone-name", { text: zone.label }),
+      alone ? el("span.zone-only.small.faint", { text: `· ${alone}` }) : null,
+      has
+        ? el("span.zone-value", { text: String(Math.round(score.value)) })
+        : el("span.zone-value.faint", { text: "—" }),
     ),
+    has ? meter(score.value) : null,
+    // The absence, in words, and it is the line that had to exist once the
+    // boxes went. "no watch data: hrv, sleep score" is a different morning
+    // from "not logged: meals", and before this pass both rendered as a
+    // shorter strip.
+    score.note ? el("div.zone-note.small.faint", { text: score.note }) : null,
+    open ? zoomNode(score) : null,
+  );
+}
+
+/** A bar. `.bar`/`.bar-fill` are the app's own, so this is the same object the
+ *  rest of the dashboard draws for a proportion. */
+function meter(value, { tone = null } = {}) {
+  const band = tone ?? (value >= 66 ? "bar-ok" : value >= 33 ? "bar-gold" : "bar-bad");
+  return el("div.bar", {
+    role: "meter",
+    "aria-valuenow": String(Math.round(value)),
+    "aria-valuemin": "0",
+    "aria-valuemax": "100",
+  },
+    el(`div.bar-fill.${band}`, { style: `width:${Math.max(2, Math.min(100, value))}%` }),
   );
 }
 
 /**
- * One line about the watch, and a button when there is something to press.
+ * The zoom: every input of one zone, each against its own baseline.
  *
- * This exists because of how this integration fails. `python-garminconnect` is
- * unofficial and Garmin has broken its predecessor once already; when it goes,
- * every reading above degrades to *silence*, which is indistinguishable from a
- * quiet week. So the panel says out loud when the numbers last arrived, and
- * nothing else on the tab has to carry that worry.
+ * This is the half that makes the composite above it defensible. Each row is
+ * the input's own bar plus the raw reading in words — `58 ms against a 62
+ * baseline` — so a score of 34 is a claim you can check rather than one you
+ * either believe or ignore.
  *
- * Silent when the sync was never turned on — an unconfigured feature is not a
- * problem to report, and the tab was a hand-kept log before the watch and
- * still is one underneath it.
+ * An input that did not score keeps its row and says why. Dropping it would
+ * shorten the list on exactly the mornings the list is most worth reading.
  */
-function watch(panel) {
-  const g = panel.garmin;
-  if (!g.configured) return null;
-
-  const when = g.last_sync
-    ? new Date(g.last_sync).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : null;
-  const line = !g.installed
-    ? "garminconnect is not installed in this venv — pip install '.[garmin]'"
-    : g.last_ok
-      ? when
-        ? `watch synced ${when}${g.wrote ? ` · ${g.wrote} new` : ""}`
-        : "watch not synced yet this session"
-      : `watch sync failed: ${g.last_error}`;
-
-  return el("div.row.spread.gap", null,
-    el(`span.${g.last_ok ? "faint" : "err"}.small`, { text: line }),
-    el("button.tiny", {
-      text: "sync",
-      // Runs on the request rather than behind it, so pressing it and seeing
-      // nothing change is not a state this button can be in.
-      onclick: async (e) => {
-        const button = e.currentTarget;
-        button.disabled = true;
-        button.textContent = "syncing…";
-        try {
-          put("health", await api.post("/api/garmin/sync", {}));
-        } catch (error) {
-          toast(error.message, "error");
-        } finally {
-          button.disabled = false;
-          button.textContent = "sync";
-        }
-      },
+function zoomNode(score) {
+  return el("div.zoom", null,
+    ...score.inputs.map((input) => {
+      const scored = input.state === "scored" && input.value != null;
+      return el("div.zoom-row", null,
+        el("div.row.spread.gap", null,
+          el("span.small", { text: input.label }),
+          el("span.small.faint", {
+            text: input.reading ?? ABSENT[input.state] ?? "",
+          }),
+        ),
+        scored
+          ? meter(input.value)
+          // A rule where the bar would be, rather than an empty bar: an
+          // unfilled track reads as a zero at a glance, and a zero is a
+          // measurement.
+          : el("div.bar.bar-absent"),
+      );
     }),
+  );
+}
+
+/**
+ * How each absence is said in a zoom row, when the input had no reading to
+ * print instead.
+ *
+ * The server sends the same words in `ZoneScore.note` — this table is only for
+ * the per-row case, and it agrees with `health.ABSENT_WORDS` on purpose. The
+ * two are allowed to be separate because the note is a summary and this is a
+ * label, but they must not disagree about what a missing row *means*.
+ */
+const ABSENT = {
+  no_watch_data: "no watch data",
+  no_baseline: "not enough history yet",
+  not_logged: "not logged",
+  not_asked: "nothing asked today",
+};
+
+/**
+ * The two slow trends, right of the bars.
+ *
+ * Not bars, and the reason is worth stating because it is the same reason
+ * there are only four bars: neither of these has a 0-100 direction without a
+ * target, and nobody has set one. A weight of 172 lb is not 60% of anything,
+ * and a VO2max of 52 is not 52% either — it only looks like a percentage.
+ *
+ * So they are a figure and a direction, which is all either of them supports.
+ */
+function trends(d) {
+  const rate = d.weight_per_week;
+  const direction = rate == null
+    ? null
+    : Math.abs(rate) < 0.15
+      ? "holding steady"
+      : `${rate < 0 ? "down" : "up"} ${Math.abs(rate).toFixed(1)} lb a week`;
+
+  return el("div.trends", null,
+    el("div.trend", null,
+      el("div.trend-head.small.faint", { text: "weight" }),
+      d.weight_ema != null
+        ? el("div.figure-row", null,
+            el("span.trend-value", { text: one(d.weight_ema) }),
+            el("span.figure-unit", { text: "lb" }),
+          )
+        : el("div.small.faint", { text: "ten readings before this says anything" }),
+      direction ? el("div.small.dim", { text: direction }) : null,
+    ),
+    el("div.trend", null,
+      el("div.trend-head.small.faint", { text: "vo2max" }),
+      d.vo2max_last != null
+        ? el("div.figure-row", null,
+            el("span.trend-value", { text: one(d.vo2max_last) }),
+            el("span.figure-unit", { text: "ml/kg/min" }),
+          )
+        // Not a failure and not a gap to apologise for: this only updates
+        // after an outdoor run with heart rate, so a lifting month has none.
+        : el("div.small.faint", { text: "no estimate yet — needs an outdoor run" }),
+      d.vo2max_change != null
+        ? el("div.small.dim", {
+            text: `${d.vo2max_change >= 0 ? "+" : ""}${one(d.vo2max_change)} over the quarter`,
+          })
+        : d.vo2max_on != null
+          // The date, so a three-week-old estimate cannot read as this
+          // morning's. This is the one number on the tab exempt from "today or
+          // nothing", and saying when is what buys the exemption.
+          ? el("div.small.faint", { text: `last measured ${d.vo2max_on}` })
+          : null,
+    ),
   );
 }
 
@@ -454,15 +669,11 @@ function watch(panel) {
  * against, which is close enough to a pair of stray scrollbars that that is
  * what they were reported as. The gaps only become the interesting part once
  * there is enough filled in for them to be gaps *in* something.
- *
- * The panel already draws this distinction for its verdicts, which say nothing
- * at all until a fortnight of history will support a sentence. Same rule and
- * the same reason: silence beats a graph of two points.
  */
 const MIN_LOGGED_DAYS = 4;
 
 /** Daily load, as bars. The gaps are rest days and are the interesting part. */
-function loadBars(loads, { w = 300, h = 60 } = {}) {
+function loadBars(loads, { w = 300, h = 40 } = {}) {
   if (!loads?.length) return null;
   const values = loads.map(([, v]) => v);
   if (values.filter((v) => v > 0).length < MIN_LOGGED_DAYS) return null;
@@ -491,6 +702,41 @@ function loadBars(loads, { w = 300, h = 60 } = {}) {
   );
 }
 
+/**
+ * One line about the watch, and nothing to press.
+ *
+ * This exists because of how this integration fails. `python-garminconnect` is
+ * unofficial and Garmin has broken its predecessor once already; when it goes,
+ * every reading on this panel degrades to *silence*, which used to be
+ * indistinguishable from a quiet week and is now the difference between a bar
+ * and four words. So the panel says out loud when the numbers last arrived.
+ *
+ * The manual sync button is gone with the rest of the tab's controls. It was
+ * there because a morning with no numbers was a morning you might want to go
+ * and fetch them; the sync now runs on every boot, and the honest answer to
+ * "the numbers are missing" is the sentence this line already prints.
+ *
+ * Silent when the sync was never turned on — an unconfigured feature is not a
+ * problem to report.
+ */
+function watch(panel) {
+  const g = panel.garmin;
+  if (!g.configured) return null;
+
+  const when = g.last_sync
+    ? new Date(g.last_sync).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : null;
+  const line = !g.installed
+    ? "garminconnect is not installed in this venv — pip install '.[garmin]'"
+    : g.last_ok
+      ? when
+        ? `watch synced ${when}${g.wrote ? ` · ${g.wrote} new` : ""}`
+        : "watch not synced yet this session"
+      : `watch sync failed: ${g.last_error}`;
+
+  return el(`span.${g.last_ok ? "faint" : "err"}.small`, { text: line });
+}
+
 export default {
   id: "health",
   title: "training",
@@ -498,43 +744,40 @@ export default {
   slot: "hero",
   hero: true,
 
+  /**
+   * `f` then a letter, dispatched from the hint layer in keys.js.
+   *
+   * Exported through `ZOOMS` rather than handled here, for the same reason the
+   * carousel's letters were: the hint layer has to know which letters are
+   * spoken for before it paints the alphabet on this panel's links, and it
+   * cannot know that by asking a panel that may not be mounted.
+   */
   async render(node) {
     const panel = store.state.health;
     const d = panel.derived;
     const lines = verdicts(d);
-
-    const weight = panel.series.find((s) => s.metric === "weight")?.points ?? [];
-
-    // The week's load leads, because it is the only figure here that is a
-    // plain count rather than a judgement, and it is true from day one.
-    const head = el("div.figure-row", null,
-      el("span.figure", { text: String(d.week_load) }),
-      el("span.figure-unit", { text: "load this week" }),
-      d.prev_week_load
-        ? el("span.figure-label", {
-            text: `${d.week_load >= d.prev_week_load ? "+" : ""}`
-              + `${Math.round(((d.week_load - d.prev_week_load) / d.prev_week_load) * 100)}% on last`,
-          })
-        : null,
-    );
-
-    // The camp leads. Once there is a fight on the calendar, "how long have I
-    // got" is the question every other number on this panel is in service of —
-    // and unlike the rest of them it is true on day one, because a countdown
-    // needs no history to be honest.
-    const strip = camp(panel.plan);
-
-    // Last night, and who measured it. Above the verdicts because it is the
-    // half of this panel that is true every morning — the sentences below need
-    // a fortnight of history before they will say anything at all.
-    const night = overnight(d);
+    const flag = flagLine(d);
 
     mount(node,
-      strip,
-      strip ? el("div.divider") : null,
-      head,
-      night,
-      watch(panel),
+      // The camp leads. Once there is a fight on the calendar, "how long have
+      // I got" is the question every other number on this panel is in service
+      // of — and unlike the rest of them it is true on day one, because a
+      // countdown needs no history to be honest.
+      hero(panel.plan),
+
+      // One line, always, and for now always the same one. See `flagLine`.
+      flag ? el("div.flag.small.dim", { text: flag }) : null,
+
+      el("div.divider"),
+
+      // The rail: four bars on the left, two trends on the right.
+      el("div.rail", null,
+        el("div.zones", null,
+          ...ZONES.map((zone) => zoneNode(zone, d[zone.id] ?? {})),
+        ),
+        trends(d),
+      ),
+
       lines.length
         ? el("div.verdicts", null,
             ...lines.map(([tone, text]) =>
@@ -543,38 +786,25 @@ export default {
           )
         // Not an error state and not a progress bar. There is genuinely
         // nothing to say yet, and saying so once is the whole message.
-        : el("div.faint.gap", { text: "not enough history to say anything worth acting on yet." }),
-      el("div.divider"),
-      el("div.chart-row", null,
-        el("div.chart-block", null,
-          el("div.chart-title", null,
-            el("span", { text: "daily load, 4 weeks" }),
-            d.monotony != null
-              ? el("span.value", { text: `monotony ${d.monotony.toFixed(1)}` })
-              : null,
-          ),
-          loadBars(panel.loads)
-            ?? el("div.faint.small", {
-              text: `${MIN_LOGGED_DAYS} logged days before this says anything`,
-            }),
-        ),
-        el("div.chart-block", null,
-          el("div.chart-title", null,
-            el("span", { text: "weight" }),
-            el("span.value", {
-              // Rounded for the same reason the series below it is: a reading
-              // that arrives with float noise on it renders as
-              // `172.97172499218095 lb` across the top of the chart.
-              text: weight.length ? `${one(weight[weight.length - 1][1])} lb` : "—",
-            }),
-          ),
-          // Rounded before it is drawn, not for the line's sake but for the
-          // axis labels: `lineChart` prints its own min and max verbatim, and
-          // a value that arrives with float noise on it (a sync, or an average)
-          // renders as `179.09514951112925` down the side of the chart.
-          lineChart(weight.map(([, v]) => Math.round(v * 10) / 10), { color: "var(--gold)" }),
-        ),
+        : el("div.faint.gap.small", {
+            text: "nothing worth interrupting you about.",
+          }),
+
+      // The week's load, and who last spoke to the watch. Both are footnotes:
+      // the bars are a shape rather than a number, and the sync line is only
+      // ever read on a morning something is missing.
+      el("div.row.spread.gap.foot", null,
+        el("span.small.faint", {
+          text: `${d.week_load} load this week`
+            + (d.prev_week_load
+              ? `, ${d.week_load >= d.prev_week_load ? "+" : ""}`
+                + `${Math.round(((d.week_load - d.prev_week_load) / d.prev_week_load) * 100)}%`
+                + " on last"
+              : ""),
+        }),
+        watch(panel),
       ),
+      loadBars(panel.loads),
     );
   },
 };

@@ -30,9 +30,12 @@ import { $, el } from "./dom.js";
  */
 export const TABS = [
   { id: "home", label: "home", blurb: "everything, counted" },
-  // Health sits at 2 because it is the tab the day is answered on — the
-  // check-in in the morning, the session in the evening, and the meals in
-  // between are the only cells that are asked for more than once a day.
+  // Health sits at 2 because it is the tab the day is *read* on. It used to be
+  // the tab the day was answered on — the check-in in the morning, the session
+  // in the evening, the meals in between — and that argument for the position
+  // is gone with the forms, to the phone. The position survives it: this is
+  // now the only tab that says how the last few weeks have actually gone, and
+  // that is worth the same seat.
   { id: "health", label: "health", blurb: "the block, and whether you're recovering from it" },
   { id: "math", label: "math", blurb: "problem of the day, and the theorem deck" },
   { id: "politics", label: "politics", blurb: "the week's issue, the prep, and the argument" },

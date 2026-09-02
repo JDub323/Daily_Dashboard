@@ -1836,6 +1836,44 @@ MIGRATIONS: list[tuple[int, str]] = [
         ) STRICT;
         """,
     ),
+    (
+        31,
+        """
+        -- Four more scalars: three the watch already knows and one nothing but
+        -- a tape measure can supply.
+        --
+        -- `metric` is part of the table definition, so widening it is a rebuild
+        -- -- migrations 2, 6, 9, 10, 12, 17 and 20 did the same dance. Every
+        -- row carries across verbatim, `source` included, so a hand correction
+        -- made before today still outranks tonight's sync afterwards.
+        --
+        -- `hydration_ml` stays in the list. Nothing writes to it any more --
+        -- `sweat_loss_ml` is what the panel reads now -- but the rows already
+        -- in it are true readings of the days they describe, and a CHECK that
+        -- refused them would make the old series unwritable rather than merely
+        -- unused. A metric is retired by ceasing to read it, never by making
+        -- its own history illegal.
+        CREATE TABLE health_entry_v4 (
+            metric  TEXT NOT NULL CHECK (metric IN (
+                        'weight', 'sleep_hours', 'time_in_bed',
+                        'sleep_score', 'hrv', 'resting_hr', 'body_battery',
+                        'calories_out', 'hydration_ml',
+                        'stress', 'vo2max', 'sweat_loss_ml', 'vert_jump')),
+            date    TEXT NOT NULL
+                         CHECK (date IS strftime('%Y-%m-%d', date)),
+            value   REAL NOT NULL CHECK (value > 0),
+            source  TEXT NOT NULL DEFAULT 'manual'
+                         CHECK (source IN ('manual', 'garmin')),
+            PRIMARY KEY (metric, date)
+        ) STRICT;
+
+        INSERT INTO health_entry_v4 (metric, date, value, source)
+            SELECT metric, date, value, source FROM health_entry;
+
+        DROP TABLE health_entry;
+        ALTER TABLE health_entry_v4 RENAME TO health_entry;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

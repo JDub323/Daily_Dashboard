@@ -41,8 +41,25 @@ SLEEP = {
 
 HRV = {"hrvSummary": {"lastNightAvg": 62}}
 RHR = {"restingHeartRate": 48}
-STATS = {"totalKilocalories": 3120.4, "bodyBatteryHighestValue": 91}
-HYDRATION = {"valueInML": 2100.0}
+# `averageStressLevel` rides along in the daily summary rather than needing an
+# endpoint of its own -- one call fewer against an unofficial API.
+STATS = {
+    "totalKilocalories": 3120.4,
+    "bodyBatteryHighestValue": 91,
+    "averageStressLevel": 34,
+}
+HYDRATION = {"valueInML": 2100.0, "sweatLossInML": 620.0}
+# The one endpoint that answers with a list: the max-metrics URL takes a date
+# range and returns an entry per day, and this module always asks for one day.
+MAX_METRICS = [
+    {
+        "generic": {
+            "calendarDate": "2026-07-26",
+            "vo2MaxValue": 52.0,
+            "vo2MaxPreciseValue": 52.4,
+        }
+    }
+]
 
 
 class FakeWatch:
@@ -62,6 +79,7 @@ class FakeWatch:
             "get_rhr_day": RHR,
             "get_stats": STATS,
             "get_hydration_data": HYDRATION,
+            "get_max_metrics": MAX_METRICS,
             **payloads,
         }
 
@@ -85,6 +103,9 @@ class FakeWatch:
 
     def get_hydration_data(self, iso):
         return self._answer("get_hydration_data", iso)
+
+    def get_max_metrics(self, iso):
+        return self._answer("get_max_metrics", iso)
 
 
 # --- reading the payloads ---------------------------------------------------
@@ -143,6 +164,56 @@ def test_an_untapped_hydration_glyph_is_absent_not_zero():
     assert garmin.hydration_metrics(HYDRATION)[HealthMetric.hydration_ml] == 2100.0
 
 
+def test_sweat_loss_comes_off_the_hydration_payload_we_already_fetch():
+    """The reading that replaced the glyph as the hydration input. Same call,
+    a second field -- the FR165 computes it per activity and the daily summary
+    totals it."""
+    assert garmin.hydration_metrics(HYDRATION)[HealthMetric.sweat_loss_ml] == 620.0
+
+
+def test_a_rest_day_sweats_nothing_and_says_nothing():
+    """Absent rather than zero, and the distinction is load-bearing now: the
+    hydration target is a base plus what was sweated, and a zero would be
+    indistinguishable from a training day whose activity had no estimate."""
+    assert HealthMetric.sweat_loss_ml not in garmin.hydration_metrics({"valueInML": 1800})
+
+
+def test_stress_rides_along_in_the_daily_summary():
+    """No endpoint of its own. `averageStressLevel` has been in `get_stats` as
+    long as calories and Body Battery have, and one call fewer against an
+    unofficial API is one fewer thing to break."""
+    assert garmin.stats_metrics(STATS)[HealthMetric.stress] == 34
+
+
+def test_garmins_no_reading_sentinel_is_not_a_stress_level():
+    """The watch reports -1 or -2 for a day with too little wear time to
+    average. Stored, those would be the calmest days on record."""
+    assert HealthMetric.stress not in garmin.stats_metrics({"averageStressLevel": -1})
+    assert HealthMetric.stress not in garmin.stats_metrics({"averageStressLevel": -2})
+
+
+def test_vo2max_reads_a_list_and_prefers_the_precise_value():
+    """The only endpoint here that answers with a list, and the only one where
+    two fields carry the same number at two precisions. The rounded one would
+    show a fortnight of no change followed by a step -- a plateau that is
+    really a rounding."""
+    assert garmin.vo2max_metrics(MAX_METRICS)[HealthMetric.vo2max] == 52.4
+
+
+def test_vo2max_falls_back_to_the_whole_number_when_that_is_all_there_is():
+    payload = [{"generic": {"vo2MaxValue": 51.0}}]
+    assert garmin.vo2max_metrics(payload)[HealthMetric.vo2max] == 51.0
+
+
+def test_a_day_without_a_run_has_no_vo2max_and_that_is_correct():
+    """Garmin only recomputes this after an outdoor run with heart rate, so
+    most days produce nothing. A row written anyway would be the watch
+    repeating itself, and the series is more honest with gaps in it."""
+    assert garmin.vo2max_metrics([]) == {}
+    assert garmin.vo2max_metrics([{"generic": None}]) == {}
+    assert garmin.vo2max_metrics({"generic": {"vo2MaxPreciseValue": 0}}) == {}
+
+
 def test_a_boolean_is_not_a_number():
     """`isinstance(True, int)` is True in Python, so a payload with a flag
     where a value used to be would otherwise store 1.0."""
@@ -163,6 +234,9 @@ def test_a_day_yields_every_metric():
         HealthMetric.calories_out,
         HealthMetric.body_battery,
         HealthMetric.hydration_ml,
+        HealthMetric.sweat_loss_ml,
+        HealthMetric.stress,
+        HealthMetric.vo2max,
     }
 
 
@@ -213,7 +287,7 @@ def test_sync_walks_the_window_backwards_from_today(settings, repo):
 
 def test_sync_writes_garmin_rows(settings, repo):
     wrote = garmin.sync(settings, repo, TODAY, days=1, client=FakeWatch())
-    assert wrote == 8
+    assert wrote == 11
     entry = repo.health_entry(HealthMetric.sleep_hours, TODAY)
     assert entry.value == 7.0
     assert entry.source is EntrySource.garmin
@@ -242,7 +316,7 @@ def test_re_running_a_sync_writes_nothing_new(settings, repo):
     # Every row is already `garmin` with the same value, so the upsert lands
     # but changes nothing -- what matters is that it is not an error and not a
     # duplicate. The count reports rows the sync owns, which is all of them.
-    assert again == 8
+    assert again == 11
     assert repo.health_entry(HealthMetric.hrv, TODAY).value == 62
 
 
@@ -254,17 +328,28 @@ def test_status_reports_unconfigured_without_an_email(settings, monkeypatch):
     assert garmin.status(settings).configured is False
 
 
+def switched(settings, enabled: bool):
+    """`settings` with `[garmin] enabled` forced either way.
+
+    Every test below about the switch sets the switch, rather than inheriting
+    whatever the real `config.toml` happens to say. It said `false` for as long
+    as the watch was not on a wrist, and three tests quietly rested on that --
+    so turning the feature on for real broke a test about it being off, which
+    is a failure that says nothing about the code.
+    """
+    return settings.model_copy(
+        update={"garmin": settings.garmin.model_copy(update={"enabled": enabled})}
+    )
+
+
 def test_status_needs_both_the_switch_and_the_email(settings, monkeypatch):
     monkeypatch.setenv("GARMIN_EMAIL", "someone@example.com")
-    on = settings.model_copy(
-        update={"garmin": settings.garmin.model_copy(update={"enabled": True})}
-    )
-    assert garmin.status(on).configured is True
-    assert garmin.status(settings).configured is False
+    assert garmin.status(switched(settings, True)).configured is True
+    assert garmin.status(switched(settings, False)).configured is False
 
 
 def test_the_background_sync_declines_when_the_feature_is_off(settings):
-    assert garmin.sync_in_background(settings, None, TODAY) is False
+    assert garmin.sync_in_background(switched(settings, False), None, TODAY) is False
 
 
 def test_connect_names_the_command_that_fixes_it(settings, tmp_path):

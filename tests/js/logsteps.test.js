@@ -1,26 +1,36 @@
-// The two quick logs, checked where they can be checked without a browser.
+// What the three quick logs ask, checked where it can be checked without a
+// browser.
 //
-// Almost all of `quicklog.js` is DOM, but the two things most worth pinning
-// down are not, and both fail silently in ways you would only find in the
-// moment you least want to be debugging a dashboard.
+// This was `quicklog.test.js` and it tested the desktop's logging cards. Those
+// are deleted — every log is answered on the phone now — and the file is still
+// here because none of what it pins down was ever about the desktop. The
+// tables and the two functions that read them live in `logs.js`, which has no
+// client in it, and both things below fail silently in ways you would only
+// find in the moment you least want to be debugging a dashboard.
 //
 // The first is the branch. A urine entry that stops to ask for a solidity, or
 // a stool entry that skips straight to volume, produces a body the server's
-// own validator rejects — *after* four keystrokes have been spent on it, with
-// the error arriving as a toast rather than as anything you can correct.
+// own validator rejects — *after* the answers have been given, with the error
+// arriving as a toast rather than as anything you can correct.
 //
 // The second is duplicate keys inside a step. Two options sharing a letter is
-// a button no key can reach, and it does not look like a bug: the panel draws
-// perfectly, the letter answers with the first of the two, and you would
-// simply come to believe the second one is not offered.
+// an answer no key can reach, and it does not look like a bug: the screen
+// draws perfectly, the letter answers with the first of the two, and you would
+// simply come to believe the second one is not offered. The phone has no
+// keyboard, so this one is now guarding a property nothing currently uses —
+// kept because the keys are the contract (see the head of `logs.js`) and a
+// collision introduced today would be found by whatever reads them next.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { STEPS as BATHROOM } from "../../web/app/panels/bathroom.js";
-import { STEPS as DRINKS } from "../../web/app/panels/drinks.js";
-import { STEPS as MEALS } from "../../web/app/panels/meals.js";
-import { applicableSteps, parseAmount } from "../../web/app/quicklog.js";
+import {
+  applicableSteps,
+  BATHROOM_STEPS as BATHROOM,
+  DRINK_STEPS as DRINKS,
+  MEAL_STEPS as MEALS,
+  parseAmount,
+} from "../../web/app/logs.js";
 
 const names = (steps) => steps.map((s) => s.name);
 
@@ -143,9 +153,10 @@ describe("every step's keys", () => {
     });
 
     it(`asks at most one typed question on ${panel}`, () => {
-      // The whole file assumes a step is answered with one key. A second text
-      // box on one panel would mean two Enters and a Tab between them, which
-      // is not a quick log any more — see the note at the top of quicklog.js.
+      // A second typed answer in one log would mean two keyboards opening on
+      // a phone, one after the other, which is the specific thing that makes a
+      // log get abandoned. One box is the budget — see `DRINK_STEPS`, which
+      // spends it and argues for why.
       assert.ok(steps.filter((step) => step.field).length <= 1);
     });
   }

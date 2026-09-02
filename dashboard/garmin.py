@@ -2,8 +2,9 @@
 
 This is pass two of the health tab: the numbers a Forerunner 165 already
 measures, pulled in so they do not have to be typed. Sleep, HRV, resting heart
-rate, Body Battery, calories out, and whatever the hydration glyph was tapped
-for. Deliberately **not** activities -- minutes and RPE stay hand-entered,
+rate, Body Battery, calories out, the day's stress average, what was sweated
+out, and -- on the days there is one -- a VO2max estimate. Deliberately **not**
+activities -- minutes and RPE stay hand-entered,
 because session load is rpe x minutes and a duration the watch is confident
 about paired with an RPE nobody answered is a load figure that is half
 invented. `training_session.garmin_activity_id` is already there for the day
@@ -162,7 +163,7 @@ def rhr_metrics(payload: Any) -> dict[HealthMetric, float]:
 
 
 def stats_metrics(payload: Any) -> dict[HealthMetric, float]:
-    """Calories out and Body Battery.
+    """Calories out, Body Battery, and the day's stress average.
 
     `totalKilocalories` is everything -- BMR plus what you did -- which is the
     half of the energy balance the meal log cannot supply.
@@ -171,6 +172,16 @@ def stats_metrics(payload: Any) -> dict[HealthMetric, float]:
     highest is the wake value in all but pathological cases, and the wake value
     is the one worth having: read at 9pm, "most recent" measures how long your
     day was rather than how well you recovered from yesterday.
+
+    Stress rides along in this same payload rather than needing an endpoint of
+    its own -- `get_stats` is the daily user summary, and `averageStressLevel`
+    has been in it as long as the rest of these have. One call fewer against an
+    unofficial API is one fewer thing to break.
+
+    Garmin reports **-1 or -2** for a day with no valid stress reading -- the
+    watch off, or too little wear time to average. `_num` refuses anything at
+    or below zero, so those arrive here as no reading at all, which is what
+    they are.
     """
     if not isinstance(payload, dict):
         return {}
@@ -181,21 +192,70 @@ def stats_metrics(payload: Any) -> dict[HealthMetric, float]:
     battery = _num(payload.get("bodyBatteryHighestValue"))
     if battery:
         out[HealthMetric.body_battery] = battery
+    stress = _num(payload.get("averageStressLevel"))
+    if stress:
+        out[HealthMetric.stress] = stress
     return out
 
 
 def hydration_metrics(payload: Any) -> dict[HealthMetric, float]:
-    """Millilitres, as tapped into the watch.
+    """What was drunk and what was sweated out, both in millilitres.
 
-    Zero is dropped by `_num`, and that is the interesting case rather than an
-    edge one: it means the glyph went untapped, which is a day with no reading
-    on it and not a day you drank nothing. `health.hydration_mean` skips absent
-    days for the same reason.
+    `valueInML` is the glyph total and is no longer read by anything -- see
+    `HealthMetric.hydration_ml`. It is still written, because a series stops
+    being collectable the moment it stops being written and this one costs a
+    dictionary lookup to keep.
+
+    `sweatLossInML` is the reading the hydration score actually uses. The FR165
+    computes it per activity and the summary totals the day, so it exists on
+    days you trained and is absent on days you did not. Absent, again, rather
+    than zero: a rest day did not sweat nothing, it produced no estimate.
+
+    Zero is dropped by `_num` for both, and for the glyph that is the
+    interesting case rather than an edge one -- it means the glyph went
+    untapped, which is a day with no reading on it and not a day you drank
+    nothing.
     """
     if not isinstance(payload, dict):
         return {}
-    value = _num(payload.get("valueInML"))
-    return {HealthMetric.hydration_ml: round(value, 1)} if value else {}
+    out: dict[HealthMetric, float] = {}
+    tapped = _num(payload.get("valueInML"))
+    if tapped:
+        out[HealthMetric.hydration_ml] = round(tapped, 1)
+    sweat = _num(payload.get("sweatLossInML"))
+    if sweat:
+        out[HealthMetric.sweat_loss_ml] = round(sweat, 1)
+    return out
+
+
+def vo2max_metrics(payload: Any) -> dict[HealthMetric, float]:
+    """The running VO2max estimate, ml/kg/min.
+
+    The only endpoint here that answers with a **list**: the max-metrics URL
+    takes a date range and returns one entry per day, and this module always
+    asks for a range of one. Nothing downstream cares which day an entry claims
+    to be -- `read_day` is already scoped to a date and the row is written
+    against it -- so the first entry that carries a number is the answer.
+
+    `vo2MaxPreciseValue` first and `vo2MaxValue` second. The precise field is
+    the same estimate to one decimal place; the plain one is it rounded to a
+    whole number, and a whole-number series would show a fortnight of no change
+    followed by a step, which reads as a plateau that is really a rounding.
+
+    Absent on most days on purpose. Garmin recomputes this only after an
+    outdoor run with heart rate, so a lifting week yields nothing at all and
+    the gaps in the series are the truth about it -- see `HealthMetric.vo2max`.
+    Under `read_day`'s house rule that costs nothing: no number, no row.
+    """
+    entries = payload if isinstance(payload, list) else [payload]
+    for entry in entries:
+        generic = _dig(entry, "generic")
+        value = _num(_dig(generic, "vo2MaxPreciseValue")) or _num(
+            _dig(generic, "vo2MaxValue")
+        )
+        if value:
+            return {HealthMetric.vo2max: round(value, 1)}
+    return {}
 
 
 @dataclass(frozen=True)
@@ -221,6 +281,11 @@ ENDPOINTS = (
     Endpoint("get_rhr_day", rhr_metrics),
     Endpoint("get_stats", stats_metrics),
     Endpoint("get_hydration_data", hydration_metrics),
+    # Last, and the one that usually answers with nothing. It is a whole extra
+    # round trip for a number that changes a few times a month -- which is
+    # affordable exactly because the table is a table: the cost of it being
+    # here is one request, and the cost of it breaking is one metric.
+    Endpoint("get_max_metrics", vo2max_metrics),
 )
 
 
@@ -228,7 +293,7 @@ def read_day(client: Any, date: dt.date) -> Iterator[tuple[HealthMetric, float]]
     """Every metric one day can offer, from whichever endpoints answered.
 
     Each call is isolated. A 404 on hydration must not cost you last night's
-    sleep, and over an unofficial API that is not a hypothetical: these five
+    sleep, and over an unofficial API that is not a hypothetical: these six
     endpoints have independent histories and break independently.
     """
     iso = date.isoformat()
@@ -497,9 +562,12 @@ def main(argv: list[str] | None = None) -> int:
         client = garminconnect.Garmin(
             email=email, password=password, prompt_mfa=lambda: input("MFA code: ").strip()
         )
-        client.login()
         tokens.mkdir(parents=True, exist_ok=True)
-        client.garth.dump(str(tokens))
+        # Handed the path, `login` writes the token store itself. It used to be
+        # a bare `login()` and a separate `client.garth.dump(...)`; garth is not
+        # on the client public surface any more, and the dump it carried moved
+        # inside `login` along with it.
+        client.login(str(tokens))
         print(f"tokens written to {tokens}. the server will use them from here.")
         return 0
 

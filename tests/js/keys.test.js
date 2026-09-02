@@ -15,9 +15,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { JUMPS } from "../../web/app/carousel.js";
 import { inEditor } from "../../web/app/keys.js";
 import { HINT_KEYS } from "../../web/app/nav.js";
+import { ZOOMS } from "../../web/app/panels/health.js";
 
 /** An element that knows which selectors it matches an ancestor for. */
 const node = (...matches) => ({
@@ -44,25 +44,33 @@ describe("inEditor", () => {
 });
 
 // `f` dispatches two alphabets at once: a letter painted on a link, and a
-// letter that jumps to one of the logging card's tabs. They must not overlap,
-// and nothing at runtime notices when they do — keys.js checks `JUMPS` first,
-// so a letter in both lists paints a hint on a link that can never be reached
-// and the panel looks perfectly fine. This is the check that a tab added to
-// the carousel remembers to take its letter out of the hint alphabet.
+// letter that expands one of the health rail's four scores. They must not
+// overlap, and nothing at runtime notices when they do — keys.js checks
+// `ZOOMS` first, so a letter in both lists paints a hint on a link that can
+// never be reached and the panel looks perfectly fine.
+//
+// The third case below is the one that decided which letters the zooms got.
+// The obvious choice was mnemonic — r, o, u, y for recovery, lOad, fUel,
+// hYdration — and all four of those are currently *in* `HINT_KEYS`, so taking
+// them would have left seventeen. The zooms took the deleted logging
+// carousel's letters instead, which were already withheld, and this alphabet
+// did not have to move.
 describe("the two alphabets under f", () => {
   it("never spend the same letter twice", () => {
-    for (const key of Object.keys(JUMPS)) {
+    for (const key of Object.keys(ZOOMS)) {
       assert.ok(
         !HINT_KEYS.includes(key),
-        `${key} jumps to ${JUMPS[key]} and is also painted on links`,
+        `${key} expands ${ZOOMS[key]} and is also painted on links`,
       );
     }
   });
 
-  it("gives every carousel tab a single lower-case letter", () => {
+  it("gives every zoom a single lower-case letter", () => {
     // Upper case would need Shift, which `panelKey` and the hint layer both
-    // decline, and a digit is already "open that numbered notification".
-    for (const key of Object.keys(JUMPS)) {
+    // decline, and a digit is already "open that numbered notification" — which
+    // is the whole reason these are letters and not the 1–4 the rail would
+    // otherwise have wanted.
+    for (const key of Object.keys(ZOOMS)) {
       assert.match(key, /^[a-z]$/, `${key} is not a letter f can dispatch`);
     }
   });

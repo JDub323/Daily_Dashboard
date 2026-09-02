@@ -46,16 +46,18 @@ const pane = () => $(`#pane-${activeTab()}`);
  * On screen, and therefore worth landing on.
  *
  * `offsetParent` alone was enough while everything off screen was off screen
- * by way of `display: none` — a hidden pane, a collapsed card. The logging
- * carousel stacks its five slides in one grid cell and hides four of them
- * with `visibility`, which keeps their layout (that is the point: the shell
- * stops resizing as it turns) and therefore keeps their `offsetParent`. Left
- * at the old test, `h`/`j`/`k`/`l` stopped on cards nobody could see
- * and `f` painted hints on their links.
+ * by way of `display: none` — a hidden pane, a collapsed card. Then the
+ * logging carousel stacked five slides in one grid cell and hid four of them
+ * with `visibility`, which keeps their layout (that was the point: the shell
+ * stopped resizing as it turned) and therefore keeps their `offsetParent`.
+ * Left at the old test, `h`/`j`/`k`/`l` stopped on cards nobody could see and
+ * `f` painted hints on their links.
  *
+ * That card is gone and this test stays, because the property it is really
+ * checking is the general one — a node is worth landing on when it can be
+ * *seen*, and `display` is only one of the two ways to stop that being true.
  * Checked on the node's own ancestors rather than the node alone, because
- * `visibility` inherits and it is the *track* that is hiding the slide, not
- * the slide hiding itself.
+ * `visibility` inherits and a container is the usual thing doing the hiding.
  */
 const visible = (node) =>
   node.offsetParent !== null && getComputedStyle(node).visibility !== "hidden";
@@ -345,15 +347,21 @@ function activateItem() {
 // One letter per link also means a headline list is not capped at the six
 // letters that happened to be free.
 
-// Five letters short of the alphabet: c, d, l, m and p belong to the logging
-// carousel, which `f` also dispatches. Two meanings for one key inside one
-// layer is not a shortcut, and painting `c` on a headline while `c` also
-// jumped to the check-in is exactly that.
+// Five letters short of the alphabet: c, d, l, m and p, which `f` also
+// dispatches. Two meanings for one key inside one layer is not a shortcut, and
+// painting `c` on a headline while `c` also does something else is exactly
+// that.
 //
-// This list and `carousel.TABS` have to agree, and nothing enforces it — a
-// letter added there and left here paints a hint that the dispatcher never
-// offers, so the link is simply unreachable and the panel looks fine. It is
-// checked in `tests/js/keys.test.js` for that reason.
+// They were the logging carousel's five tabs. That card is gone and the health
+// tab's four score zooms inherited four of them plus `p` as an alias — see
+// `ZONES` in panels/health.js — precisely so this string did not have to move.
+// Spending four *fresh* letters would have left eighteen here, and a headline
+// list runs to twenty.
+//
+// This list and `health.ZOOMS` have to agree, and nothing at runtime enforces
+// it: a letter added there and left here paints a hint that the dispatcher
+// never offers, so the link is simply unreachable and the panel looks fine.
+// It is checked in `tests/js/keys.test.js` for that reason.
 export const HINT_KEYS = "abefghijknoqrstuvwxyz";
 
 let hinted = [];
@@ -372,9 +380,9 @@ export const inHints = () => mode === "hints";
  *
  * It used to decline on a panel with no links, which was right when links
  * were the only thing this layer did. It now also carries the five letters
- * that jump to a log — and those have to work from the maths tab, which has
- * no links on it at all — so an empty panel opens the layer with nothing
- * painted rather than swallowing the keypress.
+ * that expand a health score — and those have to work from the maths tab,
+ * which has no links on it at all — so an empty panel opens the layer with
+ * nothing painted rather than swallowing the keypress.
  */
 /**
  * @param nudges how many notifications are on screen, so the mode line can say
@@ -396,7 +404,7 @@ export function hint(nudges = 0) {
   mode = "hints";
   const painted = hinted.length ? `a–${HINT_KEYS[hinted.length - 1]} · ` : "";
   const numbered = nudges > 0 ? ` · 1–${nudges}` : "";
-  $("#st-mode").textContent = `hints ${painted}c d l m p${numbered}`;
+  $("#st-mode").textContent = `hints ${painted}c l m d${numbered}`;
   return true;
 }
 

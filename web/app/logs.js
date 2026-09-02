@@ -1,22 +1,26 @@
 // What the five logs ask. Nothing here knows how any of it is drawn.
 //
-// These tables used to live one per panel, beside the code that rendered them,
-// which was the right place for them while there was one thing rendering them.
-// There are now two: the desktop cards under `panels/`, which are a keyboard
-// ladder, and the phone at `/m`, which is a grid of thumb-sized buttons. Those
-// two disagree about everything *except* what the questions are and what the
-// legal answers to them are — which is exactly the part that must never
-// disagree, because it is the part the database has an opinion about.
+// These tables used to live one per panel, beside the code that rendered them.
+// Then there were two things rendering them — the desktop cards and the phone
+// at `/m` — and they were moved here so the two could not disagree about what
+// the questions were, which is the part the database has an opinion about.
 //
-// So a question lives here once. Adding a step, a kind, or a rung to a scale is
-// one edit, and both clients grow it. A step added on one side only is a column
-// the other side never fills, which the table then rejects — after the answers
-// have already been given, which is the worst moment to find out.
+// **There is now exactly one client again, and this file stays where it is.**
+// The desktop cards are gone: the laptop stopped being a logging surface in
+// the pass that made the health tab one panel, and every log is answered on
+// the phone. Folding these tables back into `m/app.js` would be undoing the
+// wrong half of that — this is the *contract*, and it is worth having in a
+// file with no client in it precisely so the next surface that needs it (the
+// watch, a shortcut, a script) inherits the questions rather than a copy.
 //
-// The keys stay even though the phone has no keyboard. They are still the
-// desktop's whole interaction, they cost one character each, and a `[key, value,
-// label]` triple that sometimes has a key and sometimes does not is a shape
-// every reader has to check.
+// So a question still lives here once. A step added anywhere else is a column
+// the table then rejects, after the answers have already been given, which is
+// the worst possible moment to find out.
+//
+// The keys stay even though the phone has no keyboard. They cost one character
+// each, a `[key, value, label]` triple that sometimes has a key and sometimes
+// does not is a shape every reader has to check, and they are the part of this
+// that a keyboard surface would need again.
 //
 // Nothing in this file imports anything. That is deliberate and it is what
 // makes it shareable: the panels drag in the store, the DOM helpers, the
@@ -54,16 +58,45 @@ export const MEAL_STEPS = [
 ];
 
 // --- drinks -----------------------------------------------------------------
+//
+// The four things about this log you cannot guess by looking at it. They were
+// behind a `?` on the desktop card until that card was deleted, and they are
+// here rather than gone because they are rules about what the *rows mean* —
+// two years of them are going to be summed by `health.fluid_mean`, and a
+// series where half the Gatorade Zeros were filed as gatorade is a series with
+// two hundred calories a day of noise in it.
+//
+//   **One drink is twelve ounces of it.** A can is 1, a 16.9oz bottle is 1.4,
+//   a mug about 0.8 — and the number is printed on the side of most of them.
+//   This is the one quick log with a typed answer rather than a row of
+//   buttons, because the answer is *written on the bottle*: size and volume
+//   are buckets because nobody knows how big their lunch was, and rounding a
+//   number you can read off the label would be throwing away accuracy that
+//   cost nothing to have.
+//
+//   **`electrolyte` and `gatorade` differ on sugar and nothing else.** Which
+//   is why a Gatorade Zero is `electrolyte` whatever the bottle says. Two
+//   hundred calories is either a mid-session necessity or a soft drink, and
+//   the log cannot tell them apart if they share a row.
+//
+//   **`coffee` counts as fluid.** The diuretic effect is real and smaller than
+//   the water it arrives in. It is its own kind because the caffeine is worth
+//   counting, not because the water in it is suspect.
+//
+//   **`alcohol` counts as no fluid at all, and changes the unit.** There a
+//   drink is a *standard* drink — a shot, a beer and a glass of wine are each
+//   1 — because the point is the alcohol rather than the volume, and twelve
+//   ounces of spirits is not a quantity anybody means.
 
 /**
  * `[key, value, label]`, in the order they are reached for.
  *
  * Four of the five keys are the first letter. Gatorade is `s`, for *sports
- * drink*, and the reason is the same one that made the carousel's in-and-out
- * tab `p`: `g` is spent. It is half of `gg`, which is "first panel of this
- * section" and one of the keys `panel.js` will not let a card claim — so a
- * `g` bound here would answer while the ladder was up and do nothing at all
- * at a card sitting idle, which is worse than a letter you have to learn once.
+ * drink*, and the reason is the same one that made the old in-and-out tab `p`:
+ * `g` is spent. It is half of `gg`, which is "first panel of this section" and
+ * one of the keys `panel.js` will not let a card claim — so a `g` bound here
+ * would answer while the ladder was up and do nothing at all at a card sitting
+ * idle, which is worse than a letter you have to learn once.
  */
 export const DRINK_KIND = [
   ["w", "water", "water"],
@@ -211,16 +244,17 @@ export const RPE_ANCHOR = {
 
 // --- what the plan is still owed --------------------------------------------
 //
-// Both clients can answer a prescribed block now, so both have to agree on
-// which ones are already answered. They agree by construction rather than by
-// eye: this is the only definition of it, and `panels/plan.js` and `m/app.js`
-// each ask it rather than each building their own set out of `plan_key`.
+// One definition of "already answered", and the server now shares it: `/m`
+// asks this to decide which blocks to offer, and `state.health_panel` computes
+// the load zone's prescribed-against-logged off the same rule.
 //
-// The reason it is here at all is worth stating. The phone posted sessions with
-// no plan key on them, so a lift logged in the gym left the laptop's card open
-// all evening asking for a lift that had already happened — and that is a wrong
-// answer which by construction only ever appears on the screen you did *not*
-// log from, so nothing about logging it looks amiss at the time.
+// It was written when there were two clients that could each answer a block,
+// and the bug it fixed is worth keeping on the record even though one of those
+// clients is gone. The phone posted sessions with no plan key on them, so a
+// lift logged in the gym left the laptop's card open all evening asking for a
+// lift that had already happened — a wrong answer which by construction only
+// ever appeared on the screen you did *not* log from, so nothing about logging
+// it looked amiss at the time.
 
 /** The plan keys a set of sessions has answered. Freehand rows carry none and
  *  answer nothing, which is the point: a session logged off-plan must not close
@@ -240,18 +274,22 @@ export const openBlocks = (plan, sessions) => {
 // --- reading the tables above -----------------------------------------------
 //
 // Two pure functions, and they live here for the same reason the tables do:
-// both clients have to reach the same conclusion about them, and this is the
-// file that imports nothing.
+// this is the file that imports nothing, so the phone can have them without
+// dragging the dashboard in behind them.
 //
-// They were in `quicklog.js` until the phone needed them. That was a fine home
-// while the desktop was the only reader, and a bad one the moment the phone
-// imported them: `quicklog.js` pulls in the store, the nav ring, the capture
-// stack and the HTTP client, so two lines of branching logic dragged five
-// desktop modules into the phone's module graph — and, worse, into the graph
-// the service worker has to have cached for the app to open with no server.
-// Five files that were never in `SHELL`, so the offline app was one cache
-// eviction away from a blank screen. Moving them costs nothing and removes the
-// whole class.
+// They were in the desktop's `quicklog.js` until the phone needed them. That
+// was a fine home while the desktop was the only reader, and a bad one the
+// moment the phone imported them: that file pulled in the store, the nav ring,
+// the capture stack and the HTTP client, so two lines of branching logic
+// dragged five desktop modules into the phone's module graph — and, worse,
+// into the graph the service worker has to have cached for the app to open
+// with no server. Five files that were never in `SHELL`, so the offline app
+// was one cache eviction away from a blank screen.
+//
+// `quicklog.js` has since been deleted with the rest of the laptop's logging
+// cards, which is the tidiest available end to that story and no reason at all
+// to move these back. The property that mattered was never where they came
+// from — it is that this file has no client in it.
 
 /**
  * Which steps this entry actually asks, given what has been answered so far.

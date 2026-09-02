@@ -30,6 +30,7 @@ from .common import (
     DrinkKind,
     EntrySource,
     HealthMetric,
+    InputState,
     MathOutcome,
     MealSize,
     Rating,
@@ -1110,6 +1111,59 @@ class HealthSeries(Base):
     points: list[tuple[dt.date, float]] = Field(default_factory=list)
 
 
+class ZoneInput(Base):
+    """One reading feeding one of the rail's four bars.
+
+    Carried across the wire individually rather than summed server-side,
+    because the zoom draws each of them as its own small bar against its own
+    baseline -- and because a composite is only defensible if the thing it is
+    composed of is one keystroke away. A number you cannot take apart is a
+    number you end up believing.
+    """
+
+    key: str
+    """Stable id — what the panel keys its rows off."""
+
+    label: str
+    """What the row is called on screen. Lower case, like everything else."""
+
+    state: InputState
+    """Whether this input scored, and if not, which kind of absence it is.
+    See `InputState`: a charger night and a rest day must not read alike."""
+
+    value: float | None = None
+    """0-100, and only when `state` is `scored`. Every input is normalised to
+    the same scale so the zoom's bars are comparable side by side; what each
+    100 *means* is that input's own business and lives in `health.py`."""
+
+    reading: str | None = None
+    """The raw fact, in words -- `58 ms against a 62 baseline`. The score is
+    what the bar draws; this is what makes it checkable, and it is the half a
+    normalised number throws away."""
+
+
+class ZoneScore(Base):
+    """One bar on the rail, and everything under it.
+
+    `value` is the mean of whichever inputs actually scored, equally weighted.
+    Equal weights are a judgement and meant to be argued with -- what they buy
+    is that the number cannot be quietly steered by a weighting nobody
+    remembers choosing, and the zoom shows the parts, so a bar dragged down by
+    one input is one keystroke from saying which.
+    """
+
+    value: float | None = None
+    """0-100, or None when not one input could be scored honestly. None renders
+    as words rather than as an empty bar -- see `note`."""
+
+    inputs: list[ZoneInput] = Field(default_factory=list)
+
+    note: str | None = None
+    """Said under the bar whenever it is standing on less than all of itself:
+    which inputs are missing and why. Absent when everything scored, because a
+    bar with nothing wrong with it should say nothing at all."""
+
+
 class HealthDerived(Base):
     """Everything computed rather than typed. See `dashboard/health.py`.
 
@@ -1123,11 +1177,28 @@ class HealthDerived(Base):
     """This week's mean daily load over your four-week normal."""
 
     monotony: float | None = None
+    strain: float | None = None
+    """Weekly load x monotony. Volume weighted by how unrelenting it was."""
+
     week_load: int = 0
     prev_week_load: int = 0
 
     weight_ema: float | None = None
     weight_per_week: float | None = None
+
+    # -- the rail ------------------------------------------------------------
+    #
+    # Four bars, each a mean over whichever of its inputs could be scored
+    # honestly. They are composites, which this panel spent its first two
+    # passes refusing to build -- see the note at the head of `panels/health.js`
+    # for what changed and why. The short version is that a composite is only
+    # as defensible as its parts are reachable, and these parts are one
+    # keystroke away.
+
+    recovery: ZoneScore = Field(default_factory=ZoneScore)
+    load: ZoneScore = Field(default_factory=ZoneScore)
+    fuel: ZoneScore = Field(default_factory=ZoneScore)
+    hydration: ZoneScore = Field(default_factory=ZoneScore)
 
     readiness_week: float | None = None
     """Mean score over the last seven answered mornings."""
@@ -1165,6 +1236,30 @@ class HealthDerived(Base):
     for days is the classic non-functional-overreaching tell."""
 
     body_battery_last: float | None = None
+
+    stress_last: float | None = None
+    """Today's all-day stress average, 0-100, lower being calmer."""
+
+    # -- the two slow trends -------------------------------------------------
+    #
+    # Not bars, and that is the whole reason they sit apart from the rail:
+    # neither has a 0-100 direction without a target, and nobody has set one.
+    # A weight of 172 is not 60% of anything.
+
+    vo2max_last: float | None = None
+    """The most recent estimate on file, whenever it arrived. `latest`
+    elsewhere means "today or nothing"; here it deliberately does not, because
+    an estimate only updates after an outdoor run and a rule that showed it
+    only on the day it moved would show it about twice a month."""
+
+    vo2max_on: dt.date | None = None
+    """Which day `vo2max_last` came from, so the panel can say how stale it is
+    rather than implying it is today's."""
+
+    vo2max_change: float | None = None
+    """Change over the trailing quarter, in ml/kg/min. None until there are
+    two readings far enough apart to subtract -- a difference of two numbers a
+    week apart is noise with a sign on it."""
 
     # -- in and out ---------------------------------------------------------
 
@@ -1214,6 +1309,23 @@ class HealthDerived(Base):
     alcohol_week: float | None = None
     """Standard drinks in the last seven days. A total, not a mean, and 0.0 is
     a real answer that only exists when the log was being kept."""
+
+    sweat_loss_ml: float | None = None
+    """Mean ml a day the watch reckons were sweated out this week.
+
+    Not a thing to be good or bad at -- it is the term that moves the fluid
+    target, which is the entire reason it replaced `hydration_ml` as the
+    watch's hydration input. A hard week needs more water than an easy one and
+    a fixed daily goal cannot know that."""
+
+    vert_jump_last: float | None = None
+    """Inches, best of three, from the last testing day."""
+
+    vert_jump_on: dt.date | None = None
+    vert_jump_points: int = 0
+    """How many testing days are on file. The load zoom stays quiet about the
+    jump until there are about ten -- a trend through four points measured six
+    weeks apart is a line drawn through nothing."""
 
 
 class GarminStatus(Base):

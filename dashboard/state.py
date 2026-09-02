@@ -712,6 +712,10 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
     hrv, rhr = points(HealthMetric.hrv), points(HealthMetric.resting_hr)
     battery = points(HealthMetric.body_battery)
     calories, water = points(HealthMetric.calories_out), points(HealthMetric.hydration_ml)
+    stress = points(HealthMetric.stress)
+    sweat = points(HealthMetric.sweat_loss_ml)
+    vo2max = points(HealthMetric.vo2max)
+    jump = points(HealthMetric.vert_jump)
 
     def latest(series: list[tuple[dt.date, float]]) -> float | None:
         """Today's reading, and only today's.
@@ -736,10 +740,51 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
     spend = health.expenditure_mean(calories, today)
     balance = intake - spend if intake is not None and spend is not None else None
 
+    fluid = health.fluid_mean(drinks, today)
+    sweat_week = health.scalar_mean(sweat, today)
+    caffeine = health.caffeine_mean(drinks, today)
+    alcohol = health.alcohol_week(drinks, today)
+
+    # The plan, and how much of the *week's* prescription has been answered.
+    #
+    # A week rather than today, and the difference is the whole of what this
+    # input is worth. The load zone's other three numbers -- the ratio, the
+    # monotony, the strain -- are all seven- or twenty-eight-day windows, and a
+    # daily compliance figure sitting beside them swings from 0 to 100 over the
+    # course of a Tuesday: at nine in the morning nothing prescribed has been
+    # logged yet, which is not a fact about your training. Read over the week
+    # it is on the same clock as its neighbours and says the thing it is meant
+    # to say, which is whether the plan is being followed.
+    #
+    # Read here rather than inside `load_score` because `health.py` has never
+    # known what a `TrainingPlan` is -- it takes lists of rows and returns
+    # numbers, and the whole reason it is testable is that it stayed that way.
+    plan = training_plan(cfg, today)
+    sessions_today = repo.sessions_on(today)
+    answered = {s.plan_key for s in sessions if s.plan_key}
+
+    program = trainplan.program(cfg.path("training"))
+    owed = [
+        block
+        for offset in range(health.ACUTE_DAYS)
+        # Extras are excluded, here as everywhere: sparring and neck are things
+        # a practice sometimes contains, not things the week asked for, and a
+        # compliance figure that counted them could never reach 100.
+        for block in (
+            trainplan.prescription(program, today - dt.timedelta(days=offset))
+            if program
+            else []
+        )
+        if not block.extra
+    ]
+    plan_open = sum(1 for block in owed if block.key not in answered)
+
+    vo2 = health.vo2max_trend(vo2max, today)
+
     return api.HealthPanel(
         series=health_series(repo),
         readiness_today=repo.readiness(today),
-        sessions_today=repo.sessions_on(today),
+        sessions_today=sessions_today,
         bathroom_today=repo.bathroom_on(today),
         meals_today=repo.meals_on(today),
         drinks_today=repo.drinks_on(today),
@@ -747,8 +792,21 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
         derived=api.HealthDerived(
             acwr=health.acwr(sessions, today),
             monotony=health.monotony(sessions, today),
+            strain=health.strain(sessions, today),
             week_load=int(week),
             prev_week_load=int(prev_week),
+            # The rail. Each of these is a mean over whichever of its inputs
+            # could be scored honestly, and each carries its own inputs across
+            # so the zoom can draw them -- see the section head in `health.py`
+            # for why a panel that refused composites now ships four.
+            recovery=health.recovery_score(
+                hrv, rhr, sleep_score, battery, stress, entries, today
+            ),
+            load=health.load_score(sessions, plan_open, len(owed), jump, today),
+            fuel=health.fuel_score(meals, balance, today),
+            hydration=health.hydration_score(
+                fluid, sweat_week, visits, caffeine, alcohol, today
+            ),
             weight_ema=trend[0] if trend else None,
             weight_per_week=trend[1] if trend else None,
             readiness_week=health.readiness_mean(entries, today, health.ACUTE_DAYS),
@@ -766,6 +824,13 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
             rhr_baseline=rhr_base[0] if rhr_base else None,
             rhr_spike_days=health.scalar_run(rhr, today, above=True),
             body_battery_last=latest(battery),
+            stress_last=latest(stress),
+            # The one reading on this panel that is deliberately not gated on
+            # being today's -- an outdoor run is what moves it, so most days
+            # have none and "today or nothing" would blank it all month.
+            vo2max_last=vo2[0] if vo2 else None,
+            vo2max_on=vo2[1] if vo2 else None,
+            vo2max_change=vo2[2] if vo2 else None,
             dark_urine_days=health.dark_urine_run(visits, today),
             hydration_ml=health.hydration_mean(water, today),
             liquid_days=health.liquid_days(visits, today),
@@ -777,11 +842,15 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
                 health.implied_lb_per_week(balance) if balance is not None else None
             ),
             diet_quality=health.diet_quality(meals, today),
-            fluid_ml=health.fluid_mean(drinks, today),
-            caffeine_drinks=health.caffeine_mean(drinks, today),
-            alcohol_week=health.alcohol_week(drinks, today),
+            fluid_ml=fluid,
+            caffeine_drinks=caffeine,
+            alcohol_week=alcohol,
+            sweat_loss_ml=sweat_week,
+            vert_jump_last=jump[-1][1] if jump else None,
+            vert_jump_on=jump[-1][0] if jump else None,
+            vert_jump_points=len(jump),
         ),
-        plan=training_plan(cfg, today),
+        plan=plan,
         garmin=garmin.status(cfg),
         synced_today=[
             metric

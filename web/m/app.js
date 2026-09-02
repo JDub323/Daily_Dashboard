@@ -1,23 +1,33 @@
-// The phone log.
+// The phone log. **The only logging surface there is.**
 //
-// The dashboard's logging cell — the five cards that take turns in one slot on
-// the health tab — as something you can use standing up, one-handed, in a
-// kitchen or a gym, with the laptop shut.
+// It began as the dashboard's logging cell — five cards that took turns in one
+// slot on the health tab — made usable standing up, one-handed, in a kitchen
+// or a gym, with the laptop shut. It ended as the whole thing: those five
+// cards have been deleted, because for months every one of these logs was
+// being answered here anyway, and a second surface that is never used is a
+// second surface that goes quietly wrong.
+//
+// What that changes is the stakes rather than the code. A row that does not
+// arrive from this app does not arrive at all — nothing on the laptop will
+// catch it later — so `queue.js`'s rules about what counts as delivered are
+// load-bearing in a way they were not, and the health tab has had to grow a
+// vocabulary for saying *which kind* of nothing a missing metric is.
 //
 // --- what it is not ---------------------------------------------------------
 //
-// It is not the desktop cell made narrow. That cell is a *keyboard ladder*:
-// `m` `l` `4` is a large, fairly clean meal, and the whole design of it — one
-// keystroke per question, the last one commits — is an argument about
-// keystrokes. None of that survives contact with a touchscreen, where there is
-// no keyboard until you ask for one and asking for one covers half the screen.
+// It was never the desktop cell made narrow. That cell was a *keyboard
+// ladder*: `m` `l` `4` was a large, fairly clean meal, and the whole design of
+// it — one keystroke per question, the last one commits — was an argument
+// about keystrokes. None of that survives contact with a touchscreen, where
+// there is no keyboard until you ask for one and asking for one covers half
+// the screen.
 //
 // So the ladder is unrolled. Every question a log asks is on screen at once as
 // a row of buttons big enough to hit without looking, you answer them in any
 // order, and the entry commits when the last one is filled. Same questions,
-// same legal answers, same request bodies — those come from `app/logs.js`,
-// which both clients import, so a step added there grows on both. What differs
-// is only how it is asked.
+// same legal answers, same request bodies — those still come from
+// `app/logs.js`, which is where the *contract* lives rather than where the
+// other client lived.
 //
 // --- the theme --------------------------------------------------------------
 //
@@ -358,11 +368,11 @@ function stepRow(step, draftValues, answer) {
 /**
  * A quick log — meals, drinks, in and out.
  *
- * All three are the same shape and always were; `quicklog.js` is the desktop's
- * version of this same observation. The branch (`when`) is honoured through
- * `applicableSteps`, imported rather than reimplemented, so the phone cannot
- * come to a different conclusion about whether a urine entry is asked for a
- * solidity than the card on the laptop does.
+ * All three are the same shape and always were — the desktop had its own
+ * factory making the same observation, and it went with the cards. The branch
+ * (`when`) is honoured through `applicableSteps`, imported from `logs.js`
+ * rather than reimplemented, so there is one answer to whether a urine entry
+ * is asked for a solidity and it is not this file's.
  */
 function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
   let answers = {};
@@ -425,8 +435,8 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
 /**
  * The one typed answer in the three quick logs: how many drinks.
  *
- * Argued for at length in `panels/drinks.js` — the number is printed on the
- * side of the bottle, and bucketing it into small/medium/large would be
+ * Argued for at length above `DRINK_KIND` in `logs.js` — the number is printed
+ * on the side of the bottle, and bucketing it into small/medium/large would be
  * throwing away accuracy that cost nothing. On a phone it gets a numeric
  * keypad and three presets, because "1" is the answer nine times in ten and
  * opening a keyboard to type it is the tax this row would otherwise charge
@@ -590,7 +600,7 @@ const LOGS = [
 /**
  * The morning check-in.
  *
- * Five questions on 1–5 plus the two measurements, and it is the one log with a
+ * Five questions on 1–5 plus the morning weight, and it is the one log with a
  * draft: the request model wants all five at once, because a `score` summed
  * over three of them is a number that means nothing.
  *
@@ -645,8 +655,16 @@ function checkinLog() {
           : "saved";
 
       return [
+        // Weight and nothing else. The hours-slept box was here beside it and
+        // is gone: the watch measures that better at 6am than anyone types it,
+        // and a box you fill in from a guess produces a series indistinguishable
+        // from a measured one. Weight stays because nothing weighs him but a
+        // scale — there is no watch reading to defer to.
+        //
+        // `sleep_quality` is still asked below, and that is not a duplicate:
+        // one is how long the night was and the other is what it was like, and
+        // the disagreement between them is the diagnostic.
         measure("weight", "lb", "weight"),
-        measure("sleep_hours", "hours slept", "sleep"),
         ...CHECKIN_ITEMS.map(([key, name, low, high]) => {
           const shown = shownFor(key);
           return el("div.q", null,
@@ -681,12 +699,19 @@ function checkinLog() {
 }
 
 /**
- * One of the two scalars the check-in takes: weight, and hours slept.
+ * The one scalar the check-in takes: the morning weight.
  *
- * A number box rather than buttons, because there is no set of five answers to
- * "what do you weigh". `decimal` rather than `number` on the input: a
- * `type=number` on iOS is a text keyboard with a spinner nobody can hit, and
- * `inputmode` gets the keypad without the spinner.
+ * There were two. Hours slept was beside it and came out when the watch
+ * started reporting them — a box you fill in from a guess produces a series
+ * indistinguishable from a measured one, and at 6am the guess is what you get.
+ * Weight has no such alternative: nothing weighs him but a scale.
+ *
+ * Still parameterised, because the shape is right and the next hand-entered
+ * scalar (the vertical jump, on testing days) will want exactly this and
+ * nothing else — a number box rather than buttons, because there is no set of
+ * five answers to "what do you weigh". `decimal` rather than `number` on the
+ * input: a `type=number` on iOS is a text keyboard with a spinner nobody can
+ * hit, and `inputmode` gets the keypad without the spinner.
  */
 function measure(metric, unit, name) {
   const series = panel?.series?.find((s) => s.metric === metric);
@@ -734,17 +759,22 @@ const planToken = (entry) => String(entry.plan_key ?? "").split(":")[1] ?? "";
  *
  * The first question is which of today's prescribed blocks this was, and it is
  * the whole reason this card was changed. Without it every session logged here
- * went up with no `plan_key` — a load the day counted, and a box the laptop's
- * plan card went on asking for, because a block is only closed by a session
+ * goes up with no `plan_key` — a load the day counts, and a block the plan
+ * goes on treating as owed, because a block is only closed by a session
  * carrying its key and matching them up by kind afterwards would be the load
- * model guessing (see `panels/plan.js`).
+ * model guessing.
  *
- * A block per button rather than the laptop's one card per outing. There, the
- * rows of an outing are one form with one submit because the desktop is filling
- * in an evening's training at a keyboard. Here you are standing in a doorway
- * having just done one of them, and the parts of a practice are logged as you
- * finish them — so each is its own entry, and the card on the laptop closes
- * once all of its rows have arrived.
+ * That matters more than it did. The health tab's load score now reads the
+ * week's prescribed blocks against the ones answered, so a session logged as
+ * `something else` is not merely untidy — it is a week's training that the
+ * panel cannot see was the training the plan asked for.
+ *
+ * A block per button rather than one card per outing, which is how the laptop
+ * used to ask: there the rows of an outing were one form with one submit,
+ * because the desktop was filling in an evening's training at a keyboard. Here
+ * you are standing in a doorway having just done one of them, and the parts of
+ * a practice are logged as you finish them — so each is its own entry, and the
+ * week's compliance figure ticks up a block at a time.
  *
  * `something else` is the way back to what this card always was: a pickup
  * session, a walk, a day the schedule got abandoned. That form is unchanged and
@@ -756,8 +786,8 @@ function sessionLog() {
     label: "session",
     render() {
       const open = openBlocks(panel?.plan, sessionRows());
-      // A block answered somewhere else while this form sat half-filled — from
-      // the laptop, or by a flush landing rows logged earlier — loses its
+      // A block answered while this form sat half-filled — by a flush landing
+      // rows logged earlier, or by this app open on a second device — loses its
       // button, and a pick with no button behind it would post a key the unique
       // index refuses and the queue then drops as a 4xx. Dropping the pick
       // instead costs one tap and cannot lose the entry.
@@ -922,7 +952,7 @@ function sessionLog() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v8";
+const BUILD = "log-v9";
 
 /**
  * The build, along the foot of the title screen.

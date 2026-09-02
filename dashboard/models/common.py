@@ -287,11 +287,54 @@ class HealthMetric(StrEnum):
     meal log, and neither is worth much without the other."""
 
     hydration_ml = "hydration_ml"
-    """What the watch's hydration glyph was tapped for, in ml. Logged by hand
-    on the wrist, so it undercounts by however much you forgot -- which is why
-    it is read *beside* urine colour rather than instead of it. A zero day is
-    never written: absent means "not logged", and that is different from
-    "drank nothing"."""
+    """What the watch's hydration glyph was tapped for, in ml.
+
+    Kept, and no longer read. `sweat_loss_ml` supersedes it as the watch's
+    hydration input: the glyph is something you remember to tap and the sweat
+    figure is something the watch computes, and only one of those two survives
+    a February. The column stays because the rows behind it are true readings
+    of the days they describe, and dropping a series to stop consulting it is
+    how a log loses the ability to answer a question asked later.
+
+    A zero day is never written: absent means "not logged", and that is
+    different from "drank nothing"."""
+
+    stress = "stress"
+    """Garmin's 0-100 all-day stress average, off the same daily summary that
+    already carries calories out and Body Battery.
+
+    An input to the recovery score rather than a thing to act on. It is derived
+    from HRV across the whole day, so it moves for the reasons the overnight
+    number moves and for several more besides -- which is the argument for
+    letting it weigh on a score and never letting it write a sentence."""
+
+    vo2max = "vo2max"
+    """ml/kg/min, as the watch estimates it.
+
+    Updates only after an outdoor run with heart rate, so most days produce
+    nothing at all. That is the metric behaving correctly rather than a sync
+    that failed: a VO2max recomputed on a day you did not run would be the
+    watch repeating itself, and the series is more honest with gaps in it than
+    with a flat line drawn across them."""
+
+    sweat_loss_ml = "sweat_loss_ml"
+    """Millilitres the watch reckons were sweated out, summed over the day's
+    activities.
+
+    The FR165 reports it per activity, so it exists on days you trained and is
+    absent on days you did not -- and absent is the right answer there, not
+    zero. This is the hydration input `hydration_ml` used to be, and a better
+    one for the reason that decides most things on this tab: nobody has to
+    remember to produce it."""
+
+    vert_jump = "vert_jump"
+    """Vertical jump, inches. Typed by hand, on testing days only.
+
+    Best of three, which is how a vertical is quoted everywhere else and
+    therefore the only version comparable with a number from a gym. Never on
+    the daily form: an empty box every morning reads as a missed log, and a
+    metric measured every six weeks cannot share a surface with one measured
+    every day without one of them lying about the other."""
 
 
 class EntrySource(StrEnum):
@@ -303,6 +346,45 @@ class EntrySource(StrEnum):
 
     manual = "manual"
     garmin = "garmin"
+
+
+class InputState(StrEnum):
+    """Why one input to a score is or is not carrying a number.
+
+    This enum exists because the laptop stopped being a logging surface. While
+    every metric had a box on the morning panel, a missing reading was "a hand
+    entry that may still arrive" and rendering it as nothing was fine -- you
+    knew what you had not typed. Now nothing gets typed, so a hole is a hole,
+    and the panel has to say *which kind* out loud.
+
+    The distinction that costs the most to get wrong is the first two against
+    each other. A night the watch spent on the charger and a rest day produce
+    the same absence, and one of them is a fact about your training while the
+    other is a fact about your watch. Rendering either as empty -- or worse, as
+    zero -- makes them the same thing on screen.
+    """
+
+    scored = "scored"
+    """A reading, and enough behind it to say what the reading means."""
+
+    no_watch_data = "no_watch_data"
+    """The watch supplies this one and there is no row for the day. A charger
+    night, a sync that has been failing, or a watch left on the side."""
+
+    no_baseline = "no_baseline"
+    """Readings exist; a comparison does not. HRV and resting heart rate are
+    only meaningful against a fortnight of your own, so the first weeks of a
+    series read as this rather than as a score computed off four numbers."""
+
+    not_logged = "not_logged"
+    """A hand-kept log that was not kept. Meals, drinks and the in-and-out log
+    all read as this, and it is deliberately not the same word as the watch's
+    absence: one of them is fixed by opening the phone."""
+
+    not_asked = "not_asked"
+    """Nothing to measure against today. A rest day prescribes no blocks, so
+    prescribed-against-logged has no denominator -- which is a complete answer
+    and not a gap."""
 
 
 class SessionKind(StrEnum):

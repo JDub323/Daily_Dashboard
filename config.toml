@@ -453,7 +453,7 @@ unlock_seconds = 300
 # writes OAuth tokens to token_dir; the server logs in from those and never
 # holds a credential. Once the tokens exist the password can come back out of
 # .env if you would rather it did not sit there.
-enabled = false
+enabled = true
 
 # Sync in the background whenever the dashboard is opened. There is no 3am
 # task for this and deliberately so: the machine is asleep at 3am, and the

@@ -29,7 +29,9 @@ import statistics
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .models import api
 from .models import domain as d
+from .models.common import InputState
 
 ACUTE_DAYS = 7
 """The "recent" window: what you did this week."""
@@ -657,3 +659,651 @@ def scalar_run(
             return run
         run += 1
     return run
+
+
+# --- the rail: four scores, and what each of them is standing on -------------
+#
+# The health tab used to answer its three questions in sentences and say
+# nothing else, and the two things it refused hardest to produce were a
+# readiness percentage and any single "are you ready" number. Both refusals
+# were right for the panel that made them, and both are repealed here. What
+# changed is not the argument -- it is that the laptop stopped being a logging
+# surface, so a screen that spoke only when it had a fortnight of history
+# became a screen that was blank most mornings while being the only place the
+# day's state is shown at all.
+#
+# So there are four composites now, and the whole of the old objection is
+# answered by three rules rather than by not building them:
+#
+#   **A score is the mean of the inputs that scored, and nothing else.** No
+#   weights, no filling a missing input in with a neutral value, no carrying
+#   yesterday's reading forward. Equal weights are a judgement and they are
+#   meant to be argued with; what they buy is that nobody can quietly steer the
+#   number, which is the failure mode of every wellness score ever shipped.
+#
+#   **Every part is one keystroke away.** `f` and a letter opens the zoom, and
+#   the zoom draws each input as its own bar against its own baseline with the
+#   raw reading printed beside it. A composite you cannot take apart is a
+#   composite you end up believing; this one is checkable in one press.
+#
+#   **An input that cannot be scored honestly says which kind of absence it
+#   is.** See `InputState`. This is the rule the old panel enforced by staying
+#   silent, and it is the one that matters most now that a hole is a hole
+#   rather than a box you have not got to yet -- a night the watch spent on the
+#   charger and a rest day must never render alike.
+#
+# What has NOT changed: nothing here invents history it does not have. Every
+# gate above this line still holds, and an input behind its gate reports
+# `no_baseline` rather than a number computed off four days.
+
+BAND_LOW = 0.8
+BAND_HIGH = 1.3
+"""The acute:chronic band the injury literature likes. `panels/health.js`
+carries a wider high of 1.5 for the *sentence* it prints, and the difference is
+deliberate: 1.5 is where a spike is worth interrupting you about, and 1.3 is
+where it stops being an ordinary week."""
+
+ACWR_FLOOR = 0.4
+ACWR_CEILING = 1.8
+"""Where the ratio scores zero on either side. Not limits -- nothing here is
+forbidden -- but the points past which "how far outside the band" has stopped
+being a useful distinction."""
+
+MONOTONY_GOOD = 1.0
+MONOTONY_BAD = 2.5
+"""Foster's monotony, scored downward. Above 2.0 is the published flag; 2.5 is
+where this stops discriminating, because everything past it is the same
+answer -- every day this week was the same size."""
+
+DEFICIT_FLOOR = -750.0
+DEFICIT_CEILING = 0.0
+"""The daily energy balance this scores as correct, in kcal.
+
+A judgement, exactly like `MEAL_KCAL`, and meant to be argued with in the same
+way. It is a cut toward a February weigh-in, so a surplus is wrong and so is a
+hole big enough to cost training: 750 kcal a day is about a pound and a half a
+week, which is the fastest anyone should be taking weight off while sparring."""
+
+FUEL_SLACK = 750.0
+"""How far outside the deficit band the balance falls to zero. Wide, because
+the balance is an estimate over three meal buckets and a narrow ramp would be
+scoring the precision of `MEAL_KCAL` rather than the eating."""
+
+BASE_FLUID_ML = 2600.0
+"""What a day needs before training, in ml.
+
+There is a fixed term here at all only because there is a moving one beside it.
+The drink log argued for years against inventing a hydration target, on the
+grounds that a target you hit by logging teaches you to log -- and that
+objection is answered by the *other* term: the watch now says how much was
+sweated out, so what a day asks for moves with the week rather than being a
+number somebody chose."""
+
+MIN_POINTS_FOR_JUMP = 10
+"""Testing days before the vertical is worth a line. Ten of them at six-week
+intervals is a year, which is the honest timescale for that measurement and the
+reason the load bar is not gated on it."""
+
+VO2MAX_WINDOW = 90
+"""Days over which the VO2max change is measured. A quarter, because the
+estimate moves by fractions and only updates after an outdoor run -- a
+month-on-month difference would mostly report which weeks it rained."""
+
+MEALS_A_DAY = 3
+"""How many meals a day the log expects. A claim about the eater rather than a
+target -- he eats three times a day, so a day with two rows in it is a day with
+a row missing. `chips.js` carries the same number for the same reason."""
+
+CAFFEINE_CEILING = 6.0
+"""Drinks of coffee a day at which the caffeine input scores zero. Double the
+sentence's flag of three, because this is a slope rather than a warning: the
+flag is where the number becomes worth *saying*, not where it becomes bad."""
+
+ALCOHOL_CEILING = 10.0
+"""Standard drinks in seven days at which the alcohol input scores zero. Same
+argument -- `panels/health.js` speaks at four, and four is where the number is
+likely to be explaining something else on the panel rather than where it has
+become the whole story."""
+
+
+def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
+    return max(low, min(high, value))
+
+
+def _ramp(value: float, zero: float, hundred: float) -> float:
+    """A straight line from `zero` to `hundred`, clamped at both ends.
+
+    `zero > hundred` reverses it, which is how the inputs where less is better
+    -- stress, urine darkness, monotony, caffeine -- are scored without a
+    second function and without a sign to get backwards.
+    """
+    if zero == hundred:
+        return 100.0
+    return _clamp((value - zero) / (hundred - zero) * 100.0)
+
+
+def _band_score(value: float, low: float, high: float, floor: float, ceiling: float) -> float:
+    """100 anywhere inside `[low, high]`, sloping to 0 at `floor` and `ceiling`.
+
+    For the two inputs with a correct *range* rather than a correct direction:
+    the workload ratio, where both a spike and a deload are departures, and the
+    energy balance, where eating too little during a camp is its own mistake
+    rather than extra progress.
+    """
+    if low <= value <= high:
+        return 100.0
+    return _ramp(value, floor, low) if value < low else _ramp(value, ceiling, high)
+
+
+def _today(points: Sequence[tuple[dt.date, float]], today: dt.date) -> float | None:
+    """Today's reading and only today's -- never "the most recent on file".
+
+    The same rule `state.latest` follows and for the same reason: a three-day-
+    old resting heart rate read as this morning's is a panel you have to
+    date-check, which is a panel you stop trusting.
+    """
+    return dict(points).get(today)
+
+
+def _against_baseline(
+    points: Sequence[tuple[dt.date, float]],
+    today: dt.date,
+    *,
+    higher_is_better: bool,
+    sds: float = 2.0,
+) -> float | None:
+    """Today's reading as 0-100 against its own trailing month, or None.
+
+    50 is exactly at baseline and the ends are `sds` standard deviations out.
+    Two rather than one: a single SD is where `scalar_run` starts calling
+    something a dip, so a scale that bottomed out there would show every
+    ordinary bad morning as zero.
+
+    None when there is no baseline yet *or* no reading today, and the caller
+    tells those two apart -- they are `no_baseline` and `no_watch_data`, and
+    the difference between them is the whole point of `InputState`.
+    """
+    baseline = scalar_baseline(points, today)
+    if baseline is None:
+        return None
+    value = _today(points, today)
+    if value is None:
+        return None
+    mean, spread = baseline
+    z = (value - mean) / spread
+    return _clamp(50.0 + (z if higher_is_better else -z) * 50.0 / sds)
+
+
+def _absence(points: Sequence[tuple[dt.date, float]], today: dt.date) -> InputState:
+    """Which kind of nothing a watch metric with no score is.
+
+    No baseline is a young series; a baseline with no reading today is a night
+    on the charger. Getting this backwards would be the panel blaming the watch
+    for the calendar, or the calendar for the watch.
+    """
+    if scalar_baseline(points, today) is None:
+        return InputState.no_baseline
+    return InputState.no_watch_data
+
+
+def _input(
+    key: str,
+    label: str,
+    value: float | None,
+    *,
+    absent: InputState,
+    reading: str | None = None,
+) -> api.ZoneInput:
+    """One row of a zoom: a score when there is one, and a named absence when
+    there is not."""
+    if value is None:
+        return api.ZoneInput(key=key, label=label, state=absent, reading=reading)
+    return api.ZoneInput(
+        key=key,
+        label=label,
+        state=InputState.scored,
+        value=round(value, 1),
+        reading=reading,
+    )
+
+
+ABSENT_WORDS = {
+    InputState.no_watch_data: "no watch data",
+    InputState.no_baseline: "not enough history yet",
+    InputState.not_logged: "not logged",
+    InputState.not_asked: "nothing asked today",
+}
+"""How each absence is said out loud. Here rather than in the panel because the
+distinction is the server's claim about the data, and a client paraphrasing it
+would be a second opinion about what a missing row means."""
+
+
+def _zone(inputs: list[api.ZoneInput]) -> api.ZoneScore:
+    """Fold a zone's inputs into its bar.
+
+    The mean of whichever scored, and None when none of them did -- never zero.
+    A zone with nothing behind it renders as a sentence rather than as an empty
+    bar, because an empty bar and a bar at zero are the same picture and they
+    are opposite facts.
+
+    `note` names what is missing whenever anything is, grouped by *why*, and
+    goes unsaid when everything scored. A bar with nothing wrong with it should
+    say nothing at all -- the whole tab is built on that.
+    """
+    scored = [item.value for item in inputs if item.value is not None]
+
+    missing: dict[InputState, list[str]] = {}
+    for item in inputs:
+        if item.state is not InputState.scored:
+            missing.setdefault(item.state, []).append(item.label)
+
+    note = " · ".join(
+        f"{ABSENT_WORDS[state]}: {', '.join(labels)}"
+        for state, labels in missing.items()
+        if state in ABSENT_WORDS
+    )
+
+    return api.ZoneScore(
+        value=round(statistics.fmean(scored), 1) if scored else None,
+        inputs=inputs,
+        note=note or None,
+    )
+
+
+def _readiness_on(entries: Sequence[d.Readiness], today: dt.date) -> d.Readiness | None:
+    return next((entry for entry in entries if entry.date == today), None)
+
+
+def _vs_baseline_words(
+    points: Sequence[tuple[dt.date, float]], today: dt.date, unit: str
+) -> str | None:
+    """`58 ms against a 62 baseline` -- the fact the score is a rescaling of.
+
+    Printed beside every normalised bar, and this is the half that makes the
+    other half checkable. A 34 with no number beside it is a number you either
+    believe or ignore; a 34 next to "58 against 62" is one you can argue with.
+    """
+    value = _today(points, today)
+    if value is None:
+        return None
+    baseline = scalar_baseline(points, today)
+    if baseline is None:
+        return f"{value:g} {unit}, no baseline yet"
+    return f"{value:g} {unit} against a {baseline[0]:.0f} baseline"
+
+
+def _plain_words(
+    points: Sequence[tuple[dt.date, float]], today: dt.date, suffix: str
+) -> str | None:
+    value = _today(points, today)
+    return None if value is None else f"{value:g} {suffix}"
+
+
+def recovery_score(
+    hrv: Sequence[tuple[dt.date, float]],
+    rhr: Sequence[tuple[dt.date, float]],
+    sleep_score: Sequence[tuple[dt.date, float]],
+    battery: Sequence[tuple[dt.date, float]],
+    stress: Sequence[tuple[dt.date, float]],
+    readiness: Sequence[d.Readiness],
+    today: dt.date,
+) -> api.ZoneScore:
+    """Am I recovering -- the first of the tab's three questions.
+
+    Six inputs, and they fall into two groups that behave differently in the
+    first weeks of a series, which is what this function is really built
+    around.
+
+    Sleep score, Body Battery and stress are already 0-100 on scales Garmin
+    publishes, so they score from the first morning the watch is worn. HRV and
+    resting heart rate are not: their absolute values are genetic, the
+    published ranges are wide enough to hold both your best week and your
+    worst, and the only comparison carrying information is against a fortnight
+    of your own. Until that exists they report `no_baseline`, and the bar is a
+    mean over the ones that could speak.
+
+    The sixth is the check-in, and it is here for two reasons. It is the only
+    input that exists on day one -- the questionnaire has been kept for months
+    and the watch is new -- so it is what stops the bar being silent through
+    the weeks the baselines are filling. And it is *subjective*, which makes it
+    the one input that can disagree with the rest: a sleep score of 88 against
+    a sleep quality of 2 is a diagnostic and not noise, and the two sitting in
+    one zoom is the only way that disagreement is ever seen.
+    """
+    row = _readiness_on(readiness, today)
+    stress_today = _today(stress, today)
+
+    return _zone([
+        _input(
+            "hrv",
+            "hrv vs baseline",
+            _against_baseline(hrv, today, higher_is_better=True),
+            absent=_absence(hrv, today),
+            reading=_vs_baseline_words(hrv, today, "ms"),
+        ),
+        _input(
+            "rhr",
+            "resting hr vs baseline",
+            _against_baseline(rhr, today, higher_is_better=False),
+            absent=_absence(rhr, today),
+            reading=_vs_baseline_words(rhr, today, "bpm"),
+        ),
+        _input(
+            "sleep_score",
+            "sleep score",
+            _today(sleep_score, today),
+            absent=InputState.no_watch_data,
+            reading=_plain_words(sleep_score, today, "of 100"),
+        ),
+        _input(
+            "body_battery",
+            "body battery",
+            _today(battery, today),
+            absent=InputState.no_watch_data,
+            reading=_plain_words(battery, today, "at wake"),
+        ),
+        _input(
+            "stress",
+            "stress",
+            # Inverted: Garmin's scale counts up in the thing you do not want,
+            # and every bar on this rail counts up in the thing you do.
+            None if stress_today is None else 100.0 - stress_today,
+            absent=InputState.no_watch_data,
+            reading=_plain_words(stress, today, "all-day average"),
+        ),
+        _input(
+            "checkin",
+            "check-in",
+            # The questionnaire sums to 25 at its best, so x4 is the scale.
+            # Not a ramp from zero: 5 of 25 is a real answer, the morning where
+            # every one of the five was as bad as it goes.
+            None if row is None else row.score * 4.0,
+            absent=InputState.not_logged,
+            reading=None if row is None else f"{row.score} of 25 this morning",
+        ),
+    ])
+
+
+def _strain_series(
+    sessions: Sequence[d.TrainingSession], today: dt.date
+) -> list[tuple[dt.date, float]]:
+    """Strain computed for each of the last `BASELINE_DAYS`, so it can be
+    scored against itself.
+
+    Strain has no published range and no target -- it is a weekly load times a
+    unitless ratio -- so the only thing it can honestly be compared with is
+    what yours has been. Which is the conclusion HRV reached, and it gets the
+    same machinery: `scalar_baseline` over this series, and silence until a
+    fortnight of it exists.
+    """
+    out = []
+    for offset in range(BASELINE_DAYS):
+        day = today - dt.timedelta(days=offset)
+        value = strain(sessions, day)
+        if value is not None:
+            out.append((day, value))
+    return sorted(out)
+
+
+def load_score(
+    sessions: Sequence[d.TrainingSession],
+    plan_open: int,
+    plan_total: int,
+    jump: Sequence[tuple[dt.date, float]],
+    today: dt.date,
+) -> api.ZoneScore:
+    """Am I training enough -- the second question, and the only zone whose
+    inputs are all things you did rather than things measured about you.
+
+    `plan_open` and `plan_total` are the *week's* prescribed blocks: how many
+    are still unanswered, and how many there were. A week rather than a day,
+    because the other three inputs here are seven- and twenty-eight-day
+    windows and a daily figure beside them swings from 0 to 100 across a
+    Tuesday -- at nine in the morning nothing prescribed has been logged yet,
+    which is not a fact about anybody's training.
+
+    A `plan_total` of zero is a week the plan asked nothing of -- eleven of the
+    twenty-eight are unwritten -- and it reports `not_asked` rather than a zero
+    score. A week that prescribed nothing is a week you cannot fail, and
+    scoring it at zero would have the unwritten stretch of the camp read as
+    three months of not training.
+
+    Strain is included because it was asked for, and it is worth saying that it
+    partly double-counts: strain is weekly load times monotony, so a flat week
+    pulls this bar down twice. That is defensible -- sameness at volume is what
+    the number exists to catch, and catching it twice is not wrong -- but it is
+    an argument rather than an accident, and the zoom shows both so the
+    doubling is visible instead of baked in.
+
+    The vertical jump is here and deliberately toothless. Below
+    `MIN_POINTS_FOR_JUMP` testing days it reports `no_baseline` and contributes
+    nothing, which is the whole reason the bar is not gated on it: a metric
+    measured every six weeks must not decide a number read every morning.
+    """
+    ratio = acwr(sessions, today)
+    mono = monotony(sessions, today)
+    week_strain = strain(sessions, today)
+    strain_points = _strain_series(sessions, today)
+    logged = plan_total - plan_open
+
+    return _zone([
+        _input(
+            "acwr",
+            "workload ratio",
+            None
+            if ratio is None
+            else _band_score(ratio, BAND_LOW, BAND_HIGH, ACWR_FLOOR, ACWR_CEILING),
+            absent=InputState.no_baseline,
+            reading=None if ratio is None else f"{ratio:.2f} against your four-week normal",
+        ),
+        _input(
+            "monotony",
+            "monotony",
+            None if mono is None else _ramp(mono, MONOTONY_BAD, MONOTONY_GOOD),
+            absent=InputState.no_baseline,
+            reading=None if mono is None else f"{mono:.1f} — how alike the week's days were",
+        ),
+        _input(
+            "strain",
+            "strain vs baseline",
+            _against_baseline(strain_points, today, higher_is_better=False),
+            absent=InputState.no_baseline,
+            reading=None if week_strain is None else f"{week_strain:,.0f} this week",
+        ),
+        _input(
+            "prescribed",
+            "plan logged",
+            None if plan_total <= 0 else logged / plan_total * 100.0,
+            absent=InputState.not_asked,
+            reading=None if plan_total <= 0 else f"{logged} of {plan_total} blocks logged",
+        ),
+        _input(
+            "vert_jump",
+            "vertical jump",
+            None
+            if len(jump) < MIN_POINTS_FOR_JUMP
+            else _against_baseline(jump, today, higher_is_better=True),
+            absent=InputState.no_baseline,
+            reading=None if not jump else f"{jump[-1][1]:g} in, best of three",
+        ),
+    ])
+
+
+def _meal_rows(meals: Sequence[d.MealLog], today: dt.date) -> int:
+    start = today - dt.timedelta(days=ACUTE_DAYS - 1)
+    return sum(1 for entry in meals if start <= entry.date <= today)
+
+
+def fuel_score(
+    meals: Sequence[d.MealLog],
+    balance: float | None,
+    today: dt.date,
+) -> api.ZoneScore:
+    """Am I eating like somebody in a camp.
+
+    Three inputs, and the first is the only number on this rail with a *target*
+    rather than a baseline. That target is the deficit band, it is a judgement,
+    and it is a judgement about this camp specifically -- a cut toward a
+    February weigh-in, where a surplus is wrong and so is a hole big enough to
+    cost training.
+
+    Meals logged is here for a reason worth restating now that the laptop takes
+    no logs at all: a balance computed off a week with meals missing from it
+    does not read as incomplete, it reads as a light week, and
+    `implied_lb_per_week` will quietly believe it. Scoring the completeness of
+    the log beside the conclusion drawn from it is what makes that visible.
+    """
+    quality = diet_quality(meals, today)
+    rows = _meal_rows(meals, today)
+    wanted = ACUTE_DAYS * MEALS_A_DAY
+
+    return _zone([
+        _input(
+            "balance",
+            "energy balance",
+            None
+            if balance is None
+            else _band_score(
+                balance,
+                DEFICIT_FLOOR,
+                DEFICIT_CEILING,
+                DEFICIT_FLOOR - FUEL_SLACK,
+                DEFICIT_CEILING + FUEL_SLACK,
+            ),
+            absent=InputState.not_logged,
+            reading=None
+            if balance is None
+            else f"{abs(balance):,.0f} kcal a day {'under' if balance < 0 else 'over'} burn",
+        ),
+        _input(
+            "quality",
+            "diet quality",
+            # 1-5, and 1 is a real answer rather than the bottom of a ramp from
+            # nothing -- a week of burgers is a week of burgers.
+            None if quality is None else _ramp(quality, 1.0, 5.0),
+            absent=InputState.not_logged,
+            reading=None if quality is None else f"{quality:.1f} of 5, how whole the food was",
+        ),
+        _input(
+            "meals",
+            "meals logged",
+            min(rows / wanted * 100.0, 100.0),
+            absent=InputState.not_logged,
+            reading=f"{rows} of {wanted} this week",
+        ),
+    ])
+
+
+def _week_darkness(visits: Sequence[d.BathroomLog], today: dt.date) -> float | None:
+    """Mean urine darkness over the week, off days dense enough to ask.
+
+    Built on `day_darkness`, which throws away each day's first void -- so a
+    day with only one reading contributes nothing, which is why this is None on
+    a week the log was kept sporadically. Same rule as everything above it: a
+    measurement nobody took is not evidence of anything.
+    """
+    days = _by_day(visits, today, ACUTE_DAYS)
+    scores = [value for logs in days.values() if (value := day_darkness(logs)) is not None]
+    return statistics.fmean(scores) if scores else None
+
+
+def hydration_score(
+    fluid: float | None,
+    sweat: float | None,
+    visits: Sequence[d.BathroomLog],
+    caffeine: float | None,
+    alcohol: float | None,
+    today: dt.date,
+) -> api.ZoneScore:
+    """Am I drinking enough for the week I am actually having.
+
+    The fluid input is the one worth explaining, because the drink log spent a
+    paragraph arguing that a hydration target should not exist: a number you
+    hit by logging rather than by drinking is a number that teaches you to log.
+    That objection was correct against a *fixed* target, and `sweat_loss_ml` is
+    what answers it. The target here is `BASE_FLUID_ML` plus what the watch
+    says was sweated out, so it is higher on a sparring day than on a rest day
+    without anybody deciding it should be -- and a day you trained hard and
+    drank a normal amount now scores as what it is.
+
+    Urine colour sits beside it and is doing something different: it is the
+    only input on this rail that measures what your body did with the water
+    rather than what went in. On a cut that distinction is the whole point --
+    walking around three pounds down on fluid comes off the scale as progress.
+
+    Caffeine and alcohol are here because they are the cheapest explanations
+    for the bar next door. Both land on HRV and on deep sleep, and a week where
+    recovery is down and these two are why is a week whose useful sentence is
+    about coffee rather than about training.
+    """
+    target = BASE_FLUID_ML + (sweat or 0.0)
+    darkness = _week_darkness(visits, today)
+
+    return _zone([
+        _input(
+            "fluid",
+            "fluid logged",
+            None if fluid is None else min(fluid / target * 100.0, 100.0),
+            absent=InputState.not_logged,
+            reading=None
+            if fluid is None
+            else (
+                f"{fluid:,.0f} ml a day against {target:,.0f} needed"
+                + (f", {sweat:,.0f} sweated" if sweat else "")
+            ),
+        ),
+        _input(
+            "urine",
+            "urine colour",
+            # 1 clear, 4 darker. Scored down from 4 rather than from 5: the
+            # scale has four rungs and the worst of them is the worst there is.
+            None if darkness is None else _ramp(darkness, 4.0, 1.0),
+            absent=InputState.not_logged,
+            reading=None
+            if darkness is None
+            else f"{darkness:.1f} of 4, first of the day excluded",
+        ),
+        _input(
+            "caffeine",
+            "caffeine",
+            None if caffeine is None else _ramp(caffeine, CAFFEINE_CEILING, 0.0),
+            absent=InputState.not_logged,
+            reading=None if caffeine is None else f"{caffeine:.1f} drinks a day",
+        ),
+        _input(
+            "alcohol",
+            "alcohol",
+            None if alcohol is None else _ramp(alcohol, ALCOHOL_CEILING, 0.0),
+            absent=InputState.not_logged,
+            reading=None if alcohol is None else f"{alcohol:g} in the last seven days",
+        ),
+    ])
+
+
+def vo2max_trend(
+    points: Sequence[tuple[dt.date, float]], today: dt.date
+) -> tuple[float, dt.date, float | None] | None:
+    """`(latest, when, change over the quarter)`, or None with no readings.
+
+    Deliberately not gated on the reading being today's. Everything else on
+    this tab reads "today or nothing", because a stale sleep score pretending
+    to be last night's is a panel you have to date-check -- but VO2max only
+    updates after an outdoor run with heart rate, so today-or-nothing would
+    blank it about twenty-eight days in thirty. `when` comes back with it so
+    the panel can say how old the number is instead of implying it is fresh.
+
+    The change is None until two readings sit far enough apart to subtract.
+    This estimate moves by fractions, and a week-on-week difference is noise
+    with a sign on it.
+    """
+    ordered = sorted(points)
+    if not ordered:
+        return None
+    when, latest = ordered[-1]
+
+    start = today - dt.timedelta(days=VO2MAX_WINDOW - 1)
+    window = [(date, value) for date, value in ordered if date >= start]
+    change = None
+    if len(window) >= 2 and (window[-1][0] - window[0][0]).days >= VO2MAX_WINDOW // 3:
+        change = latest - window[0][1]
+    return latest, when, change

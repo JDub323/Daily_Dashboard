@@ -19,26 +19,20 @@ import { invalidateTrickArchive } from "./modals/tricks.js";
 import { focusedPanel, initNav, resetToTab } from "./nav.js";
 import { checkNudges, clearNudges, initNudges } from "./nudges.js";
 import { mountAll, refreshLive, register, rerender, rerenderAll, resetCollapse } from "./panel.js";
-import bathroom from "./panels/bathroom.js";
 import calendar from "./panels/calendar.js";
-import checkin from "./panels/checkin.js";
 import chess from "./panels/chess.js";
 import daylog from "./panels/daylog.js";
 import deck from "./panels/deck.js";
-import drinks from "./panels/drinks.js";
 import games from "./panels/games.js";
 import health from "./panels/health.js";
 import investigate from "./panels/investigate.js";
 import markets from "./panels/markets.js";
-import meals from "./panels/meals.js";
 import math from "./panels/math.js";
 import { finance, politics } from "./panels/news.js";
 import patterns from "./panels/patterns.js";
 import piano from "./panels/piano.js";
 import portfolio from "./panels/portfolio.js";
 import reading from "./panels/reading.js";
-import plan from "./panels/plan.js";
-import session from "./panels/session.js";
 import spelling from "./panels/spelling.js";
 import { activity } from "./panels/stats.js";
 import theorem from "./panels/theorem.js";
@@ -77,25 +71,12 @@ const WATCHES = {
   // outside it — without this the sheet says 6/8 and the card behind it still
   // says the set is untouched.
   tricks: ["tricks"],
-  // All three health panels read the one `health` slice, and every write to it
-  // is a write to the whole thing: logging a session moves this week's load,
-  // the ratio and the monotony on the hero, and logging a weight moves the
-  // chart the hero draws. So each of the three watches the slice rather than
-  // re-rendering itself after its own POST — otherwise the two panels that did
-  // not do the writing sit there stale.
+  // The health tab is one panel now and it writes nothing, but it still has to
+  // watch its own slice: every log arrives from the phone, and a laptop left
+  // open on this tab picks those up through `/api/state` on the next rollover
+  // or refresh. It also reads a slice it does not own — `store.config.phase`
+  // for the hero — and that is loaded before any panel mounts.
   health: ["health"],
-  checkin: ["health"],
-  session: ["health"],
-  plan: ["health"],
-  // The three quick logs read the same slice and write to it four to sixteen
-  // times a day. They watch it rather than redrawing themselves after their own
-  // POST for the same reason as the three above — and because the hero's
-  // hydration, caffeine and energy-balance lines are computed off exactly these
-  // rows, so a meal logged here has to move a sentence up there in the same
-  // breath.
-  bathroom: ["health"],
-  meals: ["health"],
-  drinks: ["health"],
 };
 
 /** Store keys whose writes make the cached /api/history fetch stale. */
@@ -146,22 +127,18 @@ const PANELS = [
   // markets — the portfolio is the hero; the movements list is the frame it
   // is read against.
   portfolio, markets, finance,
-  // health — the readout is the hero. Under it the tab is two halves: the plan
-  // on the left, which is the thing you read, and on the right one card that
-  // takes turns being the four things you write into.
+  // health — one panel, and it is the whole tab.
   //
-  // `plan` is registered first and therefore keeps the left half. The five
-  // after it all carry `host: "cyc"`, so the first of them builds the rotation
-  // where it stands and the rest join it — which is why this list is still the
-  // whole of the layout even though half of it is now one card.
+  // It was seven: a hero, the plan on the left, and on the right one card that
+  // took turns being the five things you wrote into. All six of the others are
+  // gone. The five logs moved to the phone, which is where they were being
+  // answered anyway — a meal gets logged standing in a kitchen, not at a
+  // laptop — and the plan card's form half went with them, leaving its
+  // read half as the hero of this one.
   //
-  // Their order in the rotation is the order the day asks for them: the
-  // check-in in the morning, the session in the evening, and the three logs
-  // that are answered on the way past in between. Drinks sits between meals and
-  // in-and-out because that is the order the three are read in — what went in,
-  // what you drank, what came out — and because the two hydration panels being
-  // neighbours is the pairing the tab is for.
-  health, plan, checkin, session, meals, drinks, bathroom,
+  // What that buys is the thing the tab could not have while it was a page of
+  // forms: it fits one screen, and everything on it is something you *read*.
+  health,
 ];
 
 async function loadConfig() {

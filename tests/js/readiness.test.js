@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { toShown, toStored } from "../../web/app/panels/checkin.js";
+import { toShown, toStored } from "../../web/app/logs.js";
 
 const INVERTED = ["fatigue", "soreness", "stress"];
 const PLAIN = ["sleep_quality", "motivation"];
