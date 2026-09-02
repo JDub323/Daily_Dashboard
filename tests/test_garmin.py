@@ -40,13 +40,35 @@ SLEEP = {
 }
 
 HRV = {"hrvSummary": {"lastNightAvg": 62}}
-RHR = {"restingHeartRate": 48}
+# Recorded off the wire, trimmed. `get_rhr_day` is a *range* query -- it asks
+# the wellness-statistics URL for fromDate..untilDate with metricId=60 -- so it
+# answers with a map of series and never with a flat `restingHeartRate`. This
+# fixture used to carry the flat key, which is what let `rhr_metrics` read the
+# wrong field first for as long as it did: the test agreed with the code and
+# both disagreed with Garmin.
+RHR = {
+    "userProfileId": 150511205,
+    "statisticsStartDate": "2026-09-01",
+    "statisticsEndDate": "2026-09-01",
+    "allMetrics": {
+        "metricsMap": {
+            "WELLNESS_RESTING_HEART_RATE": [
+                {"value": 48.0, "calendarDate": "2026-09-01"}
+            ]
+        }
+    },
+    "groupedMetrics": None,
+}
 # `averageStressLevel` rides along in the daily summary rather than needing an
-# endpoint of its own -- one call fewer against an unofficial API.
+# endpoint of its own -- one call fewer against an unofficial API. So does
+# `restingHeartRate`, and this is the endpoint that actually carries it. Its
+# value here disagrees with RHR's on purpose: the two are read from different
+# endpoints on a real morning and the test wants to see which one wins.
 STATS = {
     "totalKilocalories": 3120.4,
     "bodyBatteryHighestValue": 91,
     "averageStressLevel": 34,
+    "restingHeartRate": 52,
 }
 HYDRATION = {"valueInML": 2100.0, "sweatLossInML": 620.0}
 # The one endpoint that answers with a list: the max-metrics URL takes a date
@@ -140,13 +162,38 @@ def test_a_night_on_the_charger_yields_nothing():
     assert garmin.sleep_metrics({"dailySleepDTO": {"sleepTimeSeconds": 0}}) == {}
 
 
-def test_resting_hr_reads_both_shapes_the_client_has_had():
+def test_resting_hr_reads_the_metrics_map_this_endpoint_actually_returns():
+    """The shape `get_rhr_day` has always sent, read without a fallback firing.
+
+    Pinned because the bug this replaces was invisible from the inside: the
+    flat key was tried first, was never present, and the metrics-map read that
+    followed produced the right number every time. Nothing was wrong with the
+    series -- only with which line of the function was load-bearing, and that
+    is not something the panel could ever have shown.
+    """
     assert garmin.rhr_metrics(RHR)[HealthMetric.resting_hr] == 48
-    nested = {
-        "allMetrics": {"metricsMap": {"WELLNESS_RESTING_HEART_RATE": [{"value": 51}]}}
-    }
-    assert garmin.rhr_metrics(nested)[HealthMetric.resting_hr] == 51
+
+
+def test_resting_hr_still_reads_a_flat_key_if_one_ever_appears():
+    """The fallback, kept but demoted. Cheap, and these two endpoints have
+    merged before."""
+    assert garmin.rhr_metrics({"restingHeartRate": 51})[HealthMetric.resting_hr] == 51
+
+
+def test_resting_hr_yields_nothing_rather_than_a_zero_row():
     assert garmin.rhr_metrics({"restingHeartRate": None}) == {}
+    assert garmin.rhr_metrics({}) == {}
+    assert garmin.rhr_metrics(
+        {"allMetrics": {"metricsMap": {"WELLNESS_RESTING_HEART_RATE": []}}}
+    ) == {}
+    assert garmin.rhr_metrics(
+        {"allMetrics": {"metricsMap": {"WELLNESS_RESTING_HEART_RATE": [{"value": 0}]}}}
+    ) == {}
+
+
+def test_the_daily_summary_also_offers_resting_hr():
+    """`stats_metrics` reads the flat key, because this is where it lives."""
+    assert garmin.stats_metrics(STATS)[HealthMetric.resting_hr] == 52
 
 
 def test_body_battery_is_the_days_high_not_its_latest():
@@ -255,6 +302,20 @@ def test_a_payload_that_changed_shape_is_skipped_not_raised():
     assert got[HealthMetric.hrv] == 62
 
 
+def test_the_dedicated_endpoint_outranks_the_daily_summary_for_resting_hr():
+    """Two endpoints answer for one metric, and the order in `ENDPOINTS` is
+    what decides it -- not whichever happened to be yielded last."""
+    got = dict(garmin.read_day(FakeWatch(), TODAY))
+    assert got[HealthMetric.resting_hr] == 48  # RHR, not STATS's 52
+
+
+def test_the_summary_supplies_resting_hr_when_the_dedicated_endpoint_dies():
+    """What demoting the flat read bought: a 401 on `get_rhr_day` now costs the
+    precision, not the metric."""
+    got = dict(garmin.read_day(FakeWatch(broken={"get_rhr_day"}), TODAY))
+    assert got[HealthMetric.resting_hr] == 52
+
+
 def test_a_client_missing_a_method_is_a_skip():
     """A pinned older `garminconnect` in the venv is a smaller problem than a
     crash on every boot.
@@ -287,6 +348,8 @@ def test_sync_walks_the_window_backwards_from_today(settings, repo):
 
 def test_sync_writes_garmin_rows(settings, repo):
     wrote = garmin.sync(settings, repo, TODAY, days=1, client=FakeWatch())
+    # Eleven and not twelve: `get_stats` offers a resting heart rate too, and
+    # the second offer of a metric is dropped rather than written over.
     assert wrote == 11
     entry = repo.health_entry(HealthMetric.sleep_hours, TODAY)
     assert entry.value == 7.0

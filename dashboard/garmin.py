@@ -152,13 +152,26 @@ def hrv_metrics(payload: Any) -> dict[HealthMetric, float]:
 
 
 def rhr_metrics(payload: Any) -> dict[HealthMetric, float]:
-    """Resting heart rate. Two shapes seen in the wild -- the flat one and the
-    metrics-map one -- so both are tried before giving up."""
-    value = _num(_dig(payload, "restingHeartRate"))
+    """Resting heart rate, from the metrics-map shape this endpoint returns.
+
+    `get_rhr_day` asks the wellness-statistics URL for a date *range* with
+    `metricId=60`, and a range endpoint answers with a map of series rather
+    than with a scalar. So the reading lives at
+    `allMetrics.metricsMap.WELLNESS_RESTING_HEART_RATE[0].value`, and that is
+    the only shape this call has been observed to produce.
+
+    The flat `restingHeartRate` key is real, but it belongs to the daily user
+    summary -- `get_stats` -- and `stats_metrics` reads it there. It is kept
+    here as a fallback rather than as the lead because it costs one lookup and
+    because these two endpoints have merged before; what it must not be is
+    first, which is what made the live path a fallback that always ran.
+    """
+    entries = _dig(payload, "allMetrics", "metricsMap", "WELLNESS_RESTING_HEART_RATE")
+    value = None
+    if isinstance(entries, list) and entries:
+        value = _num(_dig(entries[0], "value"))
     if value is None:
-        entries = _dig(payload, "allMetrics", "metricsMap", "WELLNESS_RESTING_HEART_RATE")
-        if isinstance(entries, list) and entries:
-            value = _num(_dig(entries[0], "value"))
+        value = _num(_dig(payload, "restingHeartRate"))
     return {HealthMetric.resting_hr: value} if value else {}
 
 
@@ -178,6 +191,15 @@ def stats_metrics(payload: Any) -> dict[HealthMetric, float]:
     has been in it as long as the rest of these have. One call fewer against an
     unofficial API is one fewer thing to break.
 
+    Resting heart rate rides along too, and this is the endpoint that really
+    carries the flat `restingHeartRate` key -- `get_rhr_day` never has. It is
+    second-best and not first: the dedicated endpoint is a range query for
+    metric 60 and reports the figure Garmin settled on for the day, where this
+    one is the running daily summary. `read_day` keeps the first answer for a
+    metric and `get_rhr_day` is ahead of this in `ENDPOINTS`, so what this line
+    buys is the morning that endpoint 401s -- not a second opinion on the
+    mornings it works.
+
     Garmin reports **-1 or -2** for a day with no valid stress reading -- the
     watch off, or too little wear time to average. `_num` refuses anything at
     or below zero, so those arrive here as no reading at all, which is what
@@ -195,6 +217,9 @@ def stats_metrics(payload: Any) -> dict[HealthMetric, float]:
     stress = _num(payload.get("averageStressLevel"))
     if stress:
         out[HealthMetric.stress] = stress
+    resting = _num(payload.get("restingHeartRate"))
+    if resting:
+        out[HealthMetric.resting_hr] = resting
     return out
 
 
@@ -295,8 +320,18 @@ def read_day(client: Any, date: dt.date) -> Iterator[tuple[HealthMetric, float]]
     Each call is isolated. A 404 on hydration must not cost you last night's
     sleep, and over an unofficial API that is not a hypothetical: these six
     endpoints have independent histories and break independently.
+
+    Where two endpoints can answer for the same metric -- resting heart rate is
+    the one, from `get_rhr_day` and from `get_stats` -- the **first** answer
+    wins and the later one is dropped. `ENDPOINTS` is therefore a precedence
+    order as well as a call order: the dedicated endpoint is listed ahead of
+    the daily summary, so the summary is what you fall back to on the morning
+    the dedicated one breaks rather than a value that quietly overwrites it.
+    Yielding both would make the winner whichever came last, which is a
+    property of list order that nothing states and no test would catch.
     """
     iso = date.isoformat()
+    seen: set[HealthMetric] = set()
     for endpoint in ENDPOINTS:
         fetch = getattr(client, endpoint.name, None)
         if fetch is None:
@@ -313,7 +348,15 @@ def read_day(client: Any, date: dt.date) -> Iterator[tuple[HealthMetric, float]]
         except Exception:
             log.exception("garmin %s returned a shape %s could not read", endpoint.name, iso)
             continue
-        yield from metrics.items()
+        for metric, value in metrics.items():
+            if metric in seen:
+                log.debug(
+                    "garmin %s also offered %s for %s; keeping the earlier answer",
+                    endpoint.name, metric.value, iso,
+                )
+                continue
+            seen.add(metric)
+            yield metric, value
 
 
 # --- the client -------------------------------------------------------------
