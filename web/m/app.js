@@ -59,8 +59,9 @@ import {
 // which imports nothing at all — so bringing it here costs exactly the splash
 // and none of the store, the panel harness or the nav ring.
 import { initSplash, paintSplash } from "../app/splash.js";
+import { forget, recall, remember } from "./held.js";
 import { enqueue, flush, isPanel, onQueueChange, pending, pendingOn } from "./queue.js";
-import { clock, dateForHour, dayLabel, nowHour, today } from "./when.js";
+import { clock, dateForHour, dayLabel, nowHour, timeLabel, today } from "./when.js";
 
 // --- the smallest possible DOM helper ---------------------------------------
 //
@@ -88,10 +89,45 @@ const $ = (sel) => document.querySelector(sel);
 
 // --- state -------------------------------------------------------------------
 
-/** The last health panel the server gave us, or null before the first fetch
- *  and after a failed one. Null is drawn as "what the queue holds, and nothing
- *  else", which on a phone that has been offline all morning is the truth. */
-let panel = null;
+/** The last health panel the server gave us, or null if the laptop has not
+ *  been heard from at all today. Null is drawn as "what the queue holds, and
+ *  nothing else", which on a phone that has not reached the laptop all morning
+ *  is the truth.
+ *
+ *  Seeded from `held.js` rather than starting empty, and that seed is the whole
+ *  of the "what did I already log?" fix. This was a bare `let` for as long as
+ *  the app existed, which meant an entry was on screen only while the queue
+ *  still owed it: sending — the thing you do when you next get near the laptop
+ *  — is what emptied the screen, and it stayed empty for the rest of the day.
+ *  Sent and unsent are the same list to the person holding the phone, and now
+ *  they both survive both the send and the app being closed. */
+let remembered = recall(today());
+let panel = remembered?.panel ?? null;
+
+/** When the laptop last answered, ISO, or null if it has not today. Printed
+ *  under the log — see `heardLine`, which is where the argument for saying it
+ *  out loud is. */
+let heard = remembered?.at ?? null;
+
+/**
+ * Take a panel that just came off the wire.
+ *
+ * The one place `panel` is assigned, so that "the laptop answered" is written
+ * down once: there is no way to put fresher rows on screen without also moving
+ * the stamp that says how old the screen is, and no way to do either without
+ * the copy that outlives the tab.
+ */
+function adopt(fresh) {
+  panel = fresh;
+  panelDay = today();
+  heard = new Date().toISOString();
+  remember(fresh);
+}
+
+/** Which day `panel` describes. `recall` will not hand back another day's, so
+ *  this can only ever become stale by the app being left open across midnight —
+ *  see the `visibilitychange` handler, which is where it is spent. */
+let panelDay = panel ? today() : null;
 
 /** Which log is open. */
 let tab = "meals";
@@ -195,7 +231,7 @@ async function load() {
     // table. Keeping the panel we have is the honest reading of an answer that
     // did not come from the dashboard.
     const body = await response.json();
-    if (isPanel(body)) panel = body;
+    if (isPanel(body)) adopt(body);
   } catch {
     /* Offline, or slow enough to count as offline. `panel` stays as it was — or
        null on a cold start, which draws the queue alone rather than an error
@@ -253,7 +289,7 @@ async function sendNow() {
     // on Tuesday's last meal and hand back Tuesday. Adopting that would draw
     // yesterday's rows under today's heading, so it is only taken when it is
     // today's, and `load` is what fills the screen in either case.
-    if (got && panelDate === today()) panel = got;
+    if (got && panelDate === today()) adopt(got);
     // Only worth a round trip if something actually went; otherwise the panel
     // we have is as good as the one we would get, and this is a request that
     // will hang for `REACH_MS` on the connection that just failed.
@@ -978,7 +1014,7 @@ function sessionLog() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v10";
+const BUILD = "log-v11";
 
 /**
  * The build, along the foot of the title screen.
@@ -1090,6 +1126,39 @@ function drawTabs() {
   );
 }
 
+/**
+ * One line under the log saying when the rows above it were last checked.
+ *
+ * The cost of remembering the laptop's answer is that the answer can be old,
+ * and a list that cannot say how old is a list you have to trust completely or
+ * not at all. What is stale is only ever the far half of it: anything logged on
+ * this phone is on screen the instant it is tapped, and the rows this stamp
+ * qualifies are the ones the laptop knows about — an entry made *there*, or one
+ * deleted there, which will not appear or disappear here until the next time
+ * these two speak.
+ *
+ * Always on, including a second after a successful load, when it reads as the
+ * current time. A line that appears only once the day is stale is a line you
+ * have to notice the absence of, and the whole point is to be able to glance at
+ * the bottom of a list you are already reading.
+ *
+ * With no panel at all it says something different and more important. The
+ * empty states above it — "nothing eaten yet today" — are written as statements
+ * about the day, and on a phone that has not reached the laptop since midnight
+ * they are statements it is in no position to make.
+ */
+function heardLine() {
+  if (!panel) {
+    return el("p.heard.cold", { text: "not heard from the laptop today — this is the phone's own copy" });
+  }
+  const at = heard ? new Date(heard) : null;
+  return el("p.heard", {
+    text: at && !Number.isNaN(at.valueOf())
+      ? `laptop last heard from ${timeLabel(at)}`
+      : "laptop last heard from earlier today",
+  });
+}
+
 function draw() {
   drawHour();
   drawNet();
@@ -1100,6 +1169,7 @@ function draw() {
   const strip = hourStrip();
   if (strip) view.append(strip);
   for (const node of [log.render()].flat()) if (node) view.append(node);
+  view.append(heardLine());
 }
 
 let toastTimer = null;
@@ -1126,6 +1196,18 @@ $("#net").addEventListener("click", sendNow);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
   hour = nowHour();
+  // The other thing that moves while the app is in the background, and the one
+  // the panel is not allowed to survive. A phone put down at eleven and picked
+  // up at half past midnight comes back to a new heading over the old day's
+  // rows, and on this screen those rows have delete buttons — you would be
+  // deleting last night's dinner off a list that claims to be tonight's. The
+  // queue is untouched by this: it is not a view of a day and never was.
+  if (panelDay && panelDay !== today()) {
+    panel = null;
+    panelDay = null;
+    heard = null;
+    forget();
+  }
   draw();
 });
 
@@ -1173,10 +1255,22 @@ if ("serviceWorker" in navigator) {
 initSplash();
 paintBuild();
 
-// Drawn from the queue alone, immediately, with no network in the way. That is
-// the cold-start contract now: whatever the laptop knows arrives later or not
-// at all, and either way there is a working screen first.
+// Drawn from the queue and the remembered panel, immediately, with no network
+// in the way. That is the cold-start contract: whatever the laptop knows *now*
+// arrives later or not at all, and either way the day it knew about the last
+// time it was reachable is on screen first, with everything logged since
+// sitting in the same list.
 draw();
+
+// The title screen, with the laptop off, out of the same remembered panel. The
+// call after `load` below is the live one and runs a second time; this is the
+// copy, and the duplicate is worth it because the splash is the screen that is
+// up for the whole four seconds a failing `load` takes. FILE 01 · DAY 172
+// either way. `paintBuild` goes back after it for the reason spelled out below.
+if (panel?.plan) {
+  paintSplash(panel.plan);
+  paintBuild();
+}
 
 // One read on the way up, and only a read — the queue is not touched. It is
 // worth doing unasked in a way that sending is not: `GET /api/health` is

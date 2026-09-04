@@ -562,3 +562,22 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   color: var(--gold);
   border-color: var(--gold);
 }
+
+/* --- how old the far half of the list is ------------------------------------
+   One line under the log. The rows above it are two things at once — what this
+   phone has logged, which is current by construction, and what the laptop had
+   the last time the two spoke, which is not — and this is the only place that
+   difference is visible. Set below the empty states in weight and size on
+   purpose: it is a footnote you read when you go looking, not a warning. The
+   `.cold` variant, which says the laptop has not been heard from at all today,
+   takes the gold because it qualifies every "nothing logged yet" above it. */
+.heard {
+  font-family: var(--font-display);
+  font-size: 8px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: var(--s5) 0 0;
+  text-align: right;
+}
+.heard.cold { color: var(--gold-text); opacity: .8; text-align: left; }

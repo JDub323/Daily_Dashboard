@@ -34,7 +34,7 @@
 // classic worker cannot import a module — and `shell.test.js` fails when the
 // two disagree.
 
-const VERSION = "log-v10";
+const VERSION = "log-v11";
 
 /** How long a *cold* request gets before the shell falls back to itself.
  *  Only ever spent on a file that is not in the cache, which after the first
@@ -61,6 +61,9 @@ const SHELL = [
   "./index.html",
   "./app.js",
   "./queue.js",
+  // The laptop's last answer, kept so the day survives being sent. It imports
+  // `queue.js` and `when.js`, both already here.
+  "./held.js",
   "./when.js",
   "./style.css",
   // The theme, the device layer and the title screen, all shared with the

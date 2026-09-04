@@ -56,3 +56,15 @@ const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
 
 export const dayLabel = (d = new Date()) =>
   `${DAYS[d.getDay()]} ${MONTHS[d.getMonth()]} ${d.getDate()}`;
+
+/** `8:12pm` — a wall-clock time, for the one line on screen that prints one.
+ *
+ *  `clock` is the hour alone because that is the resolution the logs record at.
+ *  This is minutes as well, because the thing it stamps is not a log entry: it
+ *  is when the laptop last answered, and "8pm" for something that happened at
+ *  8:59 is the wrong side of an hour on the only line that says how stale the
+ *  screen is. */
+export const timeLabel = (d = new Date()) => {
+  const h = d.getHours();
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(d.getMinutes()).padStart(2, "0")}${h < 12 ? "am" : "pm"}`;
+};
