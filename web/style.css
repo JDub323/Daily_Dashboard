@@ -676,6 +676,18 @@ kbd { font: inherit; font-size: var(--t-meta); border: 1px solid var(--border); 
   animation: nudge-in .2s ease-out;
 }
 .nudge.out { opacity: 0; transform: translateX(12px); transition: opacity .18s, transform .18s; }
+/* The thing the card was about got done — usually on the phone, which is why
+   this state exists at all. The sentence stays and is struck through instead of
+   the card disappearing: a reminder that vanishes on its own is indistinguish-
+   able from one you dismissed by accident, and this is the only confirmation
+   that the log in your pocket and the dashboard have actually met. It goes on
+   its own a few seconds later. */
+.nudge.settled { border-color: var(--ok); }
+.nudge.settled .nudge-t { text-decoration: line-through; color: var(--faint); }
+.nudge.settled .nudge-n { border-color: var(--ok); color: var(--ok); }
+.nudge.settled .nudge-body::after {
+  content: "✓"; color: var(--ok); margin-left: auto; padding-left: var(--s2);
+}
 
 /* The whole card is the door, so the text is a button rather than a div with a
    handler: it is reachable by Tab, it announces itself, and it takes Enter. */

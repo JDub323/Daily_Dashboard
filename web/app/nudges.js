@@ -175,6 +175,11 @@ const RULES = [
   {
     id: "due-today",
     panel: "todo",
+    // The due list is a second round trip. `needs` is what makes it fetched
+    // only when it could matter, and — since a fetch that fails hands back
+    // nothing rather than an empty day — what makes these two rules sit the
+    // whole pass out rather than read "no items" as "nothing is due".
+    needs: "todo",
     // Once the day has started, and only once: what is due today is a thing to
     // be told at the beginning of a day, not reminded of through it.
     after: 8,
@@ -188,6 +193,7 @@ const RULES = [
   {
     id: "overdue",
     panel: "todo",
+    needs: "todo",
     after: 8,
     // Twice a day. Overdue work does not become more urgent by being mentioned
     // more often, and it is the one thing here that cannot be finished by
@@ -202,6 +208,62 @@ const RULES = [
 ];
 
 const isDone = (tasks, id) => Boolean(tasks.find((t) => t.id === id)?.done);
+
+// --- what this pass should do ------------------------------------------------
+
+/**
+ * The rules, read against the day, for a shelf currently showing `showing`.
+ *
+ * Pure, and separated from the shelf below for the reason every clock in here
+ * is a rule and not a `setTimeout`: the interesting cases are the ones a
+ * browser will not produce on demand — three in the afternoon with lunch logged
+ * a minute ago and the card about it still on screen.
+ *
+ * Three verdicts:
+ *
+ *   `raise` — nothing on screen for this rule, and it has something to say.
+ *   `update` — a card is up and the sentence has moved on. "3 required left"
+ *     becoming "2 required left" is the same reminder, not a new one, so it
+ *     must not renumber the shelf or restart the repeat clock.
+ *   `settle` — a card is up and the thing it is about is done.
+ *
+ * That third one is the whole point of this function existing. "Nothing after
+ * it is done" was already written at the head of this file and was only ever
+ * enforced at the moment of raising: a card that went up at two o'clock stayed
+ * up saying lunch was not logged for as long as it took to dismiss it, however
+ * long ago lunch had actually been logged. It is a worse failure now than it
+ * was, because the logging moved to the phone — the laptop is no longer the
+ * thing that finds out, so the card was very often already wrong when it
+ * appeared and had no way of ever noticing.
+ *
+ * The clock is what decides whether a thing is worth *raising*. It has no
+ * business deciding whether a sentence already on screen is still true, so a
+ * rule with a card up is evaluated whatever the hour and whatever its repeat
+ * interval has left to run.
+ */
+export function verdicts(ctx, showing = []) {
+  const out = [];
+  for (const rule of RULES) {
+    const up = showing.includes(rule.id);
+    // A rule whose input did not arrive says nothing this pass, and — the half
+    // that is new and easy to get wrong — retracts nothing either. An empty due
+    // list and a due list that could not be fetched are the same value, and
+    // striking out "2 overdue" because the server was busy would be the
+    // reminder lying in the one direction it must not.
+    if (rule.needs && ctx[rule.needs] == null) continue;
+    if (!up && (ctx.hour < rule.after || !due(rule))) continue;
+    const text = rule.check(ctx);
+    if (text) out.push({ id: rule.id, do: up ? "update" : "raise", text, panel: rule.target?.(ctx) ?? rule.panel });
+    else if (up) out.push({ id: rule.id, do: "settle" });
+  }
+  return out;
+}
+
+/** Whether this pass needs the due list — which is a second round trip, so it
+ *  is only made when a todo rule could either fire or be retracted. */
+export const wantsTodo = (ctx, showing = []) =>
+  RULES.some((rule) => rule.needs === "todo"
+    && (showing.includes(rule.id) || (ctx.hour >= rule.after && due(rule))));
 
 // --- the stack ---------------------------------------------------------------
 
@@ -272,7 +334,7 @@ function raise({ id, text, panel }) {
       },
     },
       el("span.nudge-n"),
-      el("span", { text }),
+      el("span.nudge-t", { text }),
     ),
     el("button.nudge-x", {
       text: "✕",
@@ -289,6 +351,55 @@ function raise({ id, text, panel }) {
   remember(id);
 }
 
+/** The card for a rule, or null. */
+const cardFor = (id) => shelf().querySelector(`[data-nudge="${id}"]`);
+
+/** Which rules have a card up — the settled ones excluded, since those are on
+ *  their way out and re-evaluating them would only settle them again. */
+const showing = () =>
+  [...shelf().children]
+    .filter((card) => !card.classList.contains("settled"))
+    .map((card) => card.dataset.nudge);
+
+/**
+ * The sentence moved on; the card did not.
+ *
+ * In place, and nothing else: no renumber, no `remember`, no re-append. A
+ * reminder whose count has gone from three to two is the same reminder, and
+ * anything that moves it up the shelf or restarts its clock would be treating
+ * progress as a fresh interruption.
+ */
+function update(id, text) {
+  const line = cardFor(id)?.querySelector(".nudge-t");
+  if (line && line.textContent !== text) line.textContent = text;
+}
+
+/** How long a settled card stays up before it goes. */
+const SETTLED_MS = 4000;
+
+/**
+ * The thing this card was about has been done. Say so, then go.
+ *
+ * Struck through with a tick rather than removed on the spot, and this is the
+ * one place in the file where something is on screen that is not asking for
+ * anything. It is worth the four seconds: a card that vanishes silently is
+ * indistinguishable from one you dismissed by accident, and the whole reason
+ * this exists is that the thing was very likely done somewhere else — in a
+ * kitchen, on a phone — so seeing "lunch is not logged" struck out is the
+ * confirmation that the two ends have actually met.
+ *
+ * The sentence is kept rather than replaced with a new one. It is the sentence
+ * you already read, and a line through it is unambiguous in a way that a second
+ * sentence in the same box is not.
+ */
+function settle(id) {
+  const card = cardFor(id);
+  if (!card || card.classList.contains("settled")) return;
+  card.classList.add("settled");
+  card.querySelector(".nudge-body")?.setAttribute("title", "done");
+  setTimeout(() => dismiss(card), SETTLED_MS);
+}
+
 // --- the loop ----------------------------------------------------------------
 
 async function todoItems() {
@@ -297,8 +408,10 @@ async function todoItems() {
     return items;
   } catch {
     // A due list that could not be fetched is a reason to say nothing, not a
-    // reason to say something wrong.
-    return [];
+    // reason to say something wrong. `null` rather than `[]` because those two
+    // are now different answers: an empty list retracts a card, and a failed
+    // fetch must not — see `verdicts`.
+    return null;
   }
 }
 
@@ -320,20 +433,20 @@ export async function checkNudges() {
     const now = new Date();
     const hour = now.getHours() + now.getMinutes() / 60;
     const tasks = chipTasks();
-    // Only fetched if a rule that needs it might actually fire, because this
-    // runs every two minutes all day and most of those checks have nothing to
-    // say.
-    const wantsTodo = RULES.some(
-      (rule) => rule.panel === "todo" && hour >= rule.after && due(rule),
-    );
-    const todo = wantsTodo ? await todoItems() : [];
+    const up = showing();
+    // Only fetched if a rule that needs it might actually fire *or* has a card
+    // that might now be wrong, because this runs every two minutes all day and
+    // most of those checks have nothing to say.
+    // `null`, not `[]`, when it was not asked for: "we did not ask" and "there
+    // is nothing due" are different answers, and only one of them is allowed to
+    // take a card down.
+    const todo = wantsTodo({ hour }, up) ? await todoItems() : null;
     const ctx = { now, hour, tasks, todo };
 
-    for (const rule of RULES) {
-      if (hour < rule.after || !due(rule)) continue;
-      const text = rule.check(ctx);
-      if (!text) continue;
-      raise({ id: rule.id, text, panel: rule.target?.(ctx) ?? rule.panel });
+    for (const verdict of verdicts(ctx, up)) {
+      if (verdict.do === "raise") raise(verdict);
+      else if (verdict.do === "update") update(verdict.id, verdict.text);
+      else settle(verdict.id);
     }
   } finally {
     checking = false;

@@ -39,6 +39,7 @@ import theorem from "./panels/theorem.js";
 import todo from "./panels/todo.js";
 import tricks from "./panels/tricks.js";
 import word from "./panels/word.js";
+import { initPulse } from "./pulse.js";
 import { initSplash, onSplashDismiss, paintSplash, showSplash } from "./splash.js";
 import { dayHasTurned, loadState, store, subscribe } from "./store.js";
 import { initTabs, onTabChange } from "./tabs.js";
@@ -71,11 +72,12 @@ const WATCHES = {
   // outside it — without this the sheet says 6/8 and the card behind it still
   // says the set is untouched.
   tricks: ["tricks"],
-  // The health tab is one panel now and it writes nothing, but it still has to
-  // watch its own slice: every log arrives from the phone, and a laptop left
-  // open on this tab picks those up through `/api/state` on the next rollover
-  // or refresh. It also reads a slice it does not own — `store.config.phase`
-  // for the hero — and that is loaded before any panel mounts.
+  // The health tab is one panel now and it writes nothing, so every change it
+  // draws comes from somewhere else: the phone, arriving through `pulse.js` as
+  // a `put` on this slice. This entry is the whole of that wiring — a log sent
+  // from a kitchen redraws the tab through the same path a local write would.
+  // It also reads a slice it does not own — `store.config.phase` for the hero —
+  // and that is loaded before any panel mounts.
   health: ["health"],
 };
 
@@ -321,6 +323,13 @@ async function boot() {
     // rollover re-renders everything itself, so there is nothing to do after.
     if (checkDay()) return;
     renderChips();
+    // The reminders are read against the same store every panel is, so any
+    // write is a reason to look at them again — and the one that matters most
+    // is the one this tab did not make. A meal logged on the phone arrives
+    // here through `pulse.js` as an ordinary change to the health slice, and
+    // this line is what turns it into "lunch is not logged" being struck out
+    // on the shelf rather than sitting there being wrong until it is dismissed.
+    checkNudges();
     if (keys.some((key) => HISTORY_KEYS.includes(key))) invalidateHistory();
     // The archive caches past sets for the session, and today's row is one of
     // them the moment the set is marked.
@@ -333,6 +342,9 @@ async function boot() {
   watchForNewDay();
   initKeys();
   initNudges();
+  // Last of the background loops, and the only one that exists because the app
+  // has a second client. See the head of `pulse.js`.
+  initPulse();
 
   loadTopic();
 }
