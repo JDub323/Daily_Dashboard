@@ -455,9 +455,10 @@ unlock_seconds = 300
 # .env if you would rather it did not sit there.
 enabled = true
 
-# Sync in the background whenever the dashboard is opened. There is no 3am
-# task for this and deliberately so: the machine is asleep at 3am, and the
-# first boot of the morning is a trigger that is actually present.
+# Sync in the background whenever the dashboard is opened, and on the pulse's
+# poll thereafter. There is no 3am task for this and deliberately so: the
+# machine is asleep at 3am, and the first boot of the morning is a trigger that
+# is actually present.
 auto = true
 
 # How far back each run re-pulls. Garmin keeps revising a night's sleep score
@@ -466,9 +467,19 @@ auto = true
 # overwrite anything you corrected by hand.
 days = 3
 
-# Floor between automatic runs. These numbers change once a night; opening the
-# dashboard six times before lunch should not be six trips to Garmin.
+# Floor between runs nobody asked for: the pulse's own thirty-second poll, on a
+# dashboard sitting open on a second screen. These numbers change once a night
+# and an unattended tab has no business going to Garmin more often than this.
 min_interval_minutes = 60
+
+# Floor between runs somebody did ask for -- opening the dashboard, or turning
+# back to its window. Separate from the hour above because it is a different
+# question: that one is how often an unwatched tab should look, this one is
+# how long you wait after walking up to the laptop wanting this morning's
+# numbers. The hour used to apply to both, which is what made the watch take
+# two reloads and a few minutes to turn up. Still a floor -- a morning of
+# alt-tabbing is at most twelve trips, not one per glance.
+focus_interval_minutes = 5
 
 token_dir = "~/.garminconnect"
 

@@ -12,6 +12,26 @@
 // This asks. One dated GET of the health panel, on a slow beat while the tab is
 // being looked at, and immediately whenever it is looked at again.
 //
+// --- and the watch ------------------------------------------------------------
+//
+// The same beat is also what fetches the watch now, which is a second job and
+// worth saying out loud because nothing in the name suggests it.
+//
+// The panel has two kinds of row behind it. The phone's are in the table
+// already — it posted them, that is what "sent" means — so asking is enough.
+// Garmin's are not: they are sitting at Garmin until something on the laptop
+// goes and pulls them, and the only thing that ever did was a page load. So
+// the watch readings were exempt from everything written above: the dashboard
+// went stale about them and asking again did not help, because asking was a
+// read of a table nothing had written to.
+//
+// Hence the `beat` parameter. It tells the server which of these this is, and
+// the server starts a sync on the matching floor — a long one for the
+// unattended poll, a short one for a window you just turned back to. The trip
+// is a background thread and this request does not wait for it, so the numbers
+// land on the beat *after* the one that fetched them. Half a minute, against
+// the two reloads and a wait that this replaces.
+//
 // --- why a poll ---------------------------------------------------------------
 //
 // The obvious alternative is a push — an SSE stream or a websocket the write
@@ -55,6 +75,12 @@ let beating = false;
 /**
  * One look at the day, adopted only if it differs.
  *
+ * `why` is which kind of look — `beat` for the timer, `focus` for having just
+ * turned back to the window — and it exists for the watch rather than for
+ * anything on this side: it picks which floor the server applies before going
+ * to Garmin. Passed explicitly by both listeners below, because an event
+ * handler is handed an Event and `beat` would otherwise send one as its reason.
+ *
  * The comparison is against what is *on screen* rather than against the last
  * response, so there is one source of truth for "does the dashboard already
  * know this" and no second copy to fall out of step with the store. It is a
@@ -67,7 +93,7 @@ let beating = false;
  * write that arrived from the phone should do exactly what a write made here
  * does, and the way to guarantee that is to make it the same event.
  */
-export async function beat() {
+export async function beat(why = "beat") {
   if (beating || document.hidden || !store.state) return;
   // Between midnight and the rollover the store still describes yesterday, and
   // the panel this would fetch is today's. Dropping one into the other would
@@ -77,7 +103,7 @@ export async function beat() {
   if (store.state.date !== api.today()) return;
   beating = true;
   try {
-    const panel = await api.get("/api/health", { date: api.today() });
+    const panel = await api.get("/api/health", { date: api.today(), beat: why });
     if (JSON.stringify(panel) !== JSON.stringify(store.state.health)) put("health", panel);
   } catch {
     // The laptop asking its own server and being refused means the server is
@@ -91,7 +117,10 @@ export async function beat() {
 
 export function initPulse() {
   clearInterval(timer);
-  timer = setInterval(beat, EVERY_MS);
+  // Wrapped rather than passed bare: `setInterval` hands its callback the
+  // number of missed intervals in some engines, and this one takes an argument
+  // now.
+  timer = setInterval(() => beat("beat"), EVERY_MS);
   // Both events, and they are not the same one. `visibilitychange` fires for a
   // tab switch or a minimised window; `focus` fires for alt-tab between two
   // windows, where the tab never stopped being visible and the first event
@@ -99,7 +128,7 @@ export function initPulse() {
   // a window you turn back to, not a tab you re-open — and it was the one that
   // would have been missed.
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) beat();
+    if (!document.hidden) beat("focus");
   });
-  window.addEventListener("focus", beat);
+  window.addEventListener("focus", () => beat("focus"));
 }

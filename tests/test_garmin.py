@@ -415,6 +415,55 @@ def test_the_background_sync_declines_when_the_feature_is_off(settings):
     assert garmin.sync_in_background(switched(settings, False), None, TODAY) is False
 
 
+def floors(settings, *, idle: int, focus: int):
+    """`settings` with both sync floors pinned, rather than whatever
+    config.toml happens to say. Same lesson as `switched` above."""
+    return settings.model_copy(
+        update={
+            "garmin": settings.garmin.model_copy(
+                update={"min_interval_minutes": idle, "focus_interval_minutes": focus}
+            )
+        }
+    )
+
+
+def test_the_floor_belongs_to_the_caller_not_to_the_module(settings, monkeypatch):
+    """A poll nobody asked for waits an hour; a person does not wait an hour.
+
+    This is the bug the two floors exist for. There was one interval, it was
+    an hour, and it was applied to the reload you do *because* the watch's
+    numbers are missing from the panel -- so that reload went and looked at
+    nothing, and the readings turned up whenever an hour happened to be up.
+
+    Ten minutes since the last run is the interesting gap: past a five-minute
+    floor, nowhere near a sixty-minute one, so the two callers must disagree.
+    """
+    cfg = floors(switched(settings, True), idle=60, focus=5)
+    monkeypatch.setattr(
+        garmin,
+        "_state",
+        garmin._State(last_sync=dt.datetime.now() - dt.timedelta(minutes=10)),
+    )
+
+    # The unattended beat, taking the module's own floor: not yet.
+    assert garmin._claim(cfg, False) is False
+    assert garmin._claim(cfg, False, cfg.garmin.min_interval_minutes) is False
+    # Someone reloading the page, or turning back to the window.
+    assert garmin._claim(cfg, False, cfg.garmin.focus_interval_minutes) is True
+
+
+def test_a_claim_in_hand_still_excludes_everyone(settings, monkeypatch):
+    """The short floor shortens the wait; it does not license two syncs at
+    once. `running` is checked before any interval is, so a trip already in
+    flight refuses every caller however impatient -- which matters more now
+    that a focus event can arrive while the boot payload's sync is still out
+    at Garmin."""
+    cfg = floors(switched(settings, True), idle=60, focus=5)
+    monkeypatch.setattr(garmin, "_state", garmin._State(running=True))
+    assert garmin._claim(cfg, False, 1) is False
+    assert garmin._claim(cfg, True, 1) is False
+
+
 def test_connect_names_the_command_that_fixes_it(settings, tmp_path):
     """Never a bare failure: whichever way `connect` gives up, the message is
     an instruction.

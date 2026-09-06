@@ -39,7 +39,7 @@ import webbrowser
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import pydantic
 from fastapi import Depends, FastAPI, Query, Request, WebSocket, WebSocketDisconnect
@@ -228,6 +228,20 @@ Fetch = Annotated[Feeds, Depends(get_feeds)]
 # The browser supplies its own local date on every dated request. On GETs it
 # is a query parameter for the same reason it is a body field on POSTs.
 Today = Annotated[dt.date, Query(description="the browser's local date")]
+
+# Which kind of look at the health panel this is, and so how stale a set of
+# watch readings the caller will put up with. Absent means "just read the
+# table" -- which is what the phone wants, since it is on a tailnet asking a
+# laptop to do something the laptop is better placed to decide the timing of.
+#
+# `beat` is the pulse's unattended thirty-second poll and `focus` is the pulse
+# after you turned back to the window; the two floors they map to live in
+# `[garmin]`. Nothing here forces a sync: both are floors, and `_claim` is
+# still the only thing that decides whether a trip actually happens.
+Beat = Annotated[
+    Literal["beat", "focus"] | None,
+    Query(description="the pulse's reason for asking, which picks the sync floor"),
+]
 
 
 # --- the calendar quick-add ------------------------------------------------
@@ -694,7 +708,16 @@ def _register(app: FastAPI) -> None:
         # dashboard as slow as the slowest thing it talks to. The numbers land
         # a few seconds later and are on screen at the next redraw -- which,
         # for a set of readings that change once a night, is soon enough.
-        garmin.sync_in_background(cfg, request.app.state.db, date)
+        garmin.sync_in_background(
+            cfg,
+            request.app.state.db,
+            date,
+            # The short floor, because a page load is a person. The hour-long
+            # one used to apply here and it was the wrong answer to the only
+            # reload that matters -- the one you do *because* this morning's
+            # numbers are not on the panel yet.
+            floor_minutes=cfg.garmin.focus_interval_minutes,
+        )
         # `carries_over` spares day one of the two-day problem: an unmarked
         # Thursday rolls into Friday instead of being charged a zero. Forgetting
         # to press "keep going tomorrow" is not abandoning a problem you were
@@ -2038,7 +2061,9 @@ def _register(app: FastAPI) -> None:
     # deliberately never been taught to compute.
 
     @app.get("/api/health")
-    def health_panel(cfg: Cfg, repo: Repo, date: Today) -> api.HealthPanel:
+    def health_panel(
+        cfg: Cfg, repo: Repo, date: Today, request: Request, beat: Beat = None
+    ) -> api.HealthPanel:
         """The health tab's payload, on its own.
 
         Every write below already returns this, so the browser has never needed
@@ -2047,7 +2072,29 @@ def _register(app: FastAPI) -> None:
         that does need to ask: it opens on one of the five logs, and the whole
         of `/api/state` is a page of maths problems, feeds and ratings to
         redraw a list of what you have eaten today.
+
+        The dashboard asks too, on a beat, and that is the second thing this
+        route does. The panel has two sources -- rows the phone posted, which
+        are in the table by the time anyone could ask for them, and rows the
+        watch has not been fetched for yet -- and polling only ever covered the
+        first. So the readings the phone hands to Garmin arrived on a trigger
+        the dashboard no longer had: a page load. Kicking the sync from here
+        gives them the same treatment as a meal, one beat late instead of one
+        reload late, and costs nothing on the request -- `sync_in_background`
+        is a thread, and the floor in `_claim` is what stops a poll every
+        thirty seconds becoming a trip to Garmin every thirty seconds.
         """
+        if beat is not None:
+            garmin.sync_in_background(
+                cfg,
+                request.app.state.db,
+                date,
+                floor_minutes=(
+                    cfg.garmin.focus_interval_minutes
+                    if beat == "focus"
+                    else cfg.garmin.min_interval_minutes
+                ),
+            )
         return state.health_panel(cfg, repo, date)
 
     @app.post("/api/health")

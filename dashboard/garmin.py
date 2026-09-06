@@ -498,32 +498,58 @@ def _record(ok: bool, wrote: int, error: str | None) -> None:
         _state.wrote = wrote
 
 
-def _claim(cfg: Any, force: bool) -> bool:
+def _claim(cfg: Any, force: bool, floor_minutes: int | None = None) -> bool:
     """Whether this caller gets to run the sync.
 
     The clock here is the server's, and that is not a breach of [Invariant 1]:
     what is being measured is minutes since the last run, and an interval is
     not a date. Nothing in this function decides what day it is.
+
+    `floor_minutes` is how long this particular caller is willing to accept a
+    stale answer for, and it is the caller's to say rather than a constant here
+    because the two callers mean different things by it. See
+    `[garmin].focus_interval_minutes`: a thirty-second poll on an unwatched tab
+    and a person reloading the page because the numbers are missing are not the
+    same request, and giving them one floor meant the second one got the first
+    one's answer -- which is the whole reason the watch used to take two
+    reloads and a wait to turn up.
     """
     with _state.lock:
         if _state.running:
             return False
         if not force and _state.last_sync is not None:
+            floor = cfg.garmin.min_interval_minutes if floor_minutes is None else floor_minutes
             elapsed = (dt.datetime.now() - _state.last_sync).total_seconds()
-            if elapsed < cfg.garmin.min_interval_minutes * 60:
+            if elapsed < floor * 60:
                 return False
         _state.running = True
         return True
 
 
-def sync_in_background(cfg: Any, db: Any, today: dt.date, *, force: bool = False) -> bool:
+def sync_in_background(
+    cfg: Any,
+    db: Any,
+    today: dt.date,
+    *,
+    force: bool = False,
+    floor_minutes: int | None = None,
+) -> bool:
     """Kick off a sync off the request path. True if one actually started.
 
-    Called from the boot payload, which is what makes this automatic: opening
-    the dashboard is the trigger, so the morning's numbers are in before you
-    have finished reading the plan. There is no scheduler and no daemon,
-    deliberately -- a machine that is asleep at 4am cannot run a cron job, and
-    this one is asleep at 4am.
+    Called from the boot payload and from the pulse's poll of `/api/health`,
+    which between them are what make this automatic: opening the dashboard is a
+    trigger, turning back to its window is a trigger, and a tab left open goes
+    and looks on its own every `min_interval_minutes`. There is no scheduler
+    and no daemon, deliberately -- a machine that is asleep at 4am cannot run a
+    cron job, and this one is asleep at 4am.
+
+    The poll being a trigger is what closes the last gap. This starting a
+    thread does not put anything on screen; the rows land a few seconds later
+    and the *next* poll is what adopts them. Before the poll could start one,
+    the only thing that could was a page load -- so the reload that kicked the
+    sync off always rendered before it finished, and seeing the numbers took a
+    second reload. Now the same beat that would have shown them is the one that
+    went and got them.
 
     Daemon thread, own connection (`Database.conn` is thread-local), every
     exception caught and recorded. Nothing in here can take a request down.
@@ -532,7 +558,7 @@ def sync_in_background(cfg: Any, db: Any, today: dt.date, *, force: bool = False
         return False
     if not force and not cfg.garmin.auto:
         return False
-    if not _claim(cfg, force):
+    if not _claim(cfg, force, floor_minutes):
         return False
 
     def run() -> None:

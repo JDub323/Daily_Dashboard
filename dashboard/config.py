@@ -834,9 +834,21 @@ class GarminSettings(Base):
     a hand correction."""
 
     min_interval_minutes: int = Field(default=60, ge=1)
-    """Floor between automatic runs. Opening the dashboard six times before
-    lunch should not be six trips to Garmin for numbers that change once a
-    night."""
+    """Floor between runs nobody asked for -- the pulse's own thirty-second
+    beat, on a dashboard sitting open on a second screen. An hour, because
+    these numbers change once a night and an unattended tab has no reason to
+    go and look more often than that."""
+
+    focus_interval_minutes: int = Field(default=5, ge=1)
+    """Floor between runs somebody did ask for: opening the dashboard, or
+    turning back to its window.
+
+    A separate floor because it answers a different question. The hour above is
+    "how often should a tab nobody is facing go and look"; this is "you have
+    just walked up to the laptop wanting this morning's numbers", and applying
+    an hour to that is what made the watch take two reloads and a wait to
+    appear. Still floored, so a morning of alt-tabbing is at most twelve trips
+    rather than one per glance."""
 
     token_dir: str = "~/.garminconnect"
     """Where the OAuth tokens the login command writes are kept. Outside the

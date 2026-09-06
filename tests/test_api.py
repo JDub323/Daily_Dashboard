@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from dashboard import content, feeds
+from dashboard import content, feeds, garmin
 from dashboard.models import api
 from dashboard.models import domain as d
 from dashboard.models.common import HealthMetric, Track
@@ -1869,3 +1869,62 @@ def test_the_health_panel_read_takes_the_browsers_date(client):
     """[Invariant 1]: the server never decides what day it is, and this is the
     one GET on the health tab that could have been tempted to."""
     assert client.get("/api/health").status_code == 422
+
+
+@pytest.fixture
+def syncs(monkeypatch):
+    """Every floor `sync_in_background` was called with, in order. The real one
+    starts a thread that goes to Garmin; nothing in this file may."""
+    seen = []
+
+    def fake(cfg, db, today, *, force=False, floor_minutes=None):
+        seen.append(floor_minutes)
+        return True
+
+    monkeypatch.setattr(garmin, "sync_in_background", fake)
+    return seen
+
+
+def test_the_pulse_is_what_fetches_the_watch(client, settings, syncs):
+    """Polling the panel pulls the watch, and says how impatient it is.
+
+    This closes the gap the poll was built with. The panel has two kinds of row
+    behind it -- ones the phone posted, which are in the table before anyone
+    could ask, and ones sitting at Garmin until something pulls them -- and
+    asking again only ever refreshed the first kind. So the watch's readings
+    were exempt from the whole polling story: the only thing that could fetch
+    them was a page load, and a page load renders before the background sync
+    it started comes back. Two reloads and a wait, which is what this is for.
+
+    The parameter is the caller naming its own patience rather than the server
+    guessing: `focus` is somebody who just turned back to the window, `beat` is
+    a tab on a second screen. Both are floors -- `_claim` still decides whether
+    a trip happens at all.
+    """
+    idle = settings.garmin.min_interval_minutes
+    focus = settings.garmin.focus_interval_minutes
+    assert focus < idle
+
+    client.get("/api/health", params={"date": DATE, "beat": "beat"})
+    client.get("/api/health", params={"date": DATE, "beat": "focus"})
+    assert syncs == [idle, focus]
+
+
+def test_the_phone_reads_the_panel_without_summoning_garmin(client, syncs):
+    """`/m` polls this route too, and must not be a trigger.
+
+    Not a performance argument -- it is whose decision it is. The phone is on a
+    tailnet asking a laptop for a panel; how often that laptop should go out to
+    an unofficial API is the laptop's business, and a phone opened in a gym
+    should not be able to schedule it. Absent parameter, absent sync.
+    """
+    assert client.get("/api/health", params={"date": DATE}).status_code == 200
+    assert syncs == []
+
+
+def test_the_beat_is_one_of_two_words(client, syncs):
+    """A typo is a 422 rather than a silently ignored parameter, which on this
+    route would be a poll that quietly stopped fetching the watch and looked
+    exactly like one that was."""
+    assert client.get("/api/health", params={"date": DATE, "beat": "soon"}).status_code == 422
+    assert syncs == []
