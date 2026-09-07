@@ -1153,6 +1153,118 @@ def test_a_tick_survives_gcalcli_being_unreachable(client, monkeypatch):
     assert body["items"][0]["event_deleted"] is False
 
 
+
+# --- the day panel ---------------------------------------------------------
+#
+# One route for the phone's second screen. What is worth testing about it is
+# not the payload -- that is three existing panels concatenated -- but the two
+# promises the phone is built on: that it is side-effect free, so a screen that
+# polls it cannot start a watch sync; and that an unreadable calendar costs the
+# calendar and nothing else.
+
+
+def _calendar(monkeypatch, events, *, fails=False):
+    """Stand in for gcalcli's agenda read."""
+
+    def _read(self, start, days=7):
+        if fails:
+            raise feeds.FeedError("gcalcli timed out after 20s")
+        return _cached(api.CalendarResponse(start=start, days=days, events=events))
+
+    monkeypatch.setattr(feeds.Feeds, "calendar", _read)
+
+
+def test_day_carries_the_three_answers_at_once(client, monkeypatch):
+    """The whole point of one route rather than three.
+
+    The screen asking is on a phone that may have four seconds of a laptop's
+    attention and then none until tomorrow, so a request that either works or
+    does not is a screen with one state.
+    """
+    tomorrow = TODAY + dt.timedelta(days=1)
+    _no_gcalcli(monkeypatch)
+    _calendar(monkeypatch, [
+        api.CalendarEvent(date=TODAY, start="09:25", title="Database Concepts",
+                          calendar="Classes"),
+        api.CalendarEvent(date=tomorrow, title="Reading 3", calendar="Homework"),
+    ])
+    client.post("/api/calendar/add", json={"text": "todo fix the coffee table", "today": DATE})
+
+    body = client.get("/api/day", params={"date": DATE}).json()
+
+    assert body["date"] == DATE
+    assert body["calendar_reached"] is True
+    assert [e["title"] for e in body["events"]] == ["Database Concepts", "Reading 3"]
+    assert [i["title"] for i in body["todo"]["items"]] == ["Fix the coffee table"]
+    # The whole boot payload, so `web/app/day.js` can run over it unchanged --
+    # see `api.DayPanel.state` for why it is not a summary.
+    assert body["state"]["date"] == DATE
+    assert "health" in body["state"] and "math" in body["state"]
+
+
+def test_day_asks_for_today_and_tomorrow(client, monkeypatch):
+    """One day of lookahead, and it starts today rather than on a Monday.
+
+    The window is the reason this cannot borrow the week grid's cached read:
+    that one starts on `[calendar].week_starts_on`, and a phone opened on a
+    Thursday needs Thursday and Friday.
+    """
+    asked: list[tuple] = []
+
+    def _read(self, start, days=7):
+        asked.append((start, days))
+        return _cached(api.CalendarResponse(start=start, days=days, events=[]))
+
+    monkeypatch.setattr(feeds.Feeds, "calendar", _read)
+    client.get("/api/day", params={"date": DATE})
+    assert asked == [(TODAY, 2)]
+
+
+def test_day_survives_an_unreadable_calendar(client, monkeypatch):
+    """gcalcli is a subprocess talking to Google and is the slowest thing in
+    the route by an order of magnitude. A route that raised on it would make
+    the todo list unreadable whenever the network was poor -- which on this
+    client is most of the time."""
+    _no_gcalcli(monkeypatch)
+    _calendar(monkeypatch, [], fails=True)
+    client.post("/api/calendar/add", json={"text": "todo fix the coffee table", "today": DATE})
+
+    body = client.get("/api/day", params={"date": DATE}).json()
+
+    assert body["events"] == []
+    # Not the same question as the list being empty, and the difference is the
+    # whole reason the flag is on the model: a day with nothing on it and a day
+    # nobody could read are the same list and completely different facts.
+    assert body["calendar_reached"] is False
+    assert [i["title"] for i in body["todo"]["items"]] == ["Fix the coffee table"]
+
+
+def test_day_touches_nothing(client, monkeypatch):
+    """Side-effect free, which is why it is a second route and not a parameter
+    on `/api/state`.
+
+    That one reconciles lapsed math attempts, seeds the pattern deck and kicks
+    off a Garmin sync, all of it justified by "a page load is a person who
+    wants this morning's numbers". A phone opening a screen to read its todo
+    list is not that person.
+    """
+    synced: list = []
+    monkeypatch.setattr(
+        garmin, "sync_in_background",
+        lambda *a, **kw: synced.append(a),
+    )
+    _calendar(monkeypatch, [])
+
+    before = client.get("/api/state", params={"date": DATE}).json()
+    synced.clear()
+    client.get("/api/day", params={"date": DATE})
+
+    assert synced == [], "the phone must not be able to start a watch sync"
+    after = client.get("/api/day", params={"date": DATE}).json()["state"]
+    for slice_ in ("math", "patterns", "theorems", "tricks"):
+        assert after[slice_] == before[slice_], f"{slice_} moved under a read"
+
+
 def test_calendar_add_names_the_calendar_it_writes_to(client, monkeypatch):
     """The bug this whole path exists to fix.
 

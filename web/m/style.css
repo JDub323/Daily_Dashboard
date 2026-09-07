@@ -493,7 +493,13 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 9px;
-  letter-spacing: .14em;
+  /* .14em until the bar grew a sixth cell. `CHECK-IN` is the longest label
+     here and at .14em it measures 60.7px against the 60.6px a tab then had, so
+     it wrapped to two lines under five neighbours that did not. At .10em it is
+     57.8px and clears the 61.8px a 375px screen gives it, and still clears the
+     59.4px a 360px Android does. Below that it wraps again, which is the right
+     way for this to fail. */
+  letter-spacing: .10em;
   text-transform: uppercase;
   /* A step under --faint rather than the token itself. The unlit caps had to
      recede for the lit one to read, but 9px display type still owes 4.5:1 --
@@ -622,7 +628,7 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 
    The day root's three sit as far from those five as they do from each other,
    so the bar says which *root* you are in as well as which tab -- orchid for
-   the list only you keep, teal for the day's ledger, and steel for the clock.
+   the list only you keep, teal for the day's ledger, and steel for the schedule.
 
    All eight are desaturated into the same register as the rest of the palette:
    this is a shift in hue, not a change of skin.
@@ -642,7 +648,7 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 
   --hue-todo:     #bd80c6; --lit-todo:     #d5a8dc; --off-todo:     #a280ad;
   --hue-owed:     #4fb8a2; --lit-owed:     #86d5c4; --off-owed:     #60a198;
-  --hue-today:    #7c9de0; --lit-today:    #a6bdec; --off-today:    #7b91bd;
+  --hue-agenda:    #7c9de0; --lit-agenda:    #a6bdec; --off-agenda:    #7b91bd;
 }
 
 #shell { --tab: var(--accent); --tab-text: var(--accent); }
@@ -653,7 +659,7 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 #shell[data-tab="session"]  { --tab: var(--hue-session);  --tab-text: var(--lit-session); }
 #shell[data-tab="todo"]     { --tab: var(--hue-todo);     --tab-text: var(--lit-todo); }
 #shell[data-tab="owed"]     { --tab: var(--hue-owed);     --tab-text: var(--lit-owed); }
-#shell[data-tab="today"]    { --tab: var(--hue-today);    --tab-text: var(--lit-today); }
+#shell[data-tab="agenda"]    { --tab: var(--hue-agenda);    --tab-text: var(--lit-agenda); }
 
 /* --- the bar --------------------------------------------------------------- */
 
@@ -670,7 +676,7 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 .tab[data-log="session"]  { color: var(--off-session); }
 .tab[data-log="todo"]     { color: var(--off-todo); }
 .tab[data-log="owed"]     { color: var(--off-owed); }
-.tab[data-log="today"]    { color: var(--off-today); }
+.tab[data-log="agenda"]    { color: var(--off-agenda); }
 
 .tab.on {
   color: color-mix(in srgb, var(--tab-text) 88%, #fff);
@@ -691,7 +697,6 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
    after it are a different kind of thing. */
 .tab.home {
   color: var(--faint);
-  letter-spacing: .1em;
   border-right: 1px solid var(--border-soft);
 }
 .tab.home:active { color: var(--accent); }
@@ -757,3 +762,259 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   border-color: color-mix(in srgb, var(--tab) 45%, transparent);
   color: var(--tab-text);
 }
+
+/* --- the entrance ----------------------------------------------------------
+   Two cards, and the whole screen. No plate under them: `#view` drops `.panel`
+   on this root, because a card inside a card is a box inside a box, and these
+   two *are* the plates here — same square corners, same lit top edge, same
+   diagonal brackets, at the size of a thing you hit without aiming.
+
+   Each one carries a stripe of the hues its half of the app owns. That is the
+   legend the tab bar is, shown a level up: five green-to-ember on the log card
+   and three orchid-to-steel on the day card, so the bar you land in is already
+   familiar when you get there. */
+
+#view.home {
+  display: grid;
+  gap: var(--s4);
+  margin: var(--s4);
+  padding: 0;
+}
+
+.root-card {
+  display: grid;
+  gap: var(--s2);
+  justify-items: start;
+  text-align: left;
+  position: relative;
+  padding: var(--s5) var(--s4);
+  border: 1px solid rgba(92,207,230,.18);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(223,230,242,.05), transparent 45%),
+    var(--panel);
+  box-shadow: inset 0 1px 0 rgba(223,230,242,.10);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.root-card::before, .root-card::after {
+  content: ""; position: absolute; width: var(--bracket); height: var(--bracket);
+  pointer-events: none; border: 0 solid rgba(92,207,230,.34);
+}
+.root-card::before { top: -1px; left: -1px; border-top-width: 2px; border-left-width: 2px; }
+.root-card::after { bottom: -1px; right: -1px; border-bottom-width: 2px; border-right-width: 2px; }
+.root-card:active {
+  box-shadow: inset 0 -1px 0 rgba(223,230,242,.14), inset 0 2px 6px rgba(0,0,0,.55);
+  transform: translateY(1px);
+}
+
+.rc-name {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: var(--t-head);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+
+/* The hues this half owns, as a rule under its name. Eight pixels tall and the
+   full width of the card, which is enough to be recognised and not enough to be
+   a decoration. */
+.rc-hues { display: flex; width: 100%; height: 6px; gap: 2px; }
+.rc-hues i { flex: 1; }
+.rc-hues i[data-log="meals"]    { background: var(--hue-meals); }
+.rc-hues i[data-log="drinks"]   { background: var(--hue-drinks); }
+.rc-hues i[data-log="bathroom"] { background: var(--hue-bathroom); }
+.rc-hues i[data-log="checkin"]  { background: var(--hue-checkin); }
+.rc-hues i[data-log="session"]  { background: var(--hue-session); }
+.rc-hues i[data-log="todo"]     { background: var(--hue-todo); }
+.rc-hues i[data-log="owed"]     { background: var(--hue-owed); }
+.rc-hues i[data-log="agenda"]   { background: var(--hue-agenda); }
+
+.rc-what { font-size: var(--t-meta); color: var(--faint); }
+
+/* What this half is waiting on. Gold, because on this screen that is exactly
+   what it means -- something is owed and nothing has been written down about
+   it yet. The one place in the app where gold is used for a count. */
+.rc-state {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--gold-text);
+}
+
+/* --- the day's three lists -------------------------------------------------
+   One row shape across all three, which is most of why they read as one screen:
+   a box, a title that takes the width, and up to two small marks on the right.
+   The differences between a todo, a task and an event are in what fills those
+   slots, not in the shape.
+
+   48px, like every cap in the app -- these are the first rows here you tap
+   rather than read, and a row you have to aim at is a row you mis-hit. */
+
+.todo, .owed, .event {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  width: 100%;
+  min-height: 48px;
+  padding: var(--s2) 0;
+  text-align: left;
+  border: 0;
+  border-radius: 0;
+  background: repeating-linear-gradient(90deg, var(--border) 0 3px, transparent 3px 7px)
+              top / 100% 1px no-repeat;
+  color: var(--fg);
+  font: var(--t-body)/1.35 "Cascadia Code", Consolas, monospace;
+}
+.todo { cursor: pointer; touch-action: manipulation; }
+.todo:active { background-color: rgba(223,230,242,.05); }
+
+/* The tick target's mark, and it is a mark rather than a checkbox: a 13px
+   control with a chrome of its own would be the largest thing on a row whose
+   content is three words. The box is drawn in the tab's hue so that ticking
+   reads as the same gesture as answering a cap two screens away. */
+.todo-box {
+  flex: none;
+  width: 20px; height: 20px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--tab-text);
+  border: 1px solid color-mix(in srgb, var(--tab) 40%, transparent);
+  background: linear-gradient(180deg, rgba(223,230,242,.06), rgba(0,0,0,.18));
+}
+.todo.done .todo-box, .owed.done .todo-box {
+  border-color: color-mix(in srgb, var(--tab) 62%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--tab) 22%, transparent),
+    color-mix(in srgb, var(--tab) 4%, transparent));
+}
+
+.todo-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+/* Done. Struck and dimmed rather than removed: the strike is what makes a tick
+   feel like it landed, and the row staying put is what makes an accidental one
+   recoverable without leaving the screen. */
+.todo.done .todo-title, .owed.done .todo-title {
+  color: var(--faint);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--tab) 60%, transparent);
+}
+/* Written here, not there yet — the same mark the logs use, and the same
+   argument: it is the normal state of a row typed in a gym, not a failure. */
+.todo.queued .todo-title { color: var(--dim); font-style: italic; }
+
+/* The subject key on a todo, the point value on a task, the calendar on an
+   event. Three different facts in one slot because they are the same kind of
+   fact: the one word that says which bucket this row came out of. */
+.todo-key {
+  flex: none;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--tab-text);
+  border: 1px solid color-mix(in srgb, var(--tab) 34%, transparent);
+  padding: 1px var(--s2);
+}
+.todo-at {
+  flex: none;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: .06em;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+/* Ticked, and its Google event is still standing because gcalcli refused. Gold,
+   because it is the one thing on this screen that is a warning. */
+.todo-stuck {
+  flex: none;
+  font-family: var(--font-display);
+  font-size: 8px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--gold-text);
+}
+
+/* The schedule's clock column, wide enough for `all day` so the titles beside
+   it line up down the list -- the thing that makes a schedule scannable is the
+   left edge of the second column, not the times themselves. */
+.event-at {
+  flex: none;
+  width: 7ch;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--tab-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Overdue, and the required half of a day that is not finished. Gold on the
+   heading only -- the rows underneath are ordinary rows, and colouring six of
+   them red would make a normal Tuesday look like an emergency. */
+.q-name.late { color: var(--gold-text); }
+
+/* The undo. Collapsed, because it is a list you go to rather than one you
+   read, and the count is the whole of what it has to say from the outside. */
+.done-box { margin-top: var(--s5); }
+.done-box > summary {
+  font-family: var(--font-display);
+  font-size: 9px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: var(--s3) 0;
+  cursor: pointer;
+}
+
+/* Nothing cached and nothing reachable. `.cold` takes the gold for the reason
+   it does under the logs: it qualifies every empty list above it. */
+.empty.cold { color: var(--gold-text); opacity: .85; }
+
+/* --- the bar, at six cells -------------------------------------------------
+   `home` is a fixed 44px and the tabs share what is left, which on a 375px
+   screen is 66px each -- wider than the five-across bar this replaced, because
+   the sixth cell is a good deal narrower than a sixth. `grid-auto-columns` rather than
+   `repeat()`, since the number of tabs is 5 on one root and 3 on the other and
+   `repeat()` cannot be told a count by a custom property. */
+.tabs {
+  grid-template-columns: 44px;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+}
+
+/* The hour belongs to a log, so it is drawn only on one. The send button beside
+   it is not: the queue is everything still owed by the whole app, and the day
+   screen writes into it too, so the one control that drains it is present on
+   every root including the entrance. */
+#shell:not([data-root="log"]) .hour { display: none; }
+#shell:not([data-root="log"]) #hourbar { justify-content: flex-end; }
+
+/* The owed screen's marks. Nothing on that screen is a control -- see the note
+   at `line` in `owedScreen` -- so they are deliberately not the box the todo
+   rows wear: a gold star for done, a faint dot for not, at the width the box
+   occupies so the two lists still hang off the same left edge. */
+.owed-mark {
+  flex: none;
+  width: 20px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--faint);
+}
+.owed.done .owed-mark { color: var(--tab-text); }
+
+/* Been and gone. Not hidden: what has already happened is half of what makes a
+   schedule readable, because it is how you know where in the day you are. */
+.event.past { opacity: .45; }
+.event.past .todo-key { border-color: var(--border-soft); }
+.rc-state.quiet { color: var(--faint); }

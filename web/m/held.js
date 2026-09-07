@@ -21,23 +21,33 @@
 // nursed, and a panel that might be wrong is never preferred to one that came
 // off the wire.
 //
-// --- one day, and it is today's ---------------------------------------------
+// --- two slots, and they do not have the same rule about days ----------------
 //
-// The screen draws today and nothing else, so this keeps today and nothing
-// else. The date is stored beside the panel and checked on the way out, which
-// is what stops the interesting failure: open the app at 00:30, get yesterday's
-// meals under today's heading, and start deleting rows that are not there. A
-// panel from another day is not shown, and reading past it is what clears it.
+// The health panel — the five logs — keeps today and nothing else, and reading
+// past midnight is what clears it. That is not caution, it is the fix for a
+// specific failure: open the app at 00:30, get yesterday's meals under today's
+// heading, and start deleting rows that are not there. Every row on that screen
+// has a delete button beside it.
 //
-// It is dropped rather than migrated across days on purpose. The alternative --
-// keeping a week and paging back through it -- is a different screen with a
-// day picker on it, and this one has never had a concept of a day other than
-// the one you are standing in.
+// The day panel — the todo list, what today asks for, the schedule — is handed
+// back *with the day it describes* and is allowed to be yesterday's. That is
+// the whole point of it. The laptop is asleep most of the day, so a phone
+// opened on Tuesday morning may not have spoken to it since Monday evening, and
+// a schedule that went blank at midnight would be blank exactly when it was
+// wanted. `GET /api/day` sends tomorrow's events alongside today's for the same
+// reason, and `app.js` is what decides which half of a stale panel is still
+// true — see `promote` there. This file's job is only to be honest about when
+// the copy was taken.
+//
+// Neither is migrated across more than that. Keeping a week and paging back
+// through it is a different screen with a day picker on it, and this app has
+// never had a concept of a day other than the one you are standing in.
 
-import { isPanel } from "./queue.js";
+import { isDay, isPanel } from "./queue.js";
 import { localISO } from "./when.js";
 
 const KEY = "dashboard.m.panel";
+const DAY_KEY = "dashboard.m.day";
 
 /**
  * Keep this panel as the laptop's last word on `date`.
@@ -90,9 +100,56 @@ export function recall(date = localISO(new Date())) {
   return { panel: held.panel, at: typeof held.at === "string" ? held.at : null };
 }
 
+/** Keep this `DayPanel` as the laptop's last word on the day it names.
+ *
+ *  The date comes off the panel rather than off this phone's clock, which is
+ *  the one difference that matters: what is being written down is which day the
+ *  laptop was answering about, and `recallDay` has to be able to tell that
+ *  apart from when the answer arrived. */
+export function rememberDay(day) {
+  if (!isDay(day)) return false;
+  try {
+    localStorage.setItem(DAY_KEY, JSON.stringify({ at: new Date().toISOString(), day }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The last `DayPanel` heard, whatever day it was about, or null.
+ *
+ * `{ day, at }`. Unlike `recall` this does not check the date — see the head of
+ * the file. What it still checks is the shape, for the same reason: a hotel
+ * portal's JSON is a thing that can end up in storage, and `day.date` is what
+ * every decision above this is made from.
+ */
+export function recallDay() {
+  let held;
+  try {
+    const raw = localStorage.getItem(DAY_KEY);
+    if (!raw) return null;
+    held = JSON.parse(raw);
+  } catch {
+    forgetDay();
+    return null;
+  }
+  if (!held || !isDay(held.day)) {
+    forgetDay();
+    return null;
+  }
+  return { day: held.day, at: typeof held.at === "string" ? held.at : null };
+}
+
 /** Throw the cached day away. Nothing is lost that the database does not have. */
 export function forget() {
   try {
     localStorage.removeItem(KEY);
   } catch { /* nothing to do, and nothing at stake — see the head of the file */ }
+}
+
+export function forgetDay() {
+  try {
+    localStorage.removeItem(DAY_KEY);
+  } catch { /* as above */ }
 }

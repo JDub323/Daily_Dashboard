@@ -1178,6 +1178,51 @@ def _register(app: FastAPI) -> None:
                 repo.mark_todo_event_deleted(item.id)
         return state.todo_panel(cfg, repo, body.today or dt.date.today())
 
+    # -- the day, for the phone --------------------------------------------
+
+    @app.get("/api/day")
+    def day(cfg: Cfg, fetch: Fetch, repo: Repo, date: Today) -> api.DayPanel:
+        """What today asks for, what is on the list, and what is on the calendar.
+
+        The phone's second screen, in one round trip. See `api.DayPanel` for why
+        the whole boot payload goes rather than a summary of it.
+
+        Side-effect free, which is the difference between this and `/api/state`
+        and the reason it is a second route rather than a query parameter on the
+        first. That one reconciles lapsed math attempts, seeds the pattern deck
+        and kicks off a Garmin sync, all of it justified by "a page load is a
+        person who wants this morning's numbers". A phone opening a screen to
+        read its todo list is not that person, and a watch sync fired from a
+        pocket is a surprise nobody asked for.
+
+        The calendar is allowed to fail and the rest is not. gcalcli is a
+        subprocess talking to Google and it is the slowest thing in here by an
+        order of magnitude -- a cold read is three seconds against this route's
+        three hundred milliseconds -- so a route that raised on it would make
+        the todo list unreadable whenever the network was poor, which on this
+        client is most of the time. `calendar_reached` is what carries the
+        difference between "nothing on today" and "nobody could tell".
+        """
+        got_events: list[api.CalendarEvent] = []
+        reached = False
+        try:
+            # Today and tomorrow. Its own cache key, separate from the week the
+            # desktop grid asks for -- two entries rather than one slicing of a
+            # wider window, because the grid's week starts on a Monday and this
+            # one has to start today.
+            got_events = list(fetch.calendar(date, 2).value.events)
+            reached = True
+        except feeds.FeedError as e:
+            log.warning("day panel: the calendar could not be read: %s", e)
+
+        return api.DayPanel(
+            date=date,
+            state=state.dashboard_state(cfg, repo, date),
+            todo=state.todo_panel(cfg, repo, date),
+            events=got_events,
+            calendar_reached=reached,
+        )
+
     # -- math --------------------------------------------------------------
 
     @app.post("/api/math/new")

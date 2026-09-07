@@ -1987,6 +1987,59 @@ class TodoDoneRequest(Base):
     belongs to the client here as it does everywhere else."""
 
 
+# --- the day, for the phone ------------------------------------------------
+
+
+class DayPanel(Base):
+    """The three questions the phone's day screen asks, in one answer.
+
+    They have nothing to do with each other -- what today asks for, what is on
+    the list, what is on the calendar -- and they arrive together because the
+    screen asking them is on a phone that may have four seconds of a laptop's
+    attention and then none until tomorrow. One request that either works or
+    does not is a screen with one state; three are a screen with eight.
+    """
+
+    date: dt.date
+
+    state: DashboardState
+    """The whole boot payload, and not a summary of it.
+
+    Deliberate, and the size of it is the price of the thing it buys. What a day
+    asks for is defined exactly once, in `web/app/day.js`, and both clients run
+    that same function -- the desktop over its store, the phone over this. A
+    projection would mean writing the projection twice, and the second copy is
+    precisely what goes quietly out of step: two devices disagreeing about
+    whether the day is finished is worse than either of them being wrong,
+    because there is no way to tell which one to believe.
+
+    It is ~47KB, over a tailnet, once per opening of the screen.
+    """
+
+    todo: TodoPanel
+
+    events: list[CalendarEvent] = Field(default_factory=list)
+    """Today's and tomorrow's, unsorted -- the client groups by `date`.
+
+    Tomorrow is here for the rollover, which on this client is not a rare case:
+    the laptop is asleep most of the day, so a phone opened on Tuesday morning
+    may not have spoken to it since Monday evening. One day of lookahead means
+    the schedule screen still has something true on it when that happens. Two
+    would not: an event moved on Monday night is wrong by Wednesday, and a
+    schedule that is confidently wrong is worse than one that admits it is
+    empty.
+    """
+
+    calendar_reached: bool = False
+    """Whether gcalcli answered at all.
+
+    Not the same question as `events` being empty, and the difference is the
+    whole reason it is here: a day with nothing on it and a day nobody could
+    read are the same list and completely different facts, and the phone is
+    the client least able to guess which it is looking at.
+    """
+
+
 # --- the portfolio ---------------------------------------------------------
 #
 # Every model below crosses the fingerprint gate except `PortfolioStatus`,

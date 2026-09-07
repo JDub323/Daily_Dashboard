@@ -34,7 +34,7 @@
 // classic worker cannot import a module — and `shell.test.js` fails when the
 // two disagree.
 
-const VERSION = "log-v12";
+const VERSION = "log-v13";
 
 /** How long a *cold* request gets before the shell falls back to itself.
  *  Only ever spent on a file that is not in the cache, which after the first
@@ -76,6 +76,14 @@ const SHELL = [
   "../vendor/orbitron/orbitron-latin.woff2",
   // Imports nothing, by design — see the head of the file.
   "../app/logs.js",
+  // What a day asks for, and where a todo row goes. Both are the desktop's own
+  // rules rather than a second copy of them, and both are pure — `day.js`
+  // imports `logs.js` above and `todolist.js` imports nothing at all, so the
+  // two of them add no third file to this list. That property is the reason
+  // they are separate modules rather than functions on the panels they came
+  // out of, and `shell.test.js` is what keeps it true.
+  "../app/day.js",
+  "../app/todolist.js",
   // `splash.js` imports `dom.js` and `dom.js` imports nothing, so the two of
   // them close the graph.
   "../app/splash.js",

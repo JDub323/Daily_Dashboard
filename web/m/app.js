@@ -56,13 +56,23 @@ import {
   openBlocks, parseAmount, prunedDraft, prunedTree, RPE_ANCHOR, sessionFocus,
   SESSION_TREE, sessionKind, stepOptions, toShown, toStored,
 } from "../app/logs.js";
+// What today asks for, and it is the desktop's own list rather than a second
+// opinion about it — see the head of `day.js`. Pure over a `DashboardState`,
+// which is exactly what `GET /api/day` hands back, and it imports `logs.js` and
+// nothing else, which is what makes it legal here.
+import { dayTasks, optional, required, score } from "../app/day.js";
+// Where a todo row goes, and how its title is printed. Same argument, same
+// property: no DOM, no store, no imports at all.
+import {
+  clock as dueClock, dayLabel as dueLabel, groupByDay, keyFor, shorten, undatedItems,
+} from "../app/todolist.js";
 // The dashboard's own title screen, not a copy of it: same module, same
 // markup in index.html, same stylesheet. It imports nothing but `dom.js`,
 // which imports nothing at all — so bringing it here costs exactly the splash
 // and none of the store, the panel harness or the nav ring.
 import { initSplash, paintSplash } from "../app/splash.js";
-import { forget, recall, remember } from "./held.js";
-import { enqueue, flush, isPanel, onQueueChange, pending, pendingOn } from "./queue.js";
+import { forget, forgetDay, recall, recallDay, remember, rememberDay } from "./held.js";
+import { enqueue, flush, isDay, isPanel, onQueueChange, pending, pendingOn } from "./queue.js";
 import { clock, dateForHour, dayLabel, nowHour, timeLabel, today } from "./when.js";
 
 // --- the smallest possible DOM helper ---------------------------------------
@@ -131,8 +141,107 @@ function adopt(fresh) {
  *  see the `visibilitychange` handler, which is where it is spent. */
 let panelDay = panel ? today() : null;
 
+// --- the day, and what is left of it when it is yesterday's --------------------
+//
+// `GET /api/day`, cached the way the health panel is and with one rule the
+// health panel does not have: a copy from another day is *kept*, partially.
+//
+// That is not a nicety on this client. The laptop is asleep most of the day, so
+// a phone opened on Tuesday morning may not have spoken to it since Monday
+// evening — and the whole point of a schedule on a phone is that it is there on
+// the morning you are running late, which is the morning you have not sat down
+// at a laptop. A screen that went blank at midnight would go blank exactly when
+// it was wanted.
+//
+// So `promote` decides, once, which parts of a stale panel are still true:
+//
+//   the schedule   yes, one day forward, and *only* one. The route sends
+//                  tomorrow's events with today's for this. Two days would be
+//                  guessing: an event moved on Monday night is wrong by
+//                  Wednesday, and a schedule that is confidently wrong is worse
+//                  than one that says it does not know.
+//   the todo list  yes, unchanged. An overdue reading is still overdue in the
+//                  morning, and the one thing you can do to a row here is tick
+//                  it, which is addressed by id and is right whenever it is
+//                  done. What shifts is only which heading a row falls under,
+//                  and `groupByDay` is given today's date rather than the
+//                  panel's, so it re-groups correctly against the new day.
+//   what is owed   no. Yesterday's "3 of 5 done" under today's heading is not
+//                  stale, it is false — the day it describes is over, and the
+//                  new one has not been looked at. Dropped, and the tab says
+//                  why rather than showing a zero it did not earn.
+
+const heldDay = recallDay();
+
+/** The laptop's last word on the day, or null. May describe yesterday — see
+ *  `dayFor` and `promote`. */
+let day = heldDay?.day ?? null;
+
+/** When that was heard, ISO, or null. */
+let dayHeard = heldDay?.at ?? null;
+
+/**
+ * Take a `DayPanel` off the wire.
+ *
+ * The one place `day` is assigned from a response, on the same argument as
+ * `adopt`: fresher rows and the stamp that says how old they are move together
+ * or not at all.
+ */
+function adoptDay(fresh) {
+  day = fresh;
+  dayHeard = new Date().toISOString();
+  rememberDay(fresh);
+}
+
+/** Which day the cached panel is about, or null when there is none. */
+const dayFor = () => day?.date ?? null;
+
+/** Yesterday, as an ISO date. `when.js` has no such thing on purpose — every
+ *  other date question this app asks is about today or about an hour that has
+ *  already happened — and this is the only caller. */
+function yesterdayISO() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Whether what is on screen describes a day that is over. */
+const dayStale = () => Boolean(day) && day.date !== today();
+
+/**
+ * The events still worth drawing, and the heading each belongs under.
+ *
+ * On a fresh panel this is everything it came with. On a stale one it is the
+ * half that survives the rollover: `date` is compared against *today*, so
+ * yesterday's rows drop out on their own and what was tomorrow's becomes
+ * today's without being rewritten. An all-day event that spans the boundary is
+ * kept by its `end_date`, which is Google's half-open convention and the reason
+ * a one-day holiday arrives as 09-07 → 09-08.
+ */
+function eventsFrom() {
+  const now = today();
+  return (day?.events ?? []).filter((e) => e.date >= now || (e.end_date ?? "") > now);
+}
+
+/**
+ * Which of the two halves of the app is open, or the screen that chooses.
+ *
+ * `home` | `log` | `day`. The app opens on `home` every time rather than where
+ * it was left, which costs a tap on the way to a meal and is worth it twice
+ * over: the entrance is the only screen that can say what *both* halves are
+ * waiting on — how much is queued, how much of the day is done, how much is due
+ * — and a screen you always pass through is a screen you actually read. Landing
+ * back where you were would also mean the day screen quietly becoming the app
+ * for anyone who opened it once.
+ */
+let root = "home";
+
 /** Which log is open. */
 let tab = "meals";
+
+/** Which of the day's three is open. Kept apart from `tab` so switching roots
+ *  twice comes back to where you were in each. */
+let dayTab = "todo";
 
 /** The hour every entry is filed against. One control for all five logs: the
  *  case it exists for — noticing at three that lunch never got logged — is one
@@ -208,6 +317,26 @@ function send(path, body, label) {
 }
 
 /**
+ * The same, for the day screen's two writes — with no `date` on the body.
+ *
+ * `TodoDoneRequest` and `TodoWriteRequest` forbid unknown fields, and their day
+ * is called `today`. So these cannot go through `send`, which injects `date`,
+ * and the server would refuse them with a 422 — a 4xx, which the flush drops
+ * rather than retries, so the tick would vanish and be reported as the server
+ * refusing something.
+ *
+ * The other half of that is `pendingOn`, which finds log rows by `body.date`
+ * and so cannot see these at all. Correct: a ticked todo is not a row on any
+ * log. The day screen reads them straight off `pending()` by path — see
+ * `queuedTicks` and `queuedAdds`.
+ */
+function sendDay(path, body, label) {
+  const entry = enqueue(path, { today: today(), ...body }, label);
+  if (!entry) toast(`could not save that ${label} — the phone’s storage is full`);
+  draw();
+}
+
+/**
  * How long to wait on the laptop before deciding it is not there.
  *
  * There is no good unbounded answer. An unreachable host on a normal network
@@ -234,11 +363,54 @@ async function load() {
     // did not come from the dashboard.
     const body = await response.json();
     if (isPanel(body)) adopt(body);
+    return true;
   } catch {
     /* Offline, or slow enough to count as offline. `panel` stays as it was — or
        null on a cold start, which draws the queue alone rather than an error
        page. There is nothing to do about an unreachable server on a screen
        whose whole job is to work without one. */
+    return false;
+  }
+}
+
+/**
+ * How long `/api/day` gets, which is longer than the health panel gets.
+ *
+ * Not caution — a measurement. The route reads the whole boot payload in about
+ * three hundred milliseconds and then asks gcalcli for two days of calendar,
+ * which is a subprocess talking to Google: warm out of its cache that is
+ * nothing, and cold it is three seconds. `REACH_MS` would time out on the cold
+ * one, every time the cache had turned over, and the schedule would then be a
+ * feature that worked only on the second try.
+ *
+ * The wait costs nothing to look at because it is never the first thing on
+ * screen: whatever was cached is drawn before this is sent, and the panel is
+ * replaced under you when it lands.
+ */
+const DAY_MS = 9000;
+
+/** In flight, so a second visit to the day root does not start a second one. */
+let loadingDay = false;
+
+async function loadDay() {
+  if (loadingDay) return false;
+  loadingDay = true;
+  try {
+    const response = await fetch(`/api/day?date=${today()}`, {
+      signal: AbortSignal.timeout(DAY_MS),
+    });
+    if (!response.ok) return false;
+    // `isDay` for the reason `isPanel` is used above: a portal's 200 is not an
+    // answer, and this one would be *written to storage* and drawn as a day
+    // with nothing owed and nothing due.
+    const body = await response.json();
+    if (isDay(body)) adoptDay(body);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    loadingDay = false;
+    draw();
   }
 }
 
@@ -296,6 +468,13 @@ async function sendNow() {
     // we have is as good as the one we would get, and this is a request that
     // will hang for `REACH_MS` on the connection that just failed.
     if (sent) await load();
+    // And the day, which a flush can have changed in ways the flush cannot
+    // report: a ticked todo comes back as a `TodoPanel` and an added one as a
+    // `CalendarWrite`, and neither is a shape this screen draws — see the note
+    // in `queue.js` about why the flush no longer adopts them. Refetched only
+    // if there is a day on screen to correct, so draining a pocketful of meals
+    // does not also fetch a calendar.
+    if (sent && day) await loadDay();
 
     // Counted, not subtracted. `pending()` before minus `pending()` after is
     // wrong the moment a meal is logged during the flush — which is exactly
@@ -1110,6 +1289,416 @@ function sessionLog() {
 
 // --- the shell --------------------------------------------------------------------
 
+// --- the day ------------------------------------------------------------------
+//
+// The app's other half, and the only part of it that is mostly for reading.
+//
+// The five logs answer "what have I already put down?"; these three answer
+// "what is still owed?", from three directions that do not overlap:
+//
+//   todo    the list — overdue, due, and the ones with no day on them at all.
+//           The one screen here you can write to, and both writes go through
+//           the same queue everything else does.
+//   owed    what *today* asks for. `dayTasks` off `day.state`, which is the
+//           desktop's own list rather than a second opinion about it.
+//   agenda  the calendar. Today's events, and tomorrow's once the day has
+//           turned over and the laptop has not been reachable since.
+//
+// All three draw from one cached `DayPanel` and one request. See the block
+// around `promote` for what survives a rollover and what does not.
+
+/**
+ * A tap that a scroll cannot become.
+ *
+ * The todo rows are the first controls in this app where a mis-hit costs
+ * something you have to go and undo, and they are also the first ones in a list
+ * long enough to need scrolling — which is the combination that produces the
+ * complaint. A finger that starts on a row and drags to scroll fires `click` on
+ * that row in Safari more often than it should, and a "sloppy tap" that moves
+ * eight pixels fires it everywhere.
+ *
+ * So the row's own `click` is gated on the gesture having been a tap: a pointer
+ * that moved more than `SLOP` or was cancelled by the scroller taking the
+ * gesture over does not count. `pointercancel` is the important half — on a
+ * touchscreen the browser hands the gesture to the scroller and stops sending
+ * moves, so distance alone would not notice.
+ *
+ * `click` and not `pointerup`, deliberately: `click` is what a keyboard and a
+ * screen reader produce, and neither of those sends a pointer event at all —
+ * `down` stays null for them and the guard passes.
+ */
+const SLOP = 10;
+
+function safeTap(onTap) {
+  let down = null;
+  let dragged = false;
+  return {
+    onpointerdown: (e) => { down = [e.clientX, e.clientY]; dragged = false; },
+    onpointermove: (e) => {
+      if (!down) return;
+      if (Math.hypot(e.clientX - down[0], e.clientY - down[1]) > SLOP) dragged = true;
+    },
+    onpointercancel: () => { dragged = true; },
+    onclick: (e) => {
+      const missed = dragged;
+      down = null;
+      dragged = false;
+      if (!missed) onTap(e);
+    },
+  };
+}
+
+/** Ticks the queue is still carrying, as `{ [todo_id]: done }`. */
+const queuedTicks = () =>
+  Object.fromEntries(
+    pending()
+      .filter((e) => e.path === "/api/todo/done")
+      .map((e) => [e.body.todo_id, e.body.done]),
+  );
+
+/** Lines typed into the box and not yet sent, as rows the list can draw.
+ *
+ *  Given negative ids so nothing can collide with a real `todo.id`, and so the
+ *  tick handler can refuse them: an item the laptop has never heard of cannot
+ *  be marked done, and offering the gesture would queue a write against an id
+ *  that does not exist. */
+const queuedAdds = () =>
+  pending()
+    .filter((e) => e.path === "/api/calendar/add")
+    .map((e, i) => ({
+      id: -(i + 1),
+      title: String(e.body.text ?? "").replace(/^todo\s+/i, ""),
+      subject: null,
+      due_date: null,
+      start: null,
+      done: false,
+      done_at: null,
+      event_deleted: true,
+      queued: true,
+    }));
+
+/**
+ * The list as it will be once the queue has drained.
+ *
+ * The same promise the five logs make: what is on screen is what the day will
+ * look like when the laptop next hears about it, so a tick greys its row at
+ * once rather than at the next successful send. A tap that appears to have
+ * missed gets tapped again, and on a list of things you are crossing off that
+ * is how one reading gets ticked twice.
+ */
+function todoRows() {
+  const ticks = queuedTicks();
+  const rows = (day?.todo?.items ?? []).map((item) =>
+    item.id in ticks
+      ? { ...item, done: ticks[item.id], done_at: ticks[item.id] ? new Date().toISOString() : null,
+          queued: true }
+      : item,
+  );
+  return [...queuedAdds(), ...rows];
+}
+
+/** Tick, or untick. Everything the row needs to know about writing. */
+function tickTodo(item) {
+  if (item.id < 0) {
+    toast("that one has not reached the laptop yet — send it first");
+    return;
+  }
+  sendDay("/api/todo/done", { todo_id: item.id, done: !item.done }, "tick");
+  // Named rather than merely counted, because the whole risk on this screen is
+  // ticking something you did not mean to and not noticing which. Saying it
+  // back is most of the undo.
+  toast(item.done
+    ? `“${shorten(item.title, item.subject)}” put back`
+    : `“${shorten(item.title, item.subject)}” ticked — it is under “done”`);
+}
+
+/** One row of the list. A button, so the keyboard and a screen reader get it
+ *  for free, with the tap guard over the top. */
+function todoRow(item, shortKey) {
+  return el("button.todo", {
+    class: `${item.done ? "done" : ""}${item.queued ? " queued" : ""}`,
+    // The stored title, which is the one on the Google event, so what the row
+    // is named after survives having its subject taken off the front.
+    "aria-label": `${item.title} — ${item.done ? "mark as still to do" : "mark done"}`,
+    ...safeTap(() => tickTodo(item)),
+  },
+    el("span.todo-box", { "aria-hidden": true, text: item.done ? "×" : "" }),
+    el("span.todo-title", { text: shorten(item.title, item.subject) }),
+    item.subject ? el("span.todo-key", { text: shortKey(item.subject) }) : null,
+    item.start ? el("span.todo-at", { text: dueClock(item.start) }) : null,
+    // Its Google event is still standing. Only ever shown after a delete that
+    // *failed* — an undated item never had an event, so it can never say this,
+    // and neither can a row ticked on this phone a moment ago: the laptop has
+    // not been asked to take the event down yet, so "still on the calendar" is
+    // true and means nothing. Saying it there would put a warning on every
+    // tick made away from wifi, which is most of them.
+    item.done && !item.event_deleted && !item.queued
+      ? el("span.todo-stuck", { text: "on cal" })
+      : null,
+  );
+}
+
+/**
+ * The box, and the one thing it writes.
+ *
+ * Every line is prefixed `todo `, which is the desktop box's own grammar for
+ * "this is work, and it is not on a day". That is the whole feature: the phone
+ * has no calendar picker, no preview and no date parsing on screen, and a line
+ * typed here can therefore only ever produce the one kind of row that needs
+ * none of them. Anything with a day in it is a thing you are better off adding
+ * from the week grid, where you can see what it collides with.
+ *
+ * A `todo ` already typed at the front is dropped rather than doubled, because
+ * knowing the desktop's grammar should not be punished.
+ *
+ * Note that `calparse` still *reads* a day out of the line and then discards
+ * it, since `todo` forces undated — "laundry friday" is stored as "Laundry".
+ * The placeholder says undated for that reason.
+ */
+function addBox() {
+  const field = el("input.amount", {
+    type: "text",
+    placeholder: "something to do",
+    enterkeyhint: "done",
+    autocapitalize: "sentences",
+    autocomplete: "off",
+  });
+  const commit = () => {
+    const text = field.value.trim().replace(/^todo\s+/i, "");
+    if (!text) return;
+    field.value = "";
+    // Blurred first: the row it adds appears below the keyboard otherwise, and
+    // on a list you are adding several things to that reads as nothing having
+    // happened.
+    field.blur();
+    sendDay("/api/calendar/add", { text: `todo ${text}` }, "todo");
+  };
+  field.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+  });
+  return el("div.row", null, field, el("button.go.small", { text: "add", onclick: commit }));
+}
+
+/** The todo list. */
+function todoScreen() {
+  if (!day) return [notRead("the list")];
+  const rows = todoRows();
+  const shortKey = keyFor(day.todo.aliases ?? []);
+  // Today's date and not the panel's, so a list cached yesterday re-groups
+  // against the day you are standing in: what was "today" becomes "overdue"
+  // on its own, which is the honest reading and the one that keeps a late
+  // reading visible.
+  const groups = groupByDay(rows, today());
+  const undated = undatedItems(rows);
+  const finished = rows.filter((i) => i.done);
+
+  return [
+    addBox(),
+    ...groups.map((group) =>
+      section(
+        group.overdue ? `overdue · ${group.items.length}` : dueLabel(group.date, today()),
+        group.items.map((i) => todoRow(i, shortKey)),
+        group.overdue ? "late" : "",
+      )),
+    undated.length ? section(`no date · ${undated.length}`,
+      undated.map((i) => todoRow(i, shortKey))) : null,
+    !groups.length && !undated.length
+      ? el("p.empty", { text: "nothing owed — add a line above" })
+      : null,
+    // Collapsed, and it is the undo. A tick is one tap and this is where the
+    // row it moved went, so "I did not mean that" is two taps rather than a
+    // trip to the laptop.
+    finished.length
+      ? el("details.done-box", null,
+          el("summary", { text: `${finished.length} done` }),
+          ...finished.map((i) => todoRow(i, shortKey)))
+      : null,
+  ];
+}
+
+/** What today asks for: the required five and the optional rest. */
+function owedScreen() {
+  if (!day) return [notRead("what today asks for")];
+  // Dropped rather than shown stale — see the block around `promote`. Yesterday
+  // is not a worse answer to this question, it is a wrong one.
+  if (dayStale()) {
+    return [el("p.empty.cold", {
+      text: "this is yesterday's copy — what today asks for has not been read yet",
+    })];
+  }
+  const list = dayTasks(day.state);
+  const core = required(list);
+  const rest = optional(list);
+  const done = core.filter((t) => t.done).length;
+  const { earned, available } = score(list);
+
+  // A mark, not a box. The todo rows next door wear a box and it is a control
+  // you tap; nothing on this screen is, and two things that look the same and
+  // answer differently to a finger is the worst kind of small frustration. A
+  // row here is a report about somewhere else in the app.
+  const line = (task) =>
+    el("div.owed", { class: task.done ? "done" : "" },
+      el("span.owed-mark", { "aria-hidden": true, text: task.done ? "✦" : "·" }),
+      el("span.todo-title", { text: task.label }),
+      task.points ? el("span.todo-key", { text: `${task.points}` }) : null,
+    );
+
+  return [
+    section(
+      done === core.length ? `required · all ${core.length} ✦` : `required · ${done} of ${core.length}`,
+      core.map(line),
+      done === core.length ? "" : "late",
+    ),
+    rest.length
+      ? section(`optional · +${earned} of ${available} pts`, rest.map(line))
+      : null,
+    // Read-only, and it says so once rather than beside every row. Four of
+    // these are answered on this phone and the rest are answered at the
+    // laptop; none of them is answered here.
+    el("p.heard", { text: "read only — the logs tab is where the phone answers these" }),
+  ];
+}
+
+/** Today's schedule, and tomorrow's when today's has run out of laptop. */
+function agendaScreen() {
+  if (!day) return [notRead("the schedule")];
+  const events = eventsFrom();
+  const byDay = new Map();
+  for (const e of events) {
+    if (!byDay.has(e.date)) byDay.set(e.date, []);
+    byDay.get(e.date).push(e);
+  }
+  const days = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
+
+  // Half past four in the afternoon, as `HH:MM`, for the one comparison this
+  // screen makes. Only ever applied to today's rows: an event at 9am is behind
+  // you today and ahead of you tomorrow, and dimming tomorrow's morning would
+  // be exactly backwards.
+  const nowHM = `${String(new Date().getHours()).padStart(2, "0")}`
+    + `:${String(new Date().getMinutes()).padStart(2, "0")}`;
+
+  const line = (e) =>
+    el("div.event", {
+      // Been and gone. Dimmed rather than dropped: what has already happened is
+      // half of what makes a schedule readable — it is how you know where in
+      // the day you are without reading a clock. All-day rows are never past,
+      // because a holiday is not over at nine in the morning.
+      class: e.date === today() && e.start && (e.end ?? e.start) < nowHM ? "past" : "",
+    },
+      // "all day" rather than a blank column: a row with nothing in the time
+      // slot reads as a row that lost something, and half this list is
+      // homework and holidays that genuinely have no hour.
+      el("span.event-at", { text: e.start ? dueClock(e.start) : "all day" }),
+      el("span.todo-title", { text: e.title }),
+      e.calendar ? el("span.todo-key", { text: e.calendar.split(/[ :]/)[0].toLowerCase() }) : null,
+    );
+
+  return [
+    ...days.map(([date, list]) =>
+      section(dueLabel(date, today()), list
+        // Timed events in order, all-day ones first — which is where they
+        // belong on a day you are reading top to bottom.
+        .slice()
+        .sort((a, b) => (a.start ?? "").localeCompare(b.start ?? ""))
+        .map(line))),
+    !days.length
+      ? el("p.empty", {
+          // The one distinction the phone cannot guess and the route can. An
+          // empty day and an unreadable calendar are the same list.
+          text: day.calendar_reached
+            ? "nothing on the calendar"
+            : "the laptop could not read the calendar",
+        })
+      : null,
+    // One day of lookahead and no more. Said out loud on a stale panel, because
+    // a schedule with no tomorrow on it looks like a quiet week rather than the
+    // end of what this phone knows.
+    dayStale()
+      ? el("p.heard.cold", { text: "yesterday's copy — this phone knows one day ahead of it" })
+      : null,
+  ];
+}
+
+/** A heading and its rows. The day root's only layout. */
+function section(name, rows, kind = "") {
+  return el("div.q", null,
+    el("div.q-head", null, el("div.q-name", { class: kind, text: name })),
+    ...rows,
+  );
+}
+
+/** Nothing cached and nothing reachable, said about the thing that is missing. */
+const notRead = (what) =>
+  el("p.empty.cold", { text: `${what} has not been read from the laptop yet` });
+
+const DAYS = [
+  { id: "todo", label: "todo", render: todoScreen },
+  { id: "owed", label: "owed", render: owedScreen },
+  { id: "agenda", label: "agenda", render: agendaScreen },
+];
+
+// --- the entrance -------------------------------------------------------------
+
+/**
+ * The screen the app opens on, and the only place the two halves are visible at
+ * once.
+ *
+ * Two cards, and each one says what it is waiting on rather than merely naming
+ * itself: a chooser whose options are two words is a chooser you read once and
+ * then tap from memory, and this one is passed through several times a day. The
+ * numbers are the reason it earns the tap it costs.
+ *
+ * Drawn entirely from what is already on the phone. Nothing here waits on the
+ * laptop, and a card whose number cannot be known says so instead of showing a
+ * zero — "0 of 5 done" and "nobody has asked" are different mornings.
+ */
+function homeScreen() {
+  const waiting = pending().length;
+  const stale = dayStale();
+  const list = day && !stale ? dayTasks(day.state) : null;
+  const core = list ? required(list) : null;
+  const open = day ? todoRows().filter((i) => !i.done).length : null;
+  const dueToday = day
+    ? todoRows().filter((i) => !i.done && i.due_date && i.due_date <= today()).length
+    : null;
+
+  // `quiet` when there is nothing outstanding, because the state line is gold
+  // and on this screen gold means something is owed. "Nothing waiting" in the
+  // colour that means "deal with this" is the one sentence here that must not
+  // be shouted.
+  const card = (id, name, what, hues, state, quiet) =>
+    el("button.root-card", {
+      "data-card": id,
+      onclick: () => { root = id; draw(); if (id === "day") loadDay(); },
+    },
+      el("span.rc-name", { text: name }),
+      el("span.rc-hues", { "aria-hidden": true },
+        ...hues.map((h) => el("i", { "data-log": h }))),
+      el("span.rc-what", { text: what }),
+      el("span.rc-state", { class: quiet ? "quiet" : "", text: state }),
+    );
+
+  const dayState = !day
+    ? "not read yet"
+    : [
+        core ? `${core.filter((t) => t.done).length} of ${core.length} done` : "yesterday's copy",
+        dueToday ? `${dueToday} due` : null,
+        open ? `${open} open` : null,
+      ].filter(Boolean).join(" · ");
+
+  return [
+    card("log", "log", "meal · drink · visit · check-in · session",
+      ["meals", "drinks", "bathroom", "checkin", "session"],
+      waiting ? `${waiting} waiting to send` : "nothing waiting", !waiting),
+    card("day", "day", "todo · owed · agenda",
+      ["todo", "owed", "agenda"],
+      dayState,
+      // Quiet only when the day is both read and finished. "Not read yet" is
+      // itself a thing to do something about.
+      Boolean(core) && core.every((t) => t.done) && !open),
+  ];
+}
+
 /**
  * Which build of this app is running, printed on the title screen.
  *
@@ -1125,7 +1714,7 @@ function sessionLog() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v12";
+const BUILD = "log-v13";
 
 /**
  * The build, along the foot of the title screen.
@@ -1163,7 +1752,7 @@ function drawHour() {
       : "the hour being logged against",
   );
   button.onclick = () => { hourOpen = !hourOpen; draw(); };
-  $("#day").textContent = dayLabel();
+
 }
 
 /**
@@ -1224,26 +1813,47 @@ function drawNet() {
   );
 }
 
+/**
+ * The bar, and the way out of whichever root you are in.
+ *
+ * The `home` cap is first and is narrower than the tabs beside it, which is the
+ * whole of how it says it is a different kind of control — that plus the rule
+ * down its right-hand side and the fact that it wears no hue. It is in the bar
+ * rather than in the header because it is a switch you make several times a day
+ * and the bar is where a thumb already is; a header button on a 375px screen is
+ * the far corner from the hand holding it.
+ */
 function drawTabs() {
+  const shell = $("#shell");
+  const bar = $("#tabs");
+  const [tabs, current] = root === "day" ? [DAYS, dayTab] : [LOGS, tab];
   // The hue for the whole screen, set once at the top. Every rule that uses it
   // reads `--tab` off this element -- see the foot of `style.css` for why the
   // attribute is here rather than on the bar itself: most of the colour is
   // carried by the answer caps, which are three elements away from the tab
   // that decides it.
-  $("#shell").dataset.tab = tab;
-  const bar = $("#tabs");
+  shell.dataset.tab = current;
   bar.replaceChildren(
-    ...LOGS.map((log) =>
+    el("button.tab.home", {
+      text: "home",
+      "aria-label": "back to the home screen",
+      onclick: () => { root = "home"; draw(); },
+    }),
+    ...tabs.map((one) =>
       el("button.tab", {
-        class: log.id === tab ? "on" : "",
+        class: one.id === current ? "on" : "",
         // Which hue this *cap* wears, which is not the same question as which
         // hue the screen wears. Every cap is coloured, lit or not -- see the
         // foot of `style.css` -- so each one has to name its own log rather
         // than reading the one `#shell` has selected.
-        "data-log": log.id,
-        "aria-current": log.id === tab,
-        text: log.label,
-        onclick: () => { tab = log.id; draw(); },
+        "data-log": one.id,
+        "aria-current": one.id === current,
+        text: one.label,
+        onclick: () => {
+          if (root === "day") dayTab = one.id;
+          else tab = one.id;
+          draw();
+        },
       })),
   );
 }
@@ -1281,13 +1891,63 @@ function heardLine() {
   });
 }
 
+/**
+ * When the day screen last heard, in the same words the log screen uses.
+ *
+ * Separate from `heardLine` because the two cache the same laptop at different
+ * moments — the logs are refreshed on every boot, the day only when its screen
+ * is opened — and one stamp covering both would be wrong about whichever of
+ * them was older.
+ */
+function dayHeardLine() {
+  if (!day) return null;
+  const at = dayHeard ? new Date(dayHeard) : null;
+  const when = at && !Number.isNaN(at.valueOf()) ? timeLabel(at) : "earlier";
+  if (dayStale()) {
+    // `dueLabel` and not `dayLabel`: this is an ISO date being described
+    // relative to today, which is the todo list's question rather than the top
+    // bar's, and it prints "yesterday" where the other would print the date.
+    return el("p.heard.cold", { text: `read ${when} — ${dueLabel(dayFor(), today())}'s copy` });
+  }
+  return el("p.heard", { text: `laptop last heard from ${when}` });
+}
+
 function draw() {
-  drawHour();
+  const shell = $("#shell");
+  shell.dataset.root = root;
+  // The header, which belongs to no root. It used to be written by `drawHour`,
+  // which is now only called on the log — so the entrance and the day screen
+  // opened under a bare dash where the date goes.
+  $("#day").textContent = dayLabel();
   drawNet();
-  drawTabs();
-  const log = LOGS.find((l) => l.id === tab) ?? LOGS[0];
   const view = $("#view");
   view.replaceChildren();
+
+  // The entrance. No tabs to draw, no plate under it, and no hour — the hour is
+  // a property of a log and there is no log open.
+  if (root === "home") {
+    shell.dataset.tab = "";
+    $("#tabs").replaceChildren();
+    view.classList.remove("panel");
+    view.classList.add("home");
+    for (const node of homeScreen()) if (node) view.append(node);
+    return;
+  }
+
+  view.classList.remove("home");
+  view.classList.add("panel");
+  drawTabs();
+
+  if (root === "day") {
+    const screen = DAYS.find((d) => d.id === dayTab) ?? DAYS[0];
+    for (const node of [screen.render()].flat()) if (node) view.append(node);
+    const line = dayHeardLine();
+    if (line) view.append(line);
+    return;
+  }
+
+  drawHour();
+  const log = LOGS.find((l) => l.id === tab) ?? LOGS[0];
   const strip = hourStrip();
   if (strip) view.append(strip);
   for (const node of [log.render()].flat()) if (node) view.append(node);
@@ -1329,6 +1989,17 @@ document.addEventListener("visibilitychange", () => {
     panelDay = null;
     heard = null;
     forget();
+  }
+  // The day panel is deliberately not dropped alongside it. It is the one thing
+  // here built to outlive a rollover — see the block around `promote` — and the
+  // three screens that draw it each decide for themselves what is still true.
+  // What does have to happen is that a copy from *before* yesterday goes: one
+  // day of lookahead is all the route sends, so anything older has no schedule
+  // left in it and is only a todo list wearing a stale date.
+  if (day && day.date < yesterdayISO()) {
+    day = null;
+    dayHeard = null;
+    forgetDay();
   }
   draw();
 });
@@ -1399,7 +2070,7 @@ if (panel?.plan) {
 // idempotent, it is what fills in the rows logged from the laptop, and it is
 // bounded by `REACH_MS`, so the cost of it failing is four seconds of nothing
 // happening in the background while the title screen is still up.
-load().then(() => {
+load().then((reached) => {
   draw();
   // FILE 01 · DAY 172 across the top of the bar. `HealthPanel` already
   // carries the plan, so the phone's title screen says the same thing the
@@ -1413,4 +2084,18 @@ load().then(() => {
     paintSplash(panel.plan);
     paintBuild();
   }
+  // The day, after the logs and only if the logs got through.
+  //
+  // Chained rather than fired alongside, which is the whole of the ordering
+  // argument: the log screens are the hot path and this request is an order of
+  // magnitude heavier — the whole boot payload plus a gcalcli call — so it must
+  // never be the thing a meal is waiting behind. And it is skipped outright
+  // when `load` could not reach the laptop, because the answer is already known
+  // and the cost of asking anyway is nine seconds of a dead socket.
+  //
+  // Unasked, unlike everything else the phone sends, and for the same reason
+  // `load` is: it is a GET, it changes nothing, and the screen you land on says
+  // what the day is waiting on — which it cannot do out of a cache that is
+  // never refilled.
+  if (reached) loadDay();
 });

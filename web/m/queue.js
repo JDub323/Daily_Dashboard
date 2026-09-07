@@ -121,21 +121,74 @@ let draining = false;
 /**
  * What a reply has to look like before a write is considered delivered.
  *
- * Every path this queue posts to answers with the whole `HealthPanel` — that
- * is the shape of the write endpoints and has been since there were any — so
- * a body carrying one of these keys is the dashboard talking, and a body that
- * is not is something else wearing its status code.
- *
  * Not the `content-type` header, which is the obvious check and the weaker
  * one: a portal is free to answer `application/json` with its own object, and
  * a header proves what a middlebox is willing to claim rather than who wrote
  * the body.
+ *
+ * There are three shapes now, because the day screen writes too. The one that
+ * matters is chosen by the *path*, below, and not by trying each in turn: a
+ * test that accepts any of three shapes is three times as easy for a portal to
+ * satisfy by accident, and the whole value of this check is how narrow it is.
  */
-const PANEL_KEYS = ["meals_today", "drinks_today", "bathroom_today", "sessions_today", "derived"];
+const SHAPES = {
+  // The five logs. Every one of those paths answers with the whole
+  // `HealthPanel`, and has since there were any.
+  //
+  // `some` rather than `every`, which is how this has always read: the panel is
+  // assembled per-day and a key can be absent. It is the loosest of the three
+  // and it is the one with a day of meals behind it, so it is left exactly as
+  // it was.
+  panel: {
+    keys: ["meals_today", "drinks_today", "bathroom_today", "sessions_today", "derived"],
+    all: false,
+  },
+  // `POST /api/todo/done` hands back the whole `TodoPanel`.
+  //
+  // `every`, not `some`. A body carrying `items` alone is a shape a portal
+  // could produce by coincidence; one carrying `items` *and* the alias table
+  // *and* the calendar defaults is the dashboard.
+  todo: { keys: ["items", "aliases", "default_calendar"], all: true },
+  // `POST /api/calendar/add` hands back a `CalendarWrite`. Both lists are
+  // always present, empty or not, so `every` costs nothing here either.
+  written: { keys: ["written", "failed"], all: true },
+};
 
-export const isPanel = (body) =>
+const shaped = (body, shape) =>
   Boolean(body) && typeof body === "object" && !Array.isArray(body)
-  && PANEL_KEYS.some((key) => key in body);
+  && (shape.all
+    ? shape.keys.every((key) => key in body)
+    : shape.keys.some((key) => key in body));
+
+/** The dashboard's health panel, and nothing else wearing a 200. */
+export const isPanel = (body) => shaped(body, SHAPES.panel);
+
+/** A `DayPanel` off `GET /api/day` — checked before it is cached or drawn, for
+ *  the same reason `isPanel` is. `state` and `todo` are the two the whole
+ *  screen is built out of; a portal answering with either by accident is not a
+ *  thing that happens. */
+export const isDay = (body) =>
+  Boolean(body) && typeof body === "object" && !Array.isArray(body)
+  && "state" in body && "todo" in body && "date" in body;
+
+/**
+ * Which reply shape proves a write to `path` was delivered.
+ *
+ * By path rather than by an `entry.shape` field, deliberately: a field would be
+ * written by the caller at enqueue time and would then be *stored*, so an entry
+ * queued by an older build would come back with a shape name this build has
+ * never heard of, and the safe reading of "I do not know what proves this" is
+ * to refuse the delivery forever. The path is in the entry either way and it is
+ * the thing that actually decides.
+ *
+ * An unrecognised path falls back to the health panel, which is the strictest
+ * thing to do with a write whose reply we cannot name.
+ */
+function proofFor(path) {
+  if (path.startsWith("/api/todo/")) return SHAPES.todo;
+  if (path.startsWith("/api/calendar/")) return SHAPES.written;
+  return SHAPES.panel;
+}
 
 /**
  * Send what is waiting, oldest first.
@@ -199,13 +252,21 @@ export async function flush({ onRefused } = {}) {
       }
       if (response.ok) {
         const body = await response.json().catch(() => null);
-        if (!isPanel(body)) {
+        if (!shaped(body, proofFor(entry.path))) {
           // Something answered; it was not the laptop. Keep the entry.
           stopped = "intercepted";
           break;
         }
-        panel = body;
-        panelDate = entry.body?.date ?? null;
+        // Only a log write hands back a day's rows. A ticked todo comes back as
+        // a `TodoPanel` and an added one as a `CalendarWrite`, and adopting
+        // either as `panel` would draw an empty meal list over a day of meals —
+        // the exact failure `isPanel` was written to prevent, arrived at from
+        // the inside. The day screen is refreshed by `app.js` after the flush
+        // instead, out of `GET /api/day`.
+        if (isPanel(body)) {
+          panel = body;
+          panelDate = entry.body?.date ?? null;
+        }
         sent += 1;
         drop(entry.id);
         continue;
@@ -225,6 +286,14 @@ export async function flush({ onRefused } = {}) {
   return { panel, panelDate, sent, refused, stopped };
 }
 
-/** Queued writes for one day, which is all any screen here draws. */
+/**
+ * Queued log writes for one day, which is all the five logs ever draw.
+ *
+ * Keyed on `body.date`, and the day screen's writes deliberately do not have
+ * one — `TodoDoneRequest` and `TodoWriteRequest` forbid unknown fields, and
+ * their day is `today`. So a queued tick is invisible here, which is right: it
+ * is not a row on any log and has no business in a meal list. `app.js` reads
+ * those straight off `pending()` by path.
+ */
 export const pendingOn = (date = localISO(new Date())) =>
   pending().filter((e) => e.body?.date === date);

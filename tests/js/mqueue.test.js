@@ -232,3 +232,78 @@ describe("the write queue", () => {
     assert.equal((await flush()).stopped, null);
   });
 });
+
+// --- the day screen's two writes ---------------------------------------------
+//
+// `/api/todo/done` and `/api/calendar/add` go through the same queue the five
+// logs do and answer with entirely different bodies -- a `TodoPanel` and a
+// `CalendarWrite`. Before this, `isPanel` was the only test of delivery, so
+// both would have been read as a portal answering and the queue would have
+// stuck at the first one forever.
+//
+// The tests below are about the *narrowness* of the new check, which is the
+// only property that matters here: the reason a 200 is not delivery is that a
+// captive portal produces one, and a check that accepts three shapes is three
+// times as easy to satisfy by accident.
+
+const TODO_PANEL = { items: [], aliases: [], default_calendar: "Homework", todo_calendars: [] };
+const CAL_WRITE = { written: [], failed: [], events: 0 };
+
+describe("what proves a day-screen write was delivered", () => {
+  it("takes the todo panel for a tick, and the calendar write for an add", async () => {
+    enqueue("/api/todo/done", { today: "2026-09-07", todo_id: 4, done: true }, "tick");
+    enqueue("/api/calendar/add", { today: "2026-09-07", text: "todo laundry" }, "todo");
+    globalThis.fetch = mock.fn(async (path) =>
+      reply(200, path === "/api/todo/done" ? TODO_PANEL : CAL_WRITE));
+
+    const out = await flush();
+    assert.equal(out.sent, 2);
+    assert.equal(pending().length, 0);
+    // Neither is a day's rows, so neither is adopted as one. A `TodoPanel` read
+    // as a health panel draws an empty meal list over a day of meals.
+    assert.equal(out.panel, null);
+    assert.equal(out.panelDate, null);
+  });
+
+  it("refuses a health panel offered as proof of a tick", async () => {
+    // The interesting direction. Every one of these paths is on the same host
+    // and a body that satisfies *some* endpoint is not a body that satisfies
+    // this one -- the check is per path, not "any shape the app knows".
+    enqueue("/api/todo/done", { today: "2026-09-07", todo_id: 4, done: true }, "tick");
+    globalThis.fetch = mock.fn(async () => reply(200, { meals_today: [] }));
+
+    const out = await flush();
+    assert.equal(out.sent, 0);
+    assert.equal(out.stopped, "intercepted");
+    assert.equal(pending().length, 1, "the tick is kept, not destroyed");
+  });
+
+  it("wants every key of a todo panel, not any one of them", async () => {
+    // `{ items: [...] }` alone is a shape a portal can produce by coincidence.
+    // The alias table and the calendar defaults beside it are the dashboard.
+    enqueue("/api/todo/done", { today: "2026-09-07", todo_id: 4, done: true }, "tick");
+    globalThis.fetch = mock.fn(async () => reply(200, { items: [] }));
+    assert.equal((await flush()).stopped, "intercepted");
+
+    globalThis.fetch = mock.fn(async () => reply(200, TODO_PANEL));
+    assert.equal((await flush()).sent, 1);
+  });
+
+  it("keeps a tick out of the log screens' view of the day", () => {
+    // `pendingOn` is keyed on `body.date`, and these carry `today` instead --
+    // the request models forbid unknown fields. A ticked todo is not a row on
+    // any log and has no business in a meal list.
+    enqueue("/api/meal", { date: "2026-09-07", hour: 9 }, "meal");
+    enqueue("/api/todo/done", { today: "2026-09-07", todo_id: 4, done: true }, "tick");
+    assert.deepEqual(pendingOn("2026-09-07").map((e) => e.path), ["/api/meal"]);
+    assert.equal(pending().length, 2, "it is still owed to the server");
+  });
+
+  it("falls back to the strictest proof for a path it does not know", async () => {
+    // An entry queued by an older build, or a path added without a shape. The
+    // safe reading of "I cannot name what proves this" is the narrowest one.
+    enqueue("/api/something/new", { date: "2026-09-07" }, "?");
+    globalThis.fetch = mock.fn(async () => reply(200, CAL_WRITE));
+    assert.equal((await flush()).stopped, "intercepted");
+  });
+});

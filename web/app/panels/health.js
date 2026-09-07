@@ -148,23 +148,11 @@ export function zoom(id) {
   return true;
 }
 
-/** Today's reading for one metric, or null.
- *
- * The series is oldest-first, so the last point is today's only if its date
- * says so — which is the whole check: "the most recent weight" and "this
- * morning's weight" are the same number on most days and very different ones
- * on the day you skipped.
- *
- * Lives here rather than on the check-in panel, which is gone. `chips.js` is
- * the caller: the day's required list still asks whether a weight was logged,
- * and the answer still comes off the store rather than off any panel. */
-export function metricToday(state, metric) {
-  const series = state.health.series.find((s) => s.metric === metric);
-  const last = series?.points?.[series.points.length - 1];
-  return last && last[0] === state.date ? last[1] : null;
-}
-
-export const weightToday = (state) => metricToday(state, "weight");
+// `metricToday` and `weightToday` used to live here, and they live in `day.js`
+// now. Nothing about them changed and nothing here calls them: their one caller
+// is the day's required list, which the phone reads too, and `day.js` is the
+// file the phone is allowed to import — this one reaches for the store, the
+// charts and half the app.
 
 /**
  * The verdicts, in the order the questions matter.

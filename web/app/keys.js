@@ -29,7 +29,8 @@
 // binding below moves the ring, switches a view, or opens a thing to read.
 
 import { capturing, endCapture, takeKey } from "./capture.js";
-import { chipTasks, openNextUnfinished, required, score } from "./chips.js";
+import { chipTasks, openNextUnfinished } from "./chips.js";
+import { required, score } from "./day.js";
 import { $, el } from "./dom.js";
 import * as nav from "./nav.js";
 import { nudgeCount, openNudge } from "./nudges.js";
