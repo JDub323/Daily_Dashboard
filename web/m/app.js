@@ -1236,6 +1236,11 @@ function drawTabs() {
     ...LOGS.map((log) =>
       el("button.tab", {
         class: log.id === tab ? "on" : "",
+        // Which hue this *cap* wears, which is not the same question as which
+        // hue the screen wears. Every cap is coloured, lit or not -- see the
+        // foot of `style.css` -- so each one has to name its own log rather
+        // than reading the one `#shell` has selected.
+        "data-log": log.id,
         "aria-current": log.id === tab,
         text: log.label,
         onclick: () => { tab = log.id; draw(); },

@@ -571,40 +571,106 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 .heard.cold { color: var(--gold-text); opacity: .8; text-align: left; }
 
 /* --- which tab you are on, in colour ---------------------------------------
-   The tab bar stays at the foot of the screen. What changes is that each log
-   owns a hue, and the hue is on screen in three places at once: the lit tab,
-   a hairline above the whole bar, and every answered cap in the panel above
-   it. Knowing which log you are in stops being something you read and becomes
-   something you cannot help noticing, which is the entire point -- this is a
-   screen used one-handed while doing something else, and the half-second spent
-   working out where you were was the most expensive half-second on it.
+   Each tab owns a hue, and the whole screen wears it.
+
+   The first version of this lit *one* thing: the selected tab, plus the caps
+   you had already answered. Which meant that a tab you had just opened and not
+   yet touched was, pixel for pixel, every other tab -- same slate panel, same
+   cyan hairlines, same grey headings, and one small coloured word at the foot
+   of an 812px screen. The half-second spent working out where you were is the
+   thing this was built to remove, and it was still being spent on exactly the
+   screen where it costs most: the one you have just arrived at.
+
+   So the hue arrives *with* the tab now, rather than with the answers. Before a
+   finger has touched anything, six things carry it:
+
+     the tab's own cap    all of them, not only the lit one -- the bar is a
+                          legend, and eight greys were never one
+     the panel wash       a few per cent of the hue under the plate. Slight on
+                          purpose: it must not read as a different surface, only
+                          as the same surface in a different room
+     the panel border     and the two corner brackets
+     the section headings PRESET, SIZE, QUALITY -- four to six per screen,
+                          spread down the whole panel, which makes them the
+                          largest thing here that can be coloured for free
+     every cap's border   twenty hairlines on the meal log, at rest
+     the hairlines        above the bar and under the hour
+
+   and two more once you start answering: the lit tab and the answered caps,
+   which is what the old version had.
 
    Set on `#shell` rather than on the bar, because the caps are what carry most
    of the colour and they are three elements away from the tab that decides it.
-   One attribute at the top, `--tab` read all the way down.
+   One attribute at the top, `--tab` read all the way down. The unlit caps are
+   the exception and need their own attribute (`data-log`), because each one
+   wears a different hue from the screen it is sitting on.
 
-   Gold is now free to mean one thing. It used to mean both "this is the
-   selected answer" and "something here is stale" -- the hour resolved to
-   yesterday, the laptop not heard from since midnight -- and those are the two
-   messages on this screen that must never be confused. Selection has its own
-   colours now; gold is a warning and nothing else.
+   Gold is free to mean one thing. It used to mean both "this is the selected
+   answer" and "something here is stale" -- the hour resolved to yesterday, the
+   laptop not heard from since midnight -- and those are the two messages on
+   this screen that must never be confused. Selection has its own colours; gold
+   is a warning and nothing else. The hour cap and the send button stay out of
+   this system entirely for the same reason: they ask the same question on all
+   five logs, so colouring them per-log would be a lie.
 
-   The hues are picked to be told apart at a glance in a dark room, and to have
-   some reason behind them rather than being five points on a wheel: food is
-   green, water is the cyan the app already uses for anything fluid, the
-   in-and-out log is clay, the morning check-in is the indigo of the hour
-   before it, and training is ember. All five are desaturated into the same
-   register as the rest of the palette -- this is a shift in hue, not a change
-   of skin. */
+   --- the hues ---------------------------------------------------------------
+
+   Picked to be told apart at a glance in a dark room, and to have a reason
+   behind them rather than being points on a wheel: food is green, water is the
+   cyan the app already uses for anything fluid, the in-and-out log is clay, the
+   morning check-in is the indigo of the hour before it, and training is ember.
+
+   The day root's three sit as far from those five as they do from each other,
+   so the bar says which *root* you are in as well as which tab -- orchid for
+   the list only you keep, teal for the day's ledger, and steel for the clock.
+
+   All eight are desaturated into the same register as the rest of the palette:
+   this is a shift in hue, not a change of skin.
+
+   `--off-*` is the unlit cap, and it is not the hue dimmed by eye. The bar's
+   ground is #0c0f16 at its lightest, the caps are 9px display type, and 9px
+   type owes 4.5:1 -- so each of these is the hue mixed 60% into the grey the
+   caps used to be, measured, and the worst of the eight is 5.15:1. If the bar's
+   background moves, re-measure all eight. */
+
+:root {
+  --hue-meals:    #6fbf73; --lit-meals:    #9ad79e; --off-meals:    #73a57b;
+  --hue-drinks:   #5ccfe6; --lit-drinks:   #8fe0f0; --off-drinks:   #68afc0;
+  --hue-bathroom: #c98f5a; --lit-bathroom: #dcb188; --off-bathroom: #a9896c;
+  --hue-checkin:  #8f8fd6; --lit-checkin:  #b3b3e6; --off-checkin:  #8789b7;
+  --hue-session:  #d2705f; --lit-session:  #e69a8c; --off-session:  #af766f;
+
+  --hue-todo:     #bd80c6; --lit-todo:     #d5a8dc; --off-todo:     #a280ad;
+  --hue-owed:     #4fb8a2; --lit-owed:     #86d5c4; --off-owed:     #60a198;
+  --hue-today:    #7c9de0; --lit-today:    #a6bdec; --off-today:    #7b91bd;
+}
 
 #shell { --tab: var(--accent); --tab-text: var(--accent); }
-#shell[data-tab="meals"]    { --tab: #6fbf73; --tab-text: #9ad79e; }
-#shell[data-tab="drinks"]   { --tab: #5ccfe6; --tab-text: #8fe0f0; }
-#shell[data-tab="bathroom"] { --tab: #c98f5a; --tab-text: #dcb188; }
-#shell[data-tab="checkin"]  { --tab: #8f8fd6; --tab-text: #b3b3e6; }
-#shell[data-tab="session"]  { --tab: #d2705f; --tab-text: #e69a8c; }
+#shell[data-tab="meals"]    { --tab: var(--hue-meals);    --tab-text: var(--lit-meals); }
+#shell[data-tab="drinks"]   { --tab: var(--hue-drinks);   --tab-text: var(--lit-drinks); }
+#shell[data-tab="bathroom"] { --tab: var(--hue-bathroom); --tab-text: var(--lit-bathroom); }
+#shell[data-tab="checkin"]  { --tab: var(--hue-checkin);  --tab-text: var(--lit-checkin); }
+#shell[data-tab="session"]  { --tab: var(--hue-session);  --tab-text: var(--lit-session); }
+#shell[data-tab="todo"]     { --tab: var(--hue-todo);     --tab-text: var(--lit-todo); }
+#shell[data-tab="owed"]     { --tab: var(--hue-owed);     --tab-text: var(--lit-owed); }
+#shell[data-tab="today"]    { --tab: var(--hue-today);    --tab-text: var(--lit-today); }
+
+/* --- the bar --------------------------------------------------------------- */
 
 .tabs { border-top-color: color-mix(in srgb, var(--tab) 45%, transparent); }
+
+/* Every cap in its own hue, lit or not. This is the change that does the most
+   work for the least: the bar is the one element on screen present on every
+   tab and in the same place, so eight colours there is a legend you learn
+   without being taught, and it is legible from the corner of an eye. */
+.tab[data-log="meals"]    { color: var(--off-meals); }
+.tab[data-log="drinks"]   { color: var(--off-drinks); }
+.tab[data-log="bathroom"] { color: var(--off-bathroom); }
+.tab[data-log="checkin"]  { color: var(--off-checkin); }
+.tab[data-log="session"]  { color: var(--off-session); }
+.tab[data-log="todo"]     { color: var(--off-todo); }
+.tab[data-log="owed"]     { color: var(--off-owed); }
+.tab[data-log="today"]    { color: var(--off-today); }
 
 .tab.on {
   color: color-mix(in srgb, var(--tab-text) 88%, #fff);
@@ -619,12 +685,63 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   box-shadow: inset 0 3px 0 var(--tab), inset 0 -1px 0 rgba(255,255,255,.10);
 }
 
+/* The way out, and the one cap in the bar that is not a tab.
+   Neutral by construction: it belongs to no log, it is in the same place in
+   both roots, and the rule down its right-hand side is what says the caps
+   after it are a different kind of thing. */
+.tab.home {
+  color: var(--faint);
+  letter-spacing: .1em;
+  border-right: 1px solid var(--border-soft);
+}
+.tab.home:active { color: var(--accent); }
+
+/* --- the plate, in the tab's colour ---------------------------------------- */
+
+/* A wash rather than a surface. `--panel` is L* 8.3 and `--raised` is L* 17.7,
+   and a tint heavy enough to read as a colour is also heavy enough to push the
+   plate up into the register that means "this floats" -- so it is kept to a few
+   per cent, where it shifts the hue of the ground without moving its place in
+   the stack. Layered over the existing highlight rather than replacing it: the
+   lit top edge is what makes the plate machined, and it is not per-log. */
+#view.panel {
+  border-color: color-mix(in srgb, var(--tab) 22%, transparent);
+  background:
+    linear-gradient(180deg, rgba(223,230,242,.045), transparent 38%),
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--tab) 6%, transparent),
+      color-mix(in srgb, var(--tab) 2%, transparent)),
+    var(--panel);
+  --bracket-color: color-mix(in srgb, var(--tab) 40%, transparent);
+}
+
+/* The hairline under the hour. The hour itself stays gold -- see above. */
+#hourbar { border-bottom-color: color-mix(in srgb, var(--tab) 26%, transparent); }
+
+/* The section headings. Four to six of them on a log, spread from the top of
+   the panel to the bottom, which makes them the cheapest large-area signal on
+   the screen -- and unlike the caps they are already a machine label, so a hue
+   on them reads as classification rather than as decoration.
+
+   82% of the lit hue over the washed plate, which measures 4.96:1 at the worst
+   of the eight (session) against the 4.5:1 that 10px display type owes. */
+.q-name { color: color-mix(in srgb, var(--tab-text) 82%, transparent); }
+
+/* Unanswered. A hairline each, twenty of them on the meal log, and the largest
+   thing here that can take the hue without taking any lightness with it -- the
+   cap's face, its bevel and its label are all untouched, so a cap still reads
+   as *unpressed* by everything except its edge. */
+.opt { border-color: color-mix(in srgb, var(--tab) 30%, transparent); }
+
 /* Answered. The tab's colour rather than gold -- see above. The geometry is
    unchanged, so a cap reads as pressed by its shape before its hue, which
-   matters for the one viewer who cannot tell these five apart. */
+   matters for the one viewer who cannot tell these eight apart. The border is
+   heavier than it was, because the unpressed one is no longer grey: the two
+   states are the same hue now, so the difference between them has to be
+   carried by weight. */
 .opt.on {
   color: var(--tab-text);
-  border-color: color-mix(in srgb, var(--tab) 45%, transparent);
+  border-color: color-mix(in srgb, var(--tab) 62%, transparent);
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--tab) 20%, transparent),
