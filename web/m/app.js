@@ -71,7 +71,9 @@ import {
 // which imports nothing at all — so bringing it here costs exactly the splash
 // and none of the store, the panel harness or the nav ring.
 import { initSplash, paintSplash } from "../app/splash.js";
-import { forget, forgetDay, recall, recallDay, remember, rememberDay } from "./held.js";
+import {
+  forget, forgetDay, recall, recallDay, remember, rememberDay, stillTrue,
+} from "./held.js";
 import { enqueue, flush, isDay, isPanel, onQueueChange, pending, pendingOn } from "./queue.js";
 import { clock, dateForHour, dayLabel, nowHour, timeLabel, today } from "./when.js";
 
@@ -153,7 +155,8 @@ let panelDay = panel ? today() : null;
 // at a laptop. A screen that went blank at midnight would go blank exactly when
 // it was wanted.
 //
-// So `promote` decides, once, which parts of a stale panel are still true:
+// So `stillTrue` in `held.js` decides, once, which parts of a stale panel
+// survive:
 //
 //   the schedule   yes, one day forward, and *only* one. The route sends
 //                  tomorrow's events with today's for this. Two days would be
@@ -174,7 +177,7 @@ let panelDay = panel ? today() : null;
 const heldDay = recallDay();
 
 /** The laptop's last word on the day, or null. May describe yesterday — see
- *  `dayFor` and `promote`. */
+ *  `dayFor` and `stillTrue`. */
 let day = heldDay?.day ?? null;
 
 /** When that was heard, ISO, or null. */
@@ -205,23 +208,21 @@ function yesterdayISO() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** Whether what is on screen describes a day that is over. */
-const dayStale = () => Boolean(day) && day.date !== today();
-
 /**
- * The events still worth drawing, and the heading each belongs under.
+ * What is left of the cached day, against the day you are standing in.
  *
- * On a fresh panel this is everything it came with. On a stale one it is the
- * half that survives the rollover: `date` is compared against *today*, so
- * yesterday's rows drop out on their own and what was tomorrow's becomes
- * today's without being rewritten. An all-day event that spans the boundary is
- * kept by its `end_date`, which is Google's half-open convention and the reason
- * a one-day holiday arrives as 09-07 → 09-08.
+ * `{ stale, events, owed }`, and the rule behind it is `stillTrue` in
+ * `held.js` -- it lives there rather than here because it is the one thing in
+ * this app that cannot be checked by looking at it. Reproducing it by hand
+ * means a phone that has not reached the laptop since yesterday, and the shell
+ * that would have to open in that state is a service worker, which does not
+ * register in a headless browser. So it is pure, it is over there, and
+ * `mheld.test.js` is what says it works.
  */
-function eventsFrom() {
-  const now = today();
-  return (day?.events ?? []).filter((e) => e.date >= now || (e.end_date ?? "") > now);
-}
+const left = () => stillTrue(day, today());
+
+/** Whether what is on screen describes a day that is over. */
+const dayStale = () => left().stale;
 
 /**
  * Which of the two halves of the app is open, or the screen that chooses.
@@ -1305,7 +1306,7 @@ function sessionLog() {
 //           turned over and the laptop has not been reachable since.
 //
 // All three draw from one cached `DayPanel` and one request. See the block
-// around `promote` for what survives a rollover and what does not.
+// at `stillTrue` in `held.js` for what survives a rollover and what does not.
 
 /**
  * A tap that a scroll cannot become.
@@ -1519,9 +1520,9 @@ function todoScreen() {
 /** What today asks for: the required five and the optional rest. */
 function owedScreen() {
   if (!day) return [notRead("what today asks for")];
-  // Dropped rather than shown stale — see the block around `promote`. Yesterday
-  // is not a worse answer to this question, it is a wrong one.
-  if (dayStale()) {
+  // Dropped rather than shown stale — see `stillTrue` in `held.js`. Yesterday is
+  // not a worse answer to this question, it is a wrong one.
+  if (!left().owed) {
     return [el("p.empty.cold", {
       text: "this is yesterday's copy — what today asks for has not been read yet",
     })];
@@ -1562,7 +1563,7 @@ function owedScreen() {
 /** Today's schedule, and tomorrow's when today's has run out of laptop. */
 function agendaScreen() {
   if (!day) return [notRead("the schedule")];
-  const events = eventsFrom();
+  const { events, stale } = left();
   const byDay = new Map();
   for (const e of events) {
     if (!byDay.has(e.date)) byDay.set(e.date, []);
@@ -1613,7 +1614,7 @@ function agendaScreen() {
     // One day of lookahead and no more. Said out loud on a stale panel, because
     // a schedule with no tomorrow on it looks like a quiet week rather than the
     // end of what this phone knows.
-    dayStale()
+    stale
       ? el("p.heard.cold", { text: "yesterday's copy — this phone knows one day ahead of it" })
       : null,
   ];
@@ -1991,7 +1992,7 @@ document.addEventListener("visibilitychange", () => {
     forget();
   }
   // The day panel is deliberately not dropped alongside it. It is the one thing
-  // here built to outlive a rollover — see the block around `promote` — and the
+  // here built to outlive a rollover — see `stillTrue` in `held.js` — and the
   // three screens that draw it each decide for themselves what is still true.
   // What does have to happen is that a copy from *before* yesterday goes: one
   // day of lookahead is all the route sends, so anything older has no schedule

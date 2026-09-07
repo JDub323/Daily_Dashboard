@@ -153,3 +153,42 @@ export function forgetDay() {
     localStorage.removeItem(DAY_KEY);
   } catch { /* as above */ }
 }
+
+/**
+ * What is left of a cached day once the day has turned over.
+ *
+ * The rule from the head of this file, in one function, because it is the one
+ * piece of this app that cannot be exercised by looking at it: reproducing it by
+ * hand means a phone that has not spoken to the laptop since yesterday, and the
+ * shell it would need to open in that state is a service worker, which does not
+ * register in a headless browser. So it is a pure function over a date and it is
+ * tested rather than tried.
+ *
+ * Returns `{ stale, events, owed }`:
+ *
+ *   `stale`  the panel describes a day that is over.
+ *   `events` the rows still ahead of you. Compared against *today*, so
+ *            yesterday's drop out on their own and what the route sent as
+ *            tomorrow's becomes today's without being rewritten. An all-day
+ *            event spanning the boundary is kept by its `end_date`, which is
+ *            Google's half-open convention — a one-day holiday arrives as
+ *            09-07 → 09-08.
+ *   `owed`   whether "what today asks for" can still be shown. False on a stale
+ *            panel: yesterday's "3 of 5 done" under today's heading is not old,
+ *            it is wrong, and the day it describes cannot be finished any more.
+ *
+ * The todo list is not in here because nothing happens to it. An overdue reading
+ * is still overdue in the morning, the one gesture on it is addressed by id, and
+ * re-grouping is `groupByDay`'s job — it is given today's date rather than the
+ * panel's and sorts itself out.
+ */
+export function stillTrue(day, todayISO = localISO(new Date())) {
+  if (!day) return { stale: false, events: [], owed: false };
+  return {
+    stale: day.date !== todayISO,
+    events: (day.events ?? []).filter(
+      (e) => e.date >= todayISO || (e.end_date ?? "") > todayISO,
+    ),
+    owed: day.date === todayISO,
+  };
+}
