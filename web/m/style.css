@@ -485,7 +485,7 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   z-index: 3;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  background: linear-gradient(180deg, #12161f, #0b0e15);
+  background: linear-gradient(180deg, #0c0f16, #06080d);
   border-top: 1px solid rgba(92,207,230,.18);
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -495,7 +495,11 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   font-size: 9px;
   letter-spacing: .14em;
   text-transform: uppercase;
-  color: var(--faint);
+  /* A step under --faint rather than the token itself. The unlit caps had to
+     recede for the lit one to read, but 9px display type still owes 4.5:1 --
+     .52 on the bar's new ground measures 4.75:1, .46 measured 3.95:1 and was
+     put back. If the bar's background moves, re-measure this. */
+  color: rgba(223,230,242,.52);
   background: none;
   border: 1px solid transparent;
   border-radius: 0;
@@ -600,19 +604,19 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 #shell[data-tab="checkin"]  { --tab: #8f8fd6; --tab-text: #b3b3e6; }
 #shell[data-tab="session"]  { --tab: #d2705f; --tab-text: #e69a8c; }
 
-.tabs { border-top-color: color-mix(in srgb, var(--tab) 30%, transparent); }
+.tabs { border-top-color: color-mix(in srgb, var(--tab) 45%, transparent); }
 
 .tab.on {
-  color: var(--tab-text);
-  border-color: color-mix(in srgb, var(--tab) 30%, transparent);
+  color: color-mix(in srgb, var(--tab-text) 88%, #fff);
+  border-color: color-mix(in srgb, var(--tab) 46%, transparent);
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--tab) 14%, transparent),
-    color-mix(in srgb, var(--tab) 2%, transparent)
+    color-mix(in srgb, var(--tab) 30%, transparent),
+    color-mix(in srgb, var(--tab) 9%, transparent)
   );
   /* Underline on top here rather than beneath: the bar is at the foot of the
      screen, so the edge that faces the content is the one that should light. */
-  box-shadow: inset 0 2px 0 var(--tab), inset 0 -1px 0 rgba(255,255,255,.08);
+  box-shadow: inset 0 3px 0 var(--tab), inset 0 -1px 0 rgba(255,255,255,.10);
 }
 
 /* Answered. The tab's colour rather than gold -- see above. The geometry is
