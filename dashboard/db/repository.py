@@ -26,12 +26,15 @@ from ..models.common import (
     ChessOutcome,
     ChessStatus,
     Deck,
+    DrinkName,
     DrinkTag,
     EntrySource,
     Game,
     HealthMetric,
     MathOutcome,
     MathStatus,
+    MealFlag,
+    MealPreset,
     MealSize,
     PaperStatus,
     ProblemKind,
@@ -41,6 +44,7 @@ from ..models.common import (
     Track,
     UrineColor,
     Volume,
+    canonical_flags,
     canonical_tags,
 )
 from .connection import transaction
@@ -2312,15 +2316,22 @@ class Repository:
         note: str | None = None,
         garmin_activity_id: int | None = None,
         plan_key: str | None = None,
+        focus: str | None = None,
     ) -> d.TrainingSession:
         """Append a session. Never an upsert -- two-a-days are the normal case,
         and a second session today is a second row, not a correction of the
-        first."""
+        first.
+
+        `focus` is trusted here. Whether it agrees with `kind` is settled at the
+        request boundary, where the tree lives -- see
+        `SessionRequest._focus_agrees_with_kind` -- because a Garmin import and
+        a hand-written script both reach this method without one, and neither
+        should have to carry the tree in order to log a run."""
         try:
             row = self.conn.execute(
                 "INSERT INTO training_session "
-                "(date, kind, rpe, minutes, note, garmin_activity_id, plan_key) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *",
+                "(date, kind, rpe, minutes, note, garmin_activity_id, plan_key, focus) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
                 (
                     _iso(date),
                     SessionKind(kind).value,
@@ -2329,6 +2340,7 @@ class Repository:
                     note or None,
                     garmin_activity_id,
                     plan_key,
+                    focus,
                 ),
             ).fetchone()
         except sqlite3.IntegrityError as error:
@@ -2458,6 +2470,23 @@ class Repository:
         ).fetchall()
         return [d.BathroomLog(**dict(r)) for r in rows]
 
+    def _meals(self, rows: Sequence[sqlite3.Row]) -> list[d.MealLog]:
+        """Attach each meal's flags to it, in one more query rather than one
+        per row. The twin of `_drinks` below, and the same reasoning: the flags
+        are fetched flat and `canonical_flags` puts them in order, because
+        `group_concat` in the main query would save the round trip and give no
+        promise about the order they come back in."""
+        if not rows:
+            return []
+        ids = [r["id"] for r in rows]
+        flags: dict[int, list[str]] = {entry_id: [] for entry_id in ids}
+        holes = ",".join("?" * len(ids))
+        for meal_id, flag in self.conn.execute(
+            f"SELECT meal_id, flag FROM meal_flag WHERE meal_id IN ({holes})", ids
+        ):
+            flags[meal_id].append(flag)
+        return [d.MealLog(**dict(r), flags=canonical_flags(flags[r["id"]])) for r in rows]
+
     def add_meal(
         self,
         date: dt.date,
@@ -2465,13 +2494,34 @@ class Repository:
         size: MealSize,
         quality: int,
         note: str | None = None,
+        preset: MealPreset | None = None,
+        flags: Iterable[MealFlag] = (),
     ) -> d.MealLog:
+        """Append one meal.
+
+        `preset` and `flags` are keyword-defaulted and sit after `note` so that
+        every call written before they existed still means what it meant.
+
+        No flags writes no `meal_flag` rows at all, exactly as no tags writes no
+        `drink_tag` rows: the absence is the answer, not a missing one."""
         row = self.conn.execute(
-            "INSERT INTO meal_log (date, hour, size, quality, note) "
-            "VALUES (?, ?, ?, ?, ?) RETURNING *",
-            (_iso(date), hour, MealSize(size).value, quality, note or None),
+            "INSERT INTO meal_log (date, hour, size, quality, note, preset) "
+            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+            (
+                _iso(date),
+                hour,
+                MealSize(size).value,
+                quality,
+                note or None,
+                MealPreset(preset).value if preset else None,
+            ),
         ).fetchone()
-        return d.MealLog(**dict(row))
+        written = canonical_flags(flags)
+        self.conn.executemany(
+            "INSERT INTO meal_flag (meal_id, flag) VALUES (?, ?)",
+            [(row["id"], flag.value) for flag in written],
+        )
+        return d.MealLog(**dict(row), flags=written)
 
     def delete_meal(self, entry_id: int) -> bool:
         cur = self.conn.execute("DELETE FROM meal_log WHERE id = ?", (entry_id,))
@@ -2481,7 +2531,7 @@ class Repository:
         rows = self.conn.execute(
             "SELECT * FROM meal_log WHERE date = ? ORDER BY hour, id", (_iso(date),)
         ).fetchall()
-        return [d.MealLog(**dict(r)) for r in rows]
+        return self._meals(rows)
 
     def meal_history(self, days: int = 60, before: dt.date | None = None) -> list[d.MealLog]:
         """As `bathroom_history`, and windowed for the same reason."""
@@ -2489,13 +2539,13 @@ class Repository:
             rows = self.conn.execute(
                 "SELECT * FROM meal_log ORDER BY date DESC, hour DESC LIMIT ?", (days * 6,)
             ).fetchall()
-            return [d.MealLog(**dict(r)) for r in reversed(rows)]
+            return self._meals(list(reversed(rows)))
         start = before - dt.timedelta(days=days - 1)
         rows = self.conn.execute(
             "SELECT * FROM meal_log WHERE date BETWEEN ? AND ? ORDER BY date, hour, id",
             (_iso(start), _iso(before)),
         ).fetchall()
-        return [d.MealLog(**dict(r)) for r in rows]
+        return self._meals(rows)
 
     def _drinks(self, rows: Sequence[sqlite3.Row]) -> list[d.DrinkLog]:
         """Attach each drink's tags to it, in one more query rather than one
@@ -2524,15 +2574,19 @@ class Repository:
         hour: int,
         tags: Iterable[DrinkTag],
         amount: float,
+        name: DrinkName | None = None,
     ) -> d.DrinkLog:
         """Append one drink. `amount` is in drinks; see `DrinkLog`.
 
         No tags is a glass of water and writes no `drink_tag` rows at all --
-        the absence is the answer, not a missing one.
+        the absence is the answer, not a missing one. `name` is the same kind
+        of absence one level up: no name reads as "some drink with those things
+        in it", which is what most rows are and what declining to tap a name on
+        the phone means.
         """
         row = self.conn.execute(
-            "INSERT INTO drink_log (date, hour, amount) VALUES (?, ?, ?) RETURNING *",
-            (_iso(date), hour, float(amount)),
+            "INSERT INTO drink_log (date, hour, amount, name) VALUES (?, ?, ?, ?) RETURNING *",
+            (_iso(date), hour, float(amount), DrinkName(name).value if name else None),
         ).fetchone()
         written = canonical_tags(tags)
         self.conn.executemany(

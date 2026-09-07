@@ -311,6 +311,44 @@ def days_of_meals(days: int, per_day: int = 3, size: str = "medium", quality: in
     ]
 
 
+def snack(days_ago: int, hour: int = 16, quality: int = 5) -> d.MealLog:
+    """An apple. Small, whole, and not a meal -- which is the entire point of
+    the flag: it is food, it counts as food everywhere food is counted, and it
+    does not answer "did you eat three meals"."""
+    return d.MealLog(
+        id=days_ago * 100 + hour,
+        date=TODAY - dt.timedelta(days=days_ago),
+        hour=hour,
+        size="small",
+        quality=quality,
+        flags=["snack"],
+    )
+
+
+def test_a_week_of_snacks_does_not_read_as_a_week_of_meals():
+    """The hole the `snack` flag exists to keep shut.
+
+    Three apples are three rows, and a completeness input that counted rows
+    would score that day as fully logged -- with the two meals that actually
+    went unrecorded invisible, and `implied_lb_per_week` believing the light
+    week that results. The rows are still food and still counted by everything
+    that asks about intake; they are not counted by the thing that asks whether
+    the log was kept.
+    """
+    meals = days_of_meals(7)
+    snacks = [snack(n, 8 + 4 * i) for n in range(7) for i in range(3)]
+    assert zone_input(health.fuel_score(meals, -400.0, TODAY), "meals").value == 100.0
+    assert zone_input(health.fuel_score(snacks, -400.0, TODAY), "meals").value == 0.0
+
+
+def test_a_snack_still_counts_toward_diet_quality():
+    """The other half of the same decision. `_meal_rows` asks whether the log
+    was kept, where a snack is not a meal; `diet_quality` asks how whole the
+    food was, where an apple is an honest 5. Excluding them here would score a
+    week of fruit as though it had not been eaten."""
+    assert health.diet_quality([snack(n) for n in range(7)], TODAY) == pytest.approx(5.0)
+
+
 # -- hydration ---------------------------------------------------------------
 
 
@@ -407,9 +445,9 @@ def test_alcohol_takes_the_whole_row_out_and_not_its_share():
     assert health.day_fluid_ml([drink(0, 20, ["alcohol", "sugar"], 2.0)]) == 0
 
 
-def test_coffee_counts_as_fluid_however_it_was_taken():
-    plain = health.day_fluid_ml([drink(0, 7, ["coffee"], 1.0)])
-    sweet = health.day_fluid_ml([drink(0, 7, ["sugar", "coffee"], 1.0)])
+def test_caffeine_counts_as_fluid_however_it_was_taken():
+    plain = health.day_fluid_ml([drink(0, 7, ["caffeine"], 1.0)])
+    sweet = health.day_fluid_ml([drink(0, 7, ["sugar", "caffeine"], 1.0)])
     assert plain == sweet == pytest.approx(health.DRINK_ML)
 
 
@@ -440,7 +478,20 @@ def test_a_day_of_nothing_but_beer_counts_as_a_dry_day():
 def test_caffeine_is_a_mean_over_the_days_you_logged():
     logs = [
         *days_of_drinks(7, per_day=1),
-        *days_of_drinks(7, per_day=2, tags=["coffee"]),
+        *days_of_drinks(7, per_day=2, tags=["caffeine"]),
+    ]
+    assert health.caffeine_mean(logs, TODAY) == pytest.approx(2.0)
+
+
+def test_caffeine_counts_an_energy_drink_the_same_as_a_coffee(logs_are_unused=None):
+    """What the rename bought. Under the old `coffee` tag a Celsius was either
+    filed as coffee -- a lie -- or left untagged, which dropped its caffeine
+    out of the score entirely. The tag names the substance now, so both count
+    and neither has to pretend to be the other."""
+    logs = [
+        *days_of_drinks(7, per_day=1),
+        *days_of_drinks(7, per_day=1, tags=["caffeine"]),
+        *days_of_drinks(7, per_day=1, tags=["caffeine", "sugar", "carbonated"]),
     ]
     assert health.caffeine_mean(logs, TODAY) == pytest.approx(2.0)
 

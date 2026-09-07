@@ -16,10 +16,13 @@ from .common import (
     BathroomKind,
     ChessStatus,
     Deck,
+    DrinkName,
     DrinkTag,
     EntrySource,
     HealthMetric,
     MathStatus,
+    MealFlag,
+    MealPreset,
     MealSize,
     PaperStatus,
     ProblemKind,
@@ -702,6 +705,21 @@ class TrainingSession(Base):
     """Set only by an import, and UNIQUE, so re-running a sync cannot
     double-count a session that is already in the table."""
 
+    focus: str | None = None
+    """What the session actually was -- a dotted leaf of `SESSION_FOCUS`, or
+    None for a session logged without going a level deeper.
+
+    Below `kind` and never instead of it. `kind` is what `daily_load` and the
+    camp plan are written against and is unchanged; this says which of the
+    things inside that bucket it was, so that "how much sparring" and "how
+    much of it was touch" are both answerable afterwards.
+
+    A leaf implies its kind, and `SessionRequest` refuses a body where the two
+    disagree. Validated at the boundary rather than here, so that a row
+    already in the table stays readable after the tree is edited -- a session
+    logged as `cardio.steady.stairmaster` must not become unloadable the day
+    the stairmaster leaves the gym."""
+
     plan_key: str | None = None
     """Which prescribed block this answers -- `<date>:<token>` -- or None for a
     session logged freehand, which stays the ordinary case.
@@ -760,7 +778,35 @@ class MealLog(Base):
     hour: int = Field(ge=0, le=23)
     size: MealSize
     quality: int = Field(ge=1, le=5)
+
+    preset: MealPreset | None = None
+    """What it was, where it was one of the things it usually is -- the
+    identity half, and None is the ordinary answer.
+
+    A preset does not *mean* anything the two fields above it do not already
+    say; it filled them in. Its value is that "chicken, broccoli, sweet
+    potato" is now one tap and one number rather than a judgement made afresh
+    each time, so the same plate scores the same every time it is eaten."""
+
+    flags: list[MealFlag] = Field(default_factory=list)
+    """What was in it, as a set. Empty is a real answer, exactly as an empty
+    `DrinkLog.tags` is. Always in `MealFlag` order; `canonical_flags` is what
+    puts it there, on the way in."""
+
     note: str | None = Field(default=None, max_length=200)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def is_snack(self) -> bool:
+        """Whether this row counts toward the three meals the day requires.
+
+        Computed rather than left to each caller, because the answer decides
+        whether a required task is done and two callers disagreeing about it
+        would be a day that is complete on the chip and incomplete in the
+        ring. The apple is still food -- it counts for the energy balance and
+        for diet quality, both of which read `size` and `quality` and neither
+        of which looks at this."""
+        return MealFlag.snack in self.flags
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -798,6 +844,17 @@ class DrinkLog(Base):
     date: dt.date
     hour: int = Field(ge=0, le=23)
     tags: list[DrinkTag] = Field(default_factory=list)
+
+    name: DrinkName | None = None
+    """What it was, where the tags made a name possible -- and None wherever
+    they did not, or wherever it was not worth saying.
+
+    Never read by `health.py` and never to be: see `DrinkName` for why a name
+    that gets scored has become a tag with a second spelling. What it is for
+    is reading a row back a year later, when `sugar + carbonated + caffeine`
+    is a complete description that does not tell you whether that was a Coke
+    or a Celsius."""
+
     amount: float = Field(gt=0, le=20)
 
     @computed_field  # type: ignore[prop-decorator]
@@ -846,6 +903,12 @@ class PrescribedBlock(Base):
     you did is a real question -- shadowboxing and roadwork are different
     training, and the difference is only recoverable if it is recorded at the
     time."""
+
+    focus: str | None = None
+    """Which leaf of the session tree this is, where the plan knows -- and what
+    lets the phone prefill the whole path rather than asking three questions
+    with one legal answer each. None on every `choose` token by construction:
+    those are the ones where what you did is the question."""
 
     asks: str | None = None
     """The duration the plan asks for, when it asks for one. Printed, never

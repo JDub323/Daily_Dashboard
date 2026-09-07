@@ -51,8 +51,10 @@
 // quietly brought the store, the nav ring, the capture stack and the desktop's
 // HTTP client along with them.
 import {
-  applicableSteps, BATHROOM_STEPS, CHECKIN_ITEMS, DRINK_STEPS, MEAL_STEPS,
-  openBlocks, parseAmount, RPE_ANCHOR, SESSION_KINDS, toShown, toStored,
+  applicableSteps, BATHROOM_STEPS, CHECKIN_ITEMS, drinkNameLabel, DRINK_STEPS,
+  focusLabel, focusLevels, forcedPath, mealPresetLabel, MEAL_STEPS, missingSteps,
+  openBlocks, parseAmount, prunedDraft, prunedTree, RPE_ANCHOR, sessionFocus,
+  SESSION_TREE, sessionKind, stepOptions, toShown, toStored,
 } from "../app/logs.js";
 // The dashboard's own title screen, not a copy of it: same module, same
 // markup in index.html, same stylesheet. It imports nothing but `dom.js`,
@@ -166,7 +168,7 @@ function setDraft(answers) {
  *  three things every session is. Not persisted: it is answered in one sitting
  *  on the way out of a gym, and a stale kind from Tuesday is worse than an
  *  empty form. */
-let session = { pick: null, kind: null, rpe: null, minutes: "" };
+let session = { pick: null, path: [], rpe: null, minutes: "" };
 
 /** `session.pick` for a session the plan never asked for.
  *
@@ -389,7 +391,17 @@ function stepRow(step, draftValues, answer) {
   const held = draftValues[step.name];
   const picked = step.multi ? new Set(held ?? []) : null;
   const isOn = (value) => (step.multi ? picked.has(value) : held === value);
+  // Through `stepOptions` rather than off the step, because the drink log's
+  // name row is a function of the tags above it. Read at draw time, so the row
+  // rebuilt after a tag is tapped is the row for the new tag set.
+  const options = stepOptions(step, draftValues);
   const press = (value) => {
+    // Tapping the answer that is already on takes it off. Only where the step
+    // is optional, which is where it means something: a preset or a drink's
+    // name can be un-picked back to "other", and there is no other way to undo
+    // one, because every other row on this screen has a right answer you would
+    // reach for instead.
+    if (step.optional && !step.multi && held === value) return answer(step.name, null);
     if (!step.multi) return answer(step.name, value);
     // Toggling in place: tapping a tag that is on takes it off, so a wrong tap
     // costs the tap that undoes it and nothing else. Rebuilt from the step's
@@ -398,15 +410,15 @@ function stepRow(step, draftValues, answer) {
     const next = new Set(picked);
     if (next.has(value)) next.delete(value);
     else next.add(value);
-    answer(step.name, step.options.map(([, v]) => v).filter((v) => next.has(v)));
+    answer(step.name, options.map(([, v]) => v).filter((v) => next.has(v)));
   };
   return el("div.q", null,
     el("div.q-head", null,
       el("span.q-name", { text: step.name }),
       step.hint ? el("span.q-hint", { text: step.hint }) : null,
     ),
-    el(optsClass(step.options.map(([, , label]) => label)), null,
-      ...step.options.map(([, value, label]) =>
+    el(optsClass(options.map(([, , label]) => label)), null,
+      ...options.map(([, value, label]) =>
         el("button.opt", {
           class: isOn(value) ? "on" : "",
           "aria-pressed": isOn(value),
@@ -417,6 +429,11 @@ function stepRow(step, draftValues, answer) {
     ),
   );
 }
+
+/** A step's `fills`, by name. A step without one is every step but the meal
+ *  log's presets, so the lookup is written to return undefined rather than to
+ *  be asked only where it applies. */
+const fillsFor = (steps, name) => steps.find((step) => step.name === name)?.fills;
 
 /**
  * A quick log — meals, drinks, in and out.
@@ -436,11 +453,14 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
     render() {
       const asked = applicableSteps(steps, answers);
 
-      // A `multi` step is answered from the moment it is drawn: its answer is a
-      // set, the empty set means something ("water"), and holding the commit
-      // button hostage to it would make the commonest drink of the day the one
-      // entry you cannot log without touching a tag you did not mean.
-      const missing = asked.filter((step) => !step.multi && answers[step.name] == null);
+      // Which steps are still owed is `logs.js`'s answer, not this file's. A
+      // `multi` step is answered from the moment it is drawn — its answer is a
+      // set and the empty set means something ("water") — and an `optional` one
+      // says the same for a single value: not naming a drink is what most rows
+      // do. Holding the commit button hostage to either would make the
+      // commonest entry of the day the one you cannot file without tapping
+      // something you did not mean.
+      const missing = missingSteps(steps, answers);
       const ready = missing.length === 0;
 
       const commit = async () => {
@@ -461,12 +481,20 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
       // was to notice the row appear. A wrong tap is now free, and the write is
       // a deliberate second thing.
       const answer = (name, value) => {
-        answers = { ...answers, [name]: value };
-        // A branch can strip a question that was already answered — picking
-        // `urine` after answering a solidity — and that answer must not ride
-        // along into the body, because the table will refuse the row.
-        const live = new Set(applicableSteps(steps, answers).map((s) => s.name));
-        for (const key of Object.keys(answers)) if (!live.has(key)) delete answers[key];
+        // A preset answers four questions with one tap, and `fills` on the step
+        // is where the table says which. Written *under* the tap rather than
+        // over it, so the fills land and the preset itself stays what was
+        // pressed. Un-picking a preset clears the preset and leaves what it
+        // filled in, which is the less surprising of the two: nothing you can
+        // see disappears, and an edit you made after tapping it survives.
+        const filled = value == null ? {} : (fillsFor(steps, name)?.(value) ?? {});
+        answers = { ...answers, ...filled, [name]: value };
+        // Whatever that answer just invalidated, gone before the redraw. A
+        // branch can strip a question that was already answered, and a row
+        // whose options depend on the row above it can strip the *answer*
+        // while keeping the question — see `prunedDraft`, which is where both
+        // rules live and why neither is written out here.
+        answers = prunedDraft(steps, answers);
         draw();
       };
 
@@ -628,7 +656,14 @@ const LOGS = [
     path: "/api/meal",
     empty: "nothing eaten yet today",
     rows: () => rowsFor("/api/meal", panel?.meals_today, "/api/meal/delete"),
-    describe: (e) => `${e.size} · quality ${e.quality}`,
+    // The preset stands in for size and quality rather than joining them: it
+    // is what filled them, so printing all three spends half the row saying
+    // "large, 5" under a line that already says chicken and sweet potato.
+    // Flags are appended because nothing above them implies them.
+    describe: (e) => [
+      e.preset ? mealPresetLabel(e.preset) : `${e.size} · quality ${e.quality}`,
+      ...(e.flags ?? []),
+    ].join(" · "),
     remove: { path: "/api/meal/delete", field: "entry_id" },
   }),
   quickLog({
@@ -642,7 +677,9 @@ const LOGS = [
     // just `· 1` looks like a row that lost something. It is the one label on
     // this screen that is not a value the table holds — the absence of tags is
     // what says it, here and in `DrinkTag`.
-    describe: (e) => `${e.tags?.length ? e.tags.join(" + ") : "water"} · ${say(e.amount)}`,
+    describe: (e) =>
+      `${e.name ? drinkNameLabel(e.name) : e.tags?.length ? e.tags.join(" + ") : "water"}`
+      + ` · ${say(e.amount)}`,
     remove: { path: "/api/drink/delete", field: "entry_id" },
   }),
   quickLog({
@@ -858,11 +895,34 @@ function sessionLog() {
         session = { ...session, pick: null };
       }
       const block = open.find((b) => b.key === session.pick) ?? null;
-      // What is left to ask about the kind: nothing when the plan names one,
-      // the plan's shortlist where it deliberately does not — cardio is
-      // roadwork or shadowboxing and the difference is only recoverable if it
-      // is recorded now — and everything for a session logged off-plan.
-      const kinds = block ? block.choose : Object.keys(SESSION_KINDS);
+
+      // What is left to ask about *what this was*, in three cases.
+      //
+      //   A block that names a focus has answered all of it. `LFC` is
+      //   `strength.vjp.lower_french_contrast` and there is nothing to say, so
+      //   the rows disappear entirely rather than appearing pre-answered —
+      //   the same rule that already removed the kind row for a block that
+      //   named its kind, and for the same reason: three questions with one
+      //   legal answer each are three taps that mean nothing. The hint line
+      //   above prints what it is, and `something else` is still the way out.
+      //
+      //   `library.A` names a shortlist instead, because that is the one token
+      //   whose whole point is that what you did is a real question —
+      //   shadowboxing and a run are different training and the difference is
+      //   only recoverable now. Its three kinds prune the tree to cardio and
+      //   boxing, which is that question asked in the tree's own words.
+      //
+      //   Off-plan gets the whole thing.
+      const allowed = block?.choose?.length ? block.choose : block?.kind ? [block.kind] : null;
+      const tree = prunedTree(allowed, SESSION_TREE);
+      // A level with one option is not a question — see `forcedPath`. Filtered
+      // here as well as seeded at `choose`, because the seed only runs when a
+      // block is picked and this also has to hold for the row a stale path
+      // leaves behind.
+      const rows = block?.focus ? [] : focusLevels(session.path, tree).filter(
+        (row) => row.options.length > 1,
+      );
+      const kind = sessionKind(session.path, tree) ?? block?.kind ?? null;
 
       const minutes = el("input.amount", {
         type: "text",
@@ -878,23 +938,48 @@ function sessionLog() {
 
       const commit = () => {
         const mins = Number(String(session.minutes).trim());
-        if (!session.kind || !session.rpe) return void toast("pick a kind and an RPE");
+        // `kind` rather than the path, because the path is allowed to stop
+        // early everywhere except under cardio — which carries no kind of its
+        // own, so "cardio" alone is the one selection that looks answered and
+        // is not. This is the only place that difference is visible.
+        if (!kind || !session.rpe) return void toast("pick a kind and an RPE");
         if (!Number.isInteger(mins) || mins < 1 || mins > 600) {
           return void minutes.classList.add("bad");
         }
-        const body = { kind: session.kind, rpe: session.rpe, minutes: mins };
+        const body = { kind, rpe: session.rpe, minutes: mins };
+        // Only where the walk reached a leaf. A path that stopped short is a
+        // kind with no focus, and posting the half of it that was answered
+        // would invent a category meaning "they stopped here" — see
+        // `sessionFocus`, and `SessionRequest`, which refuses one.
+        const focus = sessionFocus(session.path, tree);
+        if (focus) body.focus = focus;
         // The one line the laptop's plan card is waiting for.
         if (block) body.plan_key = block.key;
-        session = { pick: null, kind: null, rpe: null, minutes: "" };
+        session = { pick: null, path: [], rpe: null, minutes: "" };
         send("/api/session", body, "session");
       };
 
-      /** Answer "what did you do" with one of today's prescribed blocks. */
+      /** Answer "what did you do" with one of today's prescribed blocks.
+       *
+       *  The block prefills the whole path where the plan knows it — `library.LFC`
+       *  is `strength.vjp.lower_french_contrast` and there is nothing left to
+       *  ask, so all three rows disappear rather than being three taps that
+       *  can only be answered one way. Where it does not (`library.A`, the one
+       *  token whose whole point is that what you did is a real question) the
+       *  path starts empty and the pruned tree asks it.
+       *
+       *  Cleared either way, because a path walked freehand a moment ago may
+       *  not exist at all in the tree this block leaves standing. */
       const choose = (chosen) => {
-        // The kind comes with the block where the plan names one, and is asked
-        // for where it does not. Cleared either way, because a kind picked
-        // freehand a moment ago may not be one this block offers at all.
-        session = { ...session, pick: chosen.key, kind: chosen.kind ?? null };
+        const branch = prunedTree(
+          chosen.choose?.length ? chosen.choose : chosen.kind ? [chosen.kind] : null,
+          SESSION_TREE,
+        );
+        session = {
+          ...session,
+          pick: chosen.key,
+          path: chosen.focus?.split(".") ?? forcedPath(branch),
+        };
         draw();
       };
 
@@ -935,23 +1020,47 @@ function sessionLog() {
               ),
             )
           : null,
-        // Gone entirely when the block names its own kind. There is one legal
-        // answer then, it is stated in the hint above, and a row of one button
-        // you have to press anyway is a question pretending to be asked.
-        kinds.length
-          ? el("div.q", null,
-              el("div.q-head", null, el("span.q-name", { text: "kind" })),
-              el(optsClass(kinds), null,
-                ...kinds.map((kind) =>
-                  el("button.opt", {
-                    class: session.kind === kind ? "on" : "",
-                    "aria-pressed": session.kind === kind,
-                    text: kind,
-                    onclick: () => { session.kind = kind; draw(); },
-                  })),
-              ),
-            )
-          : null,
+        // The tree, one row per level, each row the children of the answer
+        // above it. Answering grows the form by a row and un-answering shrinks
+        // it, so the depth on screen is the depth you have actually reached.
+        //
+        // Gone entirely when the plan has answered it — a block that names its
+        // kind and its focus prunes to one path with no choices in it, and a
+        // row of one button you have to press anyway is a question pretending
+        // to be asked.
+        //
+        // There is no `other` on any row and that is the design: stopping is
+        // what "other" would have meant, it costs no tap, and a button saying
+        // the same thing as not pressing a button is one you have to think
+        // about every single time.
+        ...rows.map((row, depth) =>
+          el("div.q", null,
+            el("div.q-head", null,
+              el("span.q-name", { text: row.depth ? "which" : "what" }),
+              row.depth === 0 && !kind
+                ? el("span.q-hint", { text: "cardio is two kinds — say which" })
+                : null,
+            ),
+            el(optsClass(row.options.map((node) => node.label)), null,
+              ...row.options.map((node) =>
+                el("button.opt", {
+                  class: row.chosen === node.value ? "on" : "",
+                  "aria-pressed": row.chosen === node.value,
+                  text: node.label,
+                  onclick: () => {
+                    // The path is truncated to this level before the tap is
+                    // appended, so re-answering the first row drops the rows
+                    // under it rather than leaving a stale leaf beneath a new
+                    // branch. Tapping the answer already on takes it off,
+                    // which is how you go back up a level.
+                    const head = session.path.slice(0, row.depth);
+                    session.path = row.chosen === node.value ? head : [...head, node.value];
+                    draw();
+                  },
+                })),
+            ),
+          ),
+        ),
         el("div.q", null,
           el("div.q-head", null,
             el("span.q-name", { text: "rpe" }),
@@ -981,7 +1090,9 @@ function sessionLog() {
           // merely that some training happened, which is the difference the
           // laptop's plan card turns on and the one you cannot otherwise see
           // from here.
-          (e) => [`rpe ${e.rpe} · ${e.minutes}m`, planToken(e)].filter(Boolean).join(" · "),
+          (e) => [focusLabel(e.focus), `rpe ${e.rpe} · ${e.minutes}m`, planToken(e)]
+            .filter(Boolean)
+            .join(" · "),
           "nothing trained yet today",
           {
             // A session has no hour — the table records the day and the load,
@@ -1014,7 +1125,7 @@ function sessionLog() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v11";
+const BUILD = "log-v12";
 
 /**
  * The build, along the foot of the title screen.
@@ -1114,6 +1225,12 @@ function drawNet() {
 }
 
 function drawTabs() {
+  // The hue for the whole screen, set once at the top. Every rule that uses it
+  // reads `--tab` off this element -- see the foot of `style.css` for why the
+  // attribute is here rather than on the bar itself: most of the colour is
+  // carried by the answer caps, which are three elements away from the tab
+  // that decides it.
+  $("#shell").dataset.tab = tab;
   const bar = $("#tabs");
   bar.replaceChildren(
     ...LOGS.map((log) =>

@@ -1947,6 +1947,107 @@ MIGRATIONS: list[tuple[int, str]] = [
         DROP TABLE drink_log_kinded;
         """,
     ),
+    (
+        33,
+        """
+        -- One more level of detail on all three logs, and one line drawn
+        -- through the middle of it that the rest of this migration follows.
+        --
+        -- **Composition is CHECKed here; identity is not.**
+        --
+        -- A tag or a flag is composition: something summed, averaged or
+        -- scored. `day_fluid_ml` adds up everything not alcoholic,
+        -- `caffeine_mean` averages what is caffeinated, the meal count skips
+        -- what is flagged a snack. A closed vocabulary is the whole point --
+        -- a value outside it is a row that would be silently missed by a sum,
+        -- which is the failure mode a CHECK exists to prevent.
+        --
+        -- A name, a preset or a focus is identity: what the thing *was*.
+        -- Nothing sums it and nothing may (see `DrinkName`). It is grouped by
+        -- and read back, and its vocabulary is a list of what he actually eats
+        -- drinks and does, which is a list that gets edited. Freezing that
+        -- into the schema would mean a migration to add a food -- so these get
+        -- the treatment `plan_key` got in migration 19 and for the reason
+        -- stated there: a length CHECK, and the real vocabulary enforced at
+        -- the request boundary, where widening it is an edit rather than a
+        -- rebuild of a table with two years of rows in it.
+        --
+        -- The cost of that choice is honest and worth stating: a value the
+        -- boundary would have refused can still be written by hand with
+        -- `sqlite3`. So could a `plan_key` that matches nothing. Both are
+        -- provenance rather than arithmetic, and neither can make a number
+        -- wrong.
+
+        -- Tags first, because it is the one table here that has to be rebuilt.
+        -- `carbonated` is new and `coffee` becomes `caffeine`; both change the
+        -- CHECK, and a CHECK is part of the table definition, so this is the
+        -- same dance migrations 2, 6, 9, 10, 12, 17 and 27 did.
+        --
+        -- The rename is not cosmetic. `coffee` named a drink where every other
+        -- tag names a substance, so an energy drink had no way to record that
+        -- it was caffeinated -- it was either filed as coffee, which the
+        -- caffeine mean then averaged as coffee, or left untagged, which lost
+        -- the caffeine entirely. Every existing row carries across with its
+        -- meaning intact: a mug of coffee was caffeine before this ran and is
+        -- caffeine after it, and `caffeine_mean` returns the same number for
+        -- every day already logged.
+        ALTER TABLE drink_tag RENAME TO drink_tag_coffee;
+
+        CREATE TABLE drink_tag (
+            drink_id  INTEGER NOT NULL REFERENCES drink_log (id) ON DELETE CASCADE,
+            tag       TEXT NOT NULL CHECK (tag IN (
+                          'milk', 'sugar', 'electrolyte', 'caffeine',
+                          'alcohol', 'carbonated')),
+            PRIMARY KEY (drink_id, tag)
+        ) STRICT;
+
+        INSERT INTO drink_tag (drink_id, tag)
+            SELECT drink_id,
+                   CASE tag WHEN 'coffee' THEN 'caffeine' ELSE tag END
+              FROM drink_tag_coffee;
+
+        DROP TABLE drink_tag_coffee;
+
+        -- What the drink was. NULL is the ordinary answer and means "some
+        -- drink with those things in it" -- which is what declining to tap a
+        -- name means on the phone, where the row of names only appears at all
+        -- once the tags below it make one possible.
+        ALTER TABLE drink_log ADD COLUMN name TEXT
+            CHECK (name IS NULL OR length(name) BETWEEN 2 AND 64);
+
+        -- What the meal was. Same rule, and the same NULL.
+        ALTER TABLE meal_log ADD COLUMN preset TEXT
+            CHECK (preset IS NULL OR length(preset) BETWEEN 2 AND 64);
+
+        -- What was in it. A table rather than a column for the reason
+        -- migration 27 gave when `drink_tag` was split out: a set in a
+        -- delimited string is a set the database cannot check, and the primary
+        -- key is what stops one meal carrying `protein` twice.
+        --
+        -- `snack` is the only one of the four that anything reads today, and
+        -- what reads it is the required-tasks count: three logged apples must
+        -- not close out "eat three meals". The other three are recorded
+        -- against later questions, on the same bet `carbonated` is -- free
+        -- now, unrecoverable afterwards.
+        CREATE TABLE meal_flag (
+            meal_id  INTEGER NOT NULL REFERENCES meal_log (id) ON DELETE CASCADE,
+            flag     TEXT NOT NULL CHECK (flag IN (
+                         'protein', 'fried', 'snack', 'salty')),
+            PRIMARY KEY (meal_id, flag)
+        ) STRICT;
+
+        -- What the session was, one level below `kind`.
+        --
+        -- `kind` is untouched and stays the only thing the load model reads.
+        -- This is the dotted leaf of the tree in `SESSION_FOCUS` --
+        -- `cardio.steady.run` -- and the mapping there is what keeps the two
+        -- from contradicting each other, enforced at the boundary because
+        -- SQLite cannot express "this text implies that enum" without hard-
+        -- coding the tree the whole point was to keep out of the schema.
+        ALTER TABLE training_session ADD COLUMN focus TEXT
+            CHECK (focus IS NULL OR length(focus) BETWEEN 3 AND 64);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

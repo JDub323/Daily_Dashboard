@@ -8,8 +8,9 @@ that only fails three layers later in the browser.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
@@ -403,6 +404,81 @@ class SessionKind(StrEnum):
     other = "other"
 
 
+SESSION_FOCUS: Mapping[str, SessionKind] = MappingProxyType(
+    {
+        # --- boxing ---
+        "boxing.shadowboxing": SessionKind.boxing,
+        "boxing.bag": SessionKind.boxing,
+        "boxing.mitts": SessionKind.boxing,
+        "boxing.drills": SessionKind.boxing,
+        "boxing.class": SessionKind.boxing,
+        # --- sparring ---
+        "sparring.full": SessionKind.sparring,
+        "sparring.touch": SessionKind.sparring,
+        # --- cardio, which is two kinds wearing one word ---
+        "cardio.hiit.core": SessionKind.conditioning,
+        "cardio.hiit.lower": SessionKind.conditioning,
+        "cardio.hiit.upper": SessionKind.conditioning,
+        "cardio.hiit.full": SessionKind.conditioning,
+        "cardio.hiit.interval_run": SessionKind.conditioning,
+        "cardio.steady.incline": SessionKind.roadwork,
+        "cardio.steady.run": SessionKind.roadwork,
+        "cardio.steady.stairmaster": SessionKind.roadwork,
+        "cardio.steady.elliptical": SessionKind.roadwork,
+        # --- strength ---
+        "strength.vjp.lower_french_contrast": SessionKind.strength,
+        "strength.vjp.upper_french_contrast": SessionKind.strength,
+        "strength.vjp.lower_concentrics": SessionKind.strength,
+        "strength.vjp.upper_concentrics": SessionKind.strength,
+        "strength.vjp.potentiation": SessionKind.strength,
+        "strength.general.1x20": SessionKind.strength,
+        "strength.general.upper": SessionKind.strength,
+        "strength.general.lower": SessionKind.strength,
+        "strength.general.full": SessionKind.strength,
+        # --- everything the load model must not fold into strength ---
+        "other.neck": SessionKind.other,
+        "other.core": SessionKind.other,
+        "other.mobility": SessionKind.other,
+        "other.walk": SessionKind.other,
+        "other.rehab": SessionKind.other,
+    }
+)
+"""Every leaf of the session tree, and the `SessionKind` each one lands in.
+
+`kind` answers "how much of X did I do" and is what `daily_load` and the camp
+plan are written against; it is unchanged and stays the only thing scored.
+This is the level below it -- what the session actually *was* -- and it is
+identity in exactly the sense `DrinkName` and `MealPreset` are: grouped by,
+never summed.
+
+**The mapping is the invariant, not the list.** A leaf determines its kind, so
+`cardio.steady.run` posted with `kind: boxing` is a contradiction the request
+model refuses (`SessionRequest.consistent`). Without that check the two fields
+would be free to disagree on the same row, and the disagreement would be
+invisible -- the load model reads `kind` and would never look at the leaf that
+says otherwise.
+
+The paths are dotted because `other` and `full` and `upper` each appear under
+several branches, and a flat token set could not tell those apart. They are
+also why the umbrella words can differ from the stored kinds: `cardio` is not
+a `SessionKind` and never becomes one -- it is one word on a screen that
+resolves, one level down, into `conditioning` or `roadwork` depending on
+whether the work had intervals in it. That is the distinction the load model
+has always drawn and the one nobody wants to be asked for in those words at
+6am.
+
+`roadwork` consequently now means steady-state aerobic work rather than
+specifically running, which is what the word means in a boxing gym anyway. An
+elliptical session stores as roadwork; the leaf is what says it was an
+elliptical.
+
+Not a CHECK on the table -- see migration 33 and `plan_key` before it, which
+made the same call for the same reason: this is a vocabulary that lives in a
+file and gets edited, so freezing it into the schema means a migration every
+time a machine is added to the gym.
+"""
+
+
 # --- what goes in and what comes out ---------------------------------------
 #
 # Every scale below is short on purpose, and shorter than the published one it
@@ -478,10 +554,25 @@ class DrinkTag(StrEnum):
     spellings of one drink to disagree. The rows already logged as gatorade
     carry both tags; see the migration.
 
-    `coffee` counts as fluid despite the folklore. The diuretic effect of
-    caffeine is real and smaller than the water it arrives in; it is a tag
-    because the *caffeine* is worth counting, not because the water in it is
-    suspect.
+    `caffeine` counts as fluid despite the folklore. The diuretic effect is
+    real and smaller than the water it arrives in; it is a tag because the
+    caffeine is worth counting, not because the water in it is suspect.
+
+    It was called `coffee` until `carbonated` arrived beside it, and the rename
+    is the same mistake being corrected a second time. A tag naming a *drink*
+    rather than a *substance* has nowhere to put the thing that is not that
+    drink: an energy drink is caffeine and is not coffee, so under the old name
+    it was either filed as coffee -- a lie the caffeine mean then averaged --
+    or left untagged, which dropped its caffeine out of the score altogether.
+    The word `coffee` still exists; it moved down a level to `DrinkName`, which
+    is where the identity of a drink belongs and where it cannot be mistaken
+    for a quantity of a substance.
+
+    `carbonated` is the newest, and the only tag nothing scores yet. That is
+    deliberate rather than an omission: it costs nothing to record and cannot
+    be recovered afterwards, and it is what separates a beer from a shot and a
+    soda from a juice without either of those having to become a tag of its
+    own.
 
     `alcohol` is the odd one out twice over: it is the only tag that changes
     what `amount` means (see `DrinkLog.amount`), and the only one that takes
@@ -492,8 +583,9 @@ class DrinkTag(StrEnum):
     milk = "milk"
     sugar = "sugar"
     electrolyte = "electrolyte"
-    coffee = "coffee"
+    caffeine = "caffeine"
     alcohol = "alcohol"
+    carbonated = "carbonated"
 
 
 def canonical_tags(tags: Iterable[str]) -> list[DrinkTag]:
@@ -508,6 +600,83 @@ def canonical_tags(tags: Iterable[str]) -> list[DrinkTag]:
     return sorted({DrinkTag(tag) for tag in tags}, key=order.index)
 
 
+class DrinkName(StrEnum):
+    """What the drink actually was -- as opposed to `DrinkTag`, which is what
+    was in it.
+
+    The distinction is the whole reason there are two of these and it is worth
+    being exact about, because collapsing them is the mistake that produced
+    `gatorade` and then `coffee` and would produce a third one next year.
+
+    A **tag is composition**. It is summed, averaged and scored: `day_fluid_ml`
+    adds up everything that is not alcohol, `caffeine_mean` averages what is
+    caffeinated, `alcohol_week` counts standard drinks. A tag has to be true of
+    a *part* of the drink, and every drink carrying it has to be summable with
+    every other one.
+
+    A **name is identity**. Nothing sums it and nothing ever will. It exists to
+    be grouped by -- "how many energy drinks in October" -- and to make a row
+    legible a year later, when `sugar + carbonated + caffeine` is technically
+    complete and tells you nothing about whether that was a Coke or a Celsius.
+
+    So a name is never also a tag, and no reading in `health.py` may ever look
+    at one. The moment a name is scored it has become a tag with a second
+    spelling, and the two are then free to disagree about the same drink.
+
+    Nothing here is required. A drink with tags and no name is the ordinary
+    case and reads as "some drink like that" -- which is what "other" means on
+    the phone, where declining to answer is a real answer and costs no tap.
+
+    The list grows. It is not a CHECK on the table for exactly that reason --
+    see migration 33 -- so adding a drink is an edit here and in the tree in
+    `web/app/logs.js`, and no migration at all.
+    """
+
+    # carbonated
+    sparkling_water = "sparkling_water"
+    diet_soda = "diet_soda"
+
+    # sugar
+    oj = "oj"
+    lemonade = "lemonade"
+    juice = "juice"
+
+    # sugar + carbonated
+    soda = "soda"
+    ginger_ale = "ginger_ale"
+
+    # caffeine, and what gets added to it
+    coffee = "coffee"
+    latte = "latte"
+    sweet_coffee = "sweet_coffee"
+    mocha = "mocha"
+    frappe = "frappe"
+    diet_energy_drink = "diet_energy_drink"
+    zevia = "zevia"
+    energy_drink = "energy_drink"
+    cola = "cola"
+
+    # milk
+    lowfat_milk = "lowfat_milk"
+    whole_milk = "whole_milk"
+    protein_shake = "protein_shake"
+    chocolate_milk = "chocolate_milk"
+
+    # electrolyte
+    electrolyte_tab = "electrolyte_tab"
+    gatorade = "gatorade"
+
+    # alcohol
+    liquor = "liquor"
+    dry_wine = "dry_wine"
+    beer = "beer"
+    hard_seltzer = "hard_seltzer"
+    cocktail = "cocktail"
+    sweet_wine = "sweet_wine"
+    rum_and_coke = "rum_and_coke"
+    cider = "cider"
+
+
 class MealSize(StrEnum):
     """Roughly calories, and deliberately not calories.
 
@@ -520,6 +689,82 @@ class MealSize(StrEnum):
     small = "small"
     medium = "medium"
     large = "large"
+
+
+class MealPreset(StrEnum):
+    """What the meal was, for the meals that are the same meal every time.
+
+    The identity half of the meal log, and the exact counterpart of
+    `DrinkName` -- read that docstring for why identity and composition are
+    kept apart. Nothing scores a preset; `diet_quality` reads `quality` and the
+    energy balance reads `size`, both of which a preset merely *fills in*.
+
+    That filling-in is the whole point. A preset is a shortcut through the two
+    questions below it and the flags beside them, and every field it writes
+    stays editable afterwards, so this is the fast path rather than a
+    different way of answering. The cost is that a preset makes its quality
+    score a decision taken once rather than a judgement made per meal -- which
+    is an improvement: the same plate is now the same number every time, and
+    the drift that a hand-scored 4-or-5 accumulates over a camp is gone.
+
+    Not a CHECK on the table, for the reason `DrinkName` gives and more so:
+    this is the list most likely to be edited, because it is a list of what he
+    actually eats.
+    """
+
+    chicken_broccoli_sweet_potato = "chicken_broccoli_sweet_potato"
+    chicken_rice = "chicken_rice"
+    scrambled_eggs = "scrambled_eggs"
+    eating_out = "eating_out"
+    trail_mix = "trail_mix"
+    protein_shake = "protein_shake"
+    banana = "banana"
+    apple = "apple"
+
+
+class MealFlag(StrEnum):
+    """What was in it -- the composition half, and a set, exactly as
+    `DrinkTag` is.
+
+    Four, and the shortness is the design. `quality` already carries one axis
+    (how processed) and `size` carries another (how much); these are the
+    things neither can see, and a fifth would be a thing answered by habit
+    rather than by looking at the plate.
+
+    `snack` is the one that does work beyond being recorded. Three logged
+    apples must not satisfy "eat three meals", and without this flag they
+    would -- the required task counts rows. It is a flag rather than an
+    inference from `size`, because a small meal during a cut is still a meal
+    and would be wrongly excluded by any rule keyed on size.
+
+    `salty` earns its place off the training rather than the diet: sodium is
+    the input that decides whether the fluid actually went anywhere, and on a
+    camp with a weight cut at the end of it that is a question worth being able
+    to ask backwards.
+
+    `fried` is not the same question as `quality`. Quality is *processing* --
+    a fried egg cooked at home is a 4 and is fried. One is about where the food
+    came from and the other about what happened to it in the pan.
+
+    Nothing scores these yet, which is the same bet `carbonated` is: they are
+    free to record now and impossible to recover later.
+    """
+
+    protein = "protein"
+    fried = "fried"
+    snack = "snack"
+    salty = "salty"
+
+
+def canonical_flags(flags: Iterable[str]) -> list[MealFlag]:
+    """One meal's flags, deduplicated and put in `MealFlag` order.
+
+    The same function `canonical_tags` is, for the same reason: order decided
+    once, here, so a row written by the phone and a row written by a script
+    read back identically.
+    """
+    order = list(MealFlag)
+    return sorted({MealFlag(flag) for flag in flags}, key=order.index)
 
 
 class Game(StrEnum):

@@ -1705,10 +1705,10 @@ def test_a_meal_quality_outside_the_scale_is_a_422(client):
 
 def test_a_drink_comes_back_in_the_rebuilt_panel(client):
     panel = client.post(
-        "/api/drink", json={"date": DATE, "hour": 9, "tags": ["coffee"], "amount": 1.4}
+        "/api/drink", json={"date": DATE, "hour": 9, "tags": ["caffeine"], "amount": 1.4}
     ).json()
     assert [(e["at"], e["tags"], e["amount"]) for e in panel["drinks_today"]] == [
-        ("09:00", ["coffee"], 1.4)
+        ("09:00", ["caffeine"], 1.4)
     ]
 
 
@@ -1721,9 +1721,9 @@ def test_a_drink_with_no_tags_is_a_glass_of_water(client):
 
 def test_a_drink_can_carry_more_than_one_tag(client):
     panel = client.post(
-        "/api/drink", json={"date": DATE, "hour": 9, "tags": ["coffee", "sugar"], "amount": 1}
+        "/api/drink", json={"date": DATE, "hour": 9, "tags": ["caffeine", "sugar"], "amount": 1}
     ).json()
-    assert panel["drinks_today"][0]["tags"] == ["sugar", "coffee"]
+    assert panel["drinks_today"][0]["tags"] == ["sugar", "caffeine"]
 
 
 def test_tags_are_canonicalised_at_the_boundary(client):
@@ -1762,7 +1762,7 @@ def test_a_tag_nobody_has_defined_is_a_422(client):
 
 def test_deleting_a_drink_removes_it(client):
     panel = client.post(
-        "/api/drink", json={"date": DATE, "hour": 9, "tags": ["coffee"], "amount": 1}
+        "/api/drink", json={"date": DATE, "hour": 9, "tags": ["caffeine"], "amount": 1}
     ).json()
     entry_id = panel["drinks_today"][0]["id"]
     after = client.post(
@@ -1775,6 +1775,165 @@ def test_deleting_a_drink_that_is_gone_is_a_404(client):
     assert (
         client.post("/api/drink/delete", json={"date": DATE, "entry_id": 999}).status_code == 404
     )
+
+
+# --- one more level of detail, migration 33 ---------------------------------
+#
+# The three logs each grew an identity field and the meal log grew a set of
+# flags. What is tested below is mostly the *seams*: a name that does not have
+# to agree with its tags, a preset that the server refuses to expand, and a
+# focus that has to agree with its kind. Each of those is a decision that could
+# have gone the other way, and each fails silently if it is undone.
+
+
+def test_a_meal_can_say_which_meal_it_was(client):
+    panel = client.post(
+        "/api/meal",
+        json={"date": DATE, "hour": 12, "size": "large", "quality": 5,
+              "preset": "chicken_broccoli_sweet_potato", "flags": ["protein"]},
+    ).json()
+    entry = panel["meals_today"][0]
+    assert entry["preset"] == "chicken_broccoli_sweet_potato"
+    assert entry["flags"] == ["protein"]
+
+
+def test_a_meal_with_no_preset_and_no_flags_is_the_body_it_always_was(client):
+    """The whole compatibility claim of the change: the request that worked
+    before the fields existed still works, and reads back as saying nothing
+    rather than as missing something."""
+    panel = client.post(
+        "/api/meal", json={"date": DATE, "hour": 12, "size": "medium", "quality": 3}
+    ).json()
+    entry = panel["meals_today"][0]
+    assert entry["preset"] is None
+    assert entry["flags"] == []
+    assert entry["is_snack"] is False
+
+
+def test_the_server_does_not_expand_a_preset(client):
+    """A preset fills the other fields *on the client*. Expanding it here would
+    make what a preset means a thing that changes under rows already written,
+    the next time the table is edited -- so a body that names `apple` and calls
+    it large is stored as a large apple."""
+    panel = client.post(
+        "/api/meal",
+        json={"date": DATE, "hour": 12, "size": "large", "quality": 2, "preset": "apple"},
+    ).json()
+    entry = panel["meals_today"][0]
+    assert (entry["size"], entry["quality"], entry["flags"]) == ("large", 2, [])
+
+
+def test_meal_flags_are_canonicalised_at_the_boundary(client):
+    panel = client.post(
+        "/api/meal",
+        json={"date": DATE, "hour": 12, "size": "small", "quality": 5,
+              "flags": ["snack", "protein", "snack"]},
+    ).json()
+    assert panel["meals_today"][0]["flags"] == ["protein", "snack"]
+
+
+def test_a_snack_says_so(client):
+    panel = client.post(
+        "/api/meal",
+        json={"date": DATE, "hour": 16, "size": "small", "quality": 5, "flags": ["snack"]},
+    ).json()
+    assert panel["meals_today"][0]["is_snack"] is True
+
+
+def test_a_meal_preset_nobody_has_heard_of_is_a_422(client):
+    response = client.post(
+        "/api/meal",
+        json={"date": DATE, "hour": 12, "size": "large", "quality": 5, "preset": "sushi"},
+    )
+    assert response.status_code == 422
+
+
+def test_a_drink_can_say_which_drink_it_was(client):
+    panel = client.post(
+        "/api/drink",
+        json={"date": DATE, "hour": 20, "tags": ["alcohol", "carbonated"],
+              "amount": 2, "name": "beer"},
+    ).json()
+    entry = panel["drinks_today"][0]
+    assert entry["name"] == "beer"
+    assert entry["tags"] == ["alcohol", "carbonated"]
+
+
+def test_a_drink_name_need_not_agree_with_its_tags(client):
+    """Deliberately unvalidated. Which names the phone *offers* for a tag set
+    is a question about what is worth putting on a screen; making it a rule
+    here would refuse a beer logged by somebody who forgot to say carbonated,
+    which is a reasonable body and a real drink. The tags are the scored half
+    and they stand on their own."""
+    panel = client.post(
+        "/api/drink", json={"date": DATE, "hour": 20, "tags": ["alcohol"],
+                            "amount": 1, "name": "beer"},
+    ).json()
+    assert panel["drinks_today"][0]["name"] == "beer"
+
+
+def test_a_drink_with_no_name_is_some_drink_like_that(client):
+    panel = client.post(
+        "/api/drink", json={"date": DATE, "hour": 9, "tags": ["sugar"], "amount": 1}
+    ).json()
+    assert panel["drinks_today"][0]["name"] is None
+
+
+def test_carbonated_is_a_tag_now(client):
+    panel = client.post(
+        "/api/drink", json={"date": DATE, "hour": 9, "tags": ["carbonated"], "amount": 1}
+    ).json()
+    assert panel["drinks_today"][0]["tags"] == ["carbonated"]
+
+
+def test_coffee_is_no_longer_a_tag(client):
+    """It named a drink where every other tag names a substance, which left an
+    energy drink with nowhere to record its caffeine. It is a `DrinkName` now."""
+    response = client.post(
+        "/api/drink", json={"date": DATE, "hour": 9, "tags": ["coffee"], "amount": 1}
+    )
+    assert response.status_code == 422
+
+
+def test_a_session_can_say_what_it_was(client):
+    panel = client.post(
+        "/api/session",
+        json={"date": DATE, "kind": "roadwork", "rpe": 5, "minutes": 40,
+              "focus": "cardio.steady.stairmaster"},
+    ).json()
+    assert panel["sessions_today"][0]["focus"] == "cardio.steady.stairmaster"
+
+
+def test_a_session_focus_that_contradicts_its_kind_is_a_422(client):
+    """The one invariant holding the two columns together. Without it the load
+    model would read `boxing` off a row whose leaf says it was a run, and the
+    disagreement would be invisible -- nothing reads both."""
+    response = client.post(
+        "/api/session",
+        json={"date": DATE, "kind": "boxing", "rpe": 5, "minutes": 40,
+              "focus": "cardio.steady.run"},
+    )
+    assert response.status_code == 422
+
+
+def test_a_session_focus_nobody_has_heard_of_is_a_422(client):
+    """The reason the vocabulary is enforced here rather than by a CHECK: a
+    typo in the tree would otherwise write a category that exists in one row
+    and is never seen again."""
+    response = client.post(
+        "/api/session",
+        json={"date": DATE, "kind": "roadwork", "rpe": 5, "minutes": 40,
+              "focus": "cardio.steady.jetski"},
+    )
+    assert response.status_code == 422
+
+
+def test_a_session_with_no_focus_is_the_body_it_always_was(client):
+    panel = client.post(
+        "/api/session", json={"date": DATE, "kind": "boxing", "rpe": 6, "minutes": 60}
+    ).json()
+    assert panel["sessions_today"][0]["focus"] is None
+
 
 
 def test_the_quick_logs_are_quiet_until_they_have_history(client):

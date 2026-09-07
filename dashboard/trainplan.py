@@ -45,7 +45,7 @@ from pathlib import Path
 
 from pydantic import Field, model_validator
 
-from .models.common import Base, SessionKind
+from .models.common import SESSION_FOCUS, Base, SessionKind
 from .models.domain import PlanGroup, PrescribedBlock
 
 SUNDAY = 6
@@ -94,6 +94,23 @@ class Exercise(Base):
     do" later requires the difference to have been recorded at the time.
     """
 
+    focus: str | None = None
+    """Which leaf of the session tree a log of this is, where the plan knows.
+
+    The reason the phone can prefill the whole path: `LFC` is
+    `strength.vjp.lower_french_contrast`, so answering that block asks nothing
+    about what it was -- three rows of buttons collapse to none, because a
+    question with one legal answer is not a question.
+
+    Optional and blank for most tokens. A block with a `kind` and no focus
+    still logs exactly as it did; the tree simply opens at the level the kind
+    fixes. Never set on a `choose` token, where the whole point is that what
+    you did is unknown until you say.
+
+    Validated against `SESSION_FOCUS` at load, so a typo here is a plan that
+    refuses to compile rather than a session that posts a 422 from a gym.
+    """
+
     param: str | None = Field(default=None, pattern=r"^(deciminutes|index)$")
     """What a numeric suffix means. `deciminutes` -- `A3` is 30 minutes -- or
     `index`, which just numbers a progression (`C2` is core 2)."""
@@ -107,6 +124,28 @@ class Exercise(Base):
             raise ValueError(
                 f"{self.name!r}: set exactly one of `kind` or `choose`, not both and not neither"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _focus_is_a_leaf_of_this_kind(self) -> Exercise:
+        """A focus has to exist, and has to agree with the kind beside it.
+
+        Checked here, at load, rather than left to the request model. The plan
+        is read once at startup and every session logged against it carries the
+        same focus, so a typo caught here is one message on a laptop and a typo
+        caught there is a block that cannot be logged, discovered in a gym.
+        """
+        if self.focus is None:
+            return self
+        implied = SESSION_FOCUS.get(self.focus)
+        if implied is None:
+            raise ValueError(f"{self.name!r}: {self.focus!r} is not a session focus")
+        if self.kind is not None and implied is not self.kind:
+            raise ValueError(
+                f"{self.name!r}: {self.focus!r} is {implied.value}, not {self.kind.value}"
+            )
+        if self.choose:
+            raise ValueError(f"{self.name!r}: a `choose` token cannot name a focus")
         return self
 
 
@@ -476,6 +515,7 @@ def _block(
         label=ask.exercise.label,
         kind=ask.exercise.kind,
         choose=ask.exercise.choose,
+        focus=ask.exercise.focus,
         asks=ask.asks,
         detail=ask.exercise.detail,
         slot=slot,

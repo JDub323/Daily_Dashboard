@@ -328,8 +328,8 @@ in this log is water with something in it: a plain glass carries no tags at
 all, so a list of the tags that *do* hydrate would have nothing to say about
 the commonest row in the table.
 
-Coffee counts, which surprises people. The diuretic effect of caffeine is real
-and it is smaller than the water the coffee arrives in; net, a mug hydrates.
+Caffeine counts, which surprises people. The diuretic effect is real and it is
+smaller than the water it arrives in; net, a mug hydrates.
 Alcohol is out for the opposite reason and also for a duller one: its unit is
 not a volume at all, so there is no honest number to add. It excludes the whole
 row rather than its share of it -- a rum and coke is alcohol and sugar, and the
@@ -340,7 +340,7 @@ MIN_DRINK_DAYS = 5
 drinks logged has a mean, and the mean is a statement about which two days you
 remembered rather than about how much you drank."""
 
-# Deliberately absent: how much coffee is a lot, and how much alcohol is worth
+# Deliberately absent: how much caffeine is a lot, and how much alcohol is worth
 # mentioning. Both are editorial -- what is worth a sentence -- rather than
 # measurement, and those live in `panels/health.js` beside `SLEEP_FLOOR` and
 # `QUALITY_FLAG`, which are the same kind of number. This file computes; that
@@ -470,7 +470,7 @@ def fluid_mean(logs: Sequence[d.DrinkLog], today: dt.date) -> float | None:
 
 
 def caffeine_mean(logs: Sequence[d.DrinkLog], today: dt.date) -> float | None:
-    """Mean drinks of coffee a day this week.
+    """Mean caffeinated drinks a day this week.
 
     Over logged days rather than over all seven, so a weekend away does not
     read as two days of abstinence you did not actually manage.
@@ -478,7 +478,7 @@ def caffeine_mean(logs: Sequence[d.DrinkLog], today: dt.date) -> float | None:
     if drink_logged_days(logs, today) < MIN_DRINK_DAYS:
         return None
     days = [
-        sum(entry.amount for entry in entries if "coffee" in entry.tags)
+        sum(entry.amount for entry in entries if "caffeine" in entry.tags)
         for entries in _by_day(logs, today, ACUTE_DAYS).values()
         if entries
     ]
@@ -581,6 +581,11 @@ def diet_quality(meals: Sequence[d.MealLog], today: dt.date) -> float | None:
     Over *meals*, not over days, because that is the thing you can act on: two
     good dinners do not undo five days of bad lunches, and a mean of daily
     means would let them.
+
+    Snacks included, unlike in `_meal_rows`. The two ask different questions:
+    that one asks whether the log was kept, and a snack is not a meal; this one
+    asks how whole the food was, and an apple is an honest 5. Excluding them
+    here would score a week of fruit as though it had not been eaten.
     """
     start = today - dt.timedelta(days=ACUTE_DAYS - 1)
     scores = [entry.quality for entry in meals if start <= entry.date <= today]
@@ -767,7 +772,7 @@ target -- he eats three times a day, so a day with two rows in it is a day with
 a row missing. `chips.js` carries the same number for the same reason."""
 
 CAFFEINE_CEILING = 6.0
-"""Drinks of coffee a day at which the caffeine input scores zero. Double the
+"""Caffeinated drinks a day at which the caffeine input scores zero. Double the
 sentence's flag of three, because this is a slope rather than a warning: the
 flag is where the number becomes worth *saying*, not where it becomes bad."""
 
@@ -1142,8 +1147,21 @@ def load_score(
 
 
 def _meal_rows(meals: Sequence[d.MealLog], today: dt.date) -> int:
+    """This week's meals, not counting snacks.
+
+    Snacks are excluded because this number is scored against
+    `ACUTE_DAYS * MEALS_A_DAY` -- twenty-one *meals* -- and it is the input
+    that says whether the log was kept at all. An apple counted here would
+    read as a meal that was eaten, and a week of logged snacks with the
+    dinners missing from it would score as a complete log, which is precisely
+    the failure `fuel_score` exists to make visible.
+
+    They are still food, and still counted everywhere the question is about
+    intake rather than about completeness: `MEAL_KCAL` sums them into the
+    energy balance and `diet_quality` averages their quality.
+    """
     start = today - dt.timedelta(days=ACUTE_DAYS - 1)
-    return sum(1 for entry in meals if start <= entry.date <= today)
+    return sum(1 for entry in meals if start <= entry.date <= today and not entry.is_snack)
 
 
 def fuel_score(
@@ -1246,7 +1264,7 @@ def hydration_score(
     Caffeine and alcohol are here because they are the cheapest explanations
     for the bar next door. Both land on HRV and on deep sleep, and a week where
     recovery is down and these two are why is a week whose useful sentence is
-    about coffee rather than about training.
+    about caffeine rather than about training.
     """
     target = BASE_FLUID_ML + (sweat or 0.0)
     darkness = _week_darkness(visits, today)

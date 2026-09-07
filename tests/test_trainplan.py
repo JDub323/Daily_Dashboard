@@ -179,6 +179,75 @@ def test_an_exercise_sets_exactly_one_of_kind_or_choose() -> None:
             trainplan.Exercise(name="x", label="x", **entry)
 
 
+def test_a_token_can_name_the_leaf_of_the_session_tree_it_is() -> None:
+    """What lets the phone prefill the whole path. `LFC` is
+    `strength.vjp.lower_french_contrast`, so answering that block asks nothing
+    at all about what it was -- three rows of buttons collapse to none, because
+    a question with one legal answer is not a question."""
+    exercise = trainplan.Exercise(
+        name="lower french contrast",
+        label="strength training",
+        kind="strength",
+        focus="strength.vjp.lower_french_contrast",
+    )
+    assert exercise.focus == "strength.vjp.lower_french_contrast"
+
+
+def test_a_focus_that_is_not_a_leaf_refuses_to_load() -> None:
+    """Caught here rather than at the request boundary, and that is the whole
+    value of checking it twice: the plan is read once at startup, so a typo
+    found here is a message on a laptop, and the same typo found there is a
+    block that cannot be logged, discovered in a gym."""
+    with pytest.raises(ValidationError, match="not a session focus"):
+        trainplan.Exercise(name="x", label="x", kind="strength", focus="strength.vjp.squats")
+
+
+def test_a_focus_that_contradicts_its_kind_refuses_to_load() -> None:
+    with pytest.raises(ValidationError, match="is roadwork, not strength"):
+        trainplan.Exercise(name="x", label="x", kind="strength", focus="cardio.steady.run")
+
+
+def test_a_choose_token_cannot_name_a_focus() -> None:
+    """`library.A` is the one token whose whole point is that what you did is a
+    real question. A focus on it would be the plan answering the question it
+    exists to ask."""
+    with pytest.raises(ValidationError, match="cannot name a focus"):
+        trainplan.Exercise(name="x", label="x", choose=["roadwork"], focus="cardio.steady.run")
+
+
+def test_a_token_without_a_focus_still_loads() -> None:
+    """Optional, and blank for most tokens. A block with a kind and no focus
+    logs exactly as it did before the field existed; the tree just opens at the
+    level the kind fixes."""
+    assert trainplan.Exercise(name="x", label="x", kind="strength").focus is None
+
+
+def test_the_focus_reaches_the_prescribed_block() -> None:
+    """It has to cross into `PrescribedBlock` for the phone to ever see it."""
+    library = {**LIB["library"]}
+    library["LFC"] = {**library["LFC"], "focus": "strength.vjp.lower_french_contrast"}
+    plan = trainplan.Program(
+        name="t",
+        start=SUNDAY,
+        weeks=4,
+        library=library,
+        block=[{"weeks": "0", "sun": "LFC"}],
+    )
+    blocks = trainplan.prescription(plan, SUNDAY)
+    assert [b.focus for b in blocks] == ["strength.vjp.lower_french_contrast"]
+
+
+def test_the_real_plan_names_a_focus_wherever_it_knows_one() -> None:
+    """The plan on disk, not a fixture. Every library token that names a kind
+    should also name the leaf, because the whole benefit is a prescribed block
+    that asks nothing -- and a token quietly missing one is a block that starts
+    asking three questions again with no error anywhere."""
+    plan = trainplan.load_program(project_root() / "training.toml")
+    assert plan is not None
+    silent = [key for key, ex in plan.library.items() if ex.kind and not ex.focus]
+    assert silent == []
+
+
 # --- the calendar ----------------------------------------------------------
 
 

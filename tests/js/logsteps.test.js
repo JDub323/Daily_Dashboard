@@ -29,10 +29,17 @@ import {
   BATHROOM_STEPS as BATHROOM,
   DRINK_STEPS as DRINKS,
   MEAL_STEPS as MEALS,
+  missingSteps,
   parseAmount,
+  stepOptions,
 } from "../../web/app/logs.js";
 
 const names = (steps) => steps.map((s) => s.name);
+
+/** A step by name. The tables have grown optional rows in the middle of them,
+ *  so positional destructuring — which is how this file used to reach the
+ *  amount box — now silently picks up whatever was inserted above it. */
+const step = (steps, name) => steps.find((s) => s.name === name);
 
 describe("the bathroom branch", () => {
   it("asks kind first, before it can know which branch it is on", () => {
@@ -61,17 +68,35 @@ describe("the bathroom branch", () => {
 
 describe("the meal ladder", () => {
   it("has no branch at all", () => {
-    assert.deepEqual(names(applicableSteps(MEALS, {})), ["size", "quality"]);
-    assert.deepEqual(names(applicableSteps(MEALS, { size: "large" })), ["size", "quality"]);
+    // Four questions now and still no `when` on any of them: the preset row
+    // and the flag row are always drawn, whatever has been answered. That is
+    // the difference between an *optional* question and a *conditional* one,
+    // and the meal log has only the first kind.
+    const asked = ["preset", "size", "quality", "flags"];
+    assert.deepEqual(names(applicableSteps(MEALS, {})), asked);
+    assert.deepEqual(names(applicableSteps(MEALS, { size: "large" })), asked);
+    assert.deepEqual(names(applicableSteps(MEALS, { preset: "apple" })), asked);
   });
 
-  it("costs three keystrokes counting the one that opens it", () => {
-    assert.equal(applicableSteps(MEALS, {}).length + 1, 3);
+  it("still costs three taps counting the one that opens it", () => {
+    // The budget the whole feature is built against, and the number the two
+    // new rows were required not to change. They do not, because neither is
+    // required: `missingSteps` is what the commit button reads, and it counts
+    // two — size and quality — exactly as it did before they existed.
+    assert.equal(missingSteps(MEALS, {}).length + 1, 3);
+  });
+
+  it("costs one tap for a meal that is one of the usual ones", () => {
+    // What the preset row buys. Tapping it fills both required answers, so the
+    // entry is a tap to open, a tap to name it and a tap to log.
+    assert.deepEqual(missingSteps(MEALS, { size: "large", quality: 5 }).map((s) => s.name), []);
   });
 });
 
 describe("the drinks ladder", () => {
   it("asks what was in it, then how many, and nothing else", () => {
+    // With no tags there is no drink to name, so the middle step is not asked
+    // at all — the one conditional row in this log.
     assert.deepEqual(names(applicableSteps(DRINKS, {})), ["tags", "amount"]);
   });
 
@@ -84,21 +109,24 @@ describe("the drinks ladder", () => {
     assert.equal(tags.multi, true);
   });
 
-  it("offers no tag for water and none for gatorade", () => {
+  it("offers no tag for water, none for gatorade and none for coffee", () => {
     // Water is the untagged row — a tag true of every drink in the log tells
-    // you nothing about any of them — and gatorade is `electrolyte` and
-    // `sugar` together, which is now something a row can say directly. Either
-    // one offered here would post a body the server refuses with a 422.
-    const values = DRINKS[0].options.map(([, value]) => value);
-    assert.deepEqual(values, ["milk", "sugar", "electrolyte", "coffee", "alcohol"]);
+    // you nothing about any of them. Gatorade is `electrolyte` and `sugar`
+    // together, which a row can say directly. And `coffee` is now a *name*:
+    // it was the one tag that named a drink rather than a substance, which
+    // left an energy drink with nowhere to record its caffeine. Any of the
+    // three offered here would post a body the server refuses with a 422.
+    const values = stepOptions(step(DRINKS, "tags"), {}).map(([, value]) => value);
+    assert.deepEqual(values, [
+      "milk", "sugar", "electrolyte", "caffeine", "alcohol", "carbonated",
+    ]);
   });
 
   it("answers the common case with the amount alone", () => {
     // No tags is a glass of water, so the fastest entry is the amount and
     // nothing else — and the box arrives holding 1. That is the whole claim of
     // this log: the number is only typed when there is something to say.
-    const [, amount] = DRINKS;
-    assert.equal(parseAmount(amount.field.preset), 1);
+    assert.equal(parseAmount(step(DRINKS, "amount").field.preset), 1);
   });
 
   it("keeps its first question on the keyboard", () => {
@@ -107,7 +135,7 @@ describe("the drinks ladder", () => {
     // would answer while the ladder was up and do nothing at a card sitting
     // idle. `g` is the trap here, and it is why gatorade was ever `s`.
     const reserved = new Set(["h", "j", "k", "l", "i", "f", "g", "n"]);
-    for (const [key] of DRINKS[0].options) {
+    for (const [key] of stepOptions(step(DRINKS, "tags"), {})) {
       assert.ok(!reserved.has(key), `drinks ▸ tags binds ${key}, which never reaches the panel`);
     }
   });
@@ -144,15 +172,29 @@ describe("the amount box", () => {
 });
 
 describe("every step's keys", () => {
+  // A draft per log that reaches every option there is. One step's options are
+  // a function of the answers above it — the drink names — so an empty draft
+  // would check the tag row and silently check nothing at all on the row below
+  // it, which is the shape of hole this suite exists to close.
+  const drafts = {
+    bathroom: {},
+    meals: {},
+    drinks: { tags: ["milk"] },
+  };
+
   for (const [panel, steps] of [["bathroom", BATHROOM], ["meals", MEALS], ["drinks", DRINKS]]) {
     it(`are unique within each ${panel} step`, () => {
-      for (const step of steps) {
-        if (!step.options) continue;
-        const keys = step.options.map(([key]) => key);
+      for (const one of steps) {
+        // Null keys skipped rather than counted. Two rows carry no keys at all
+        // — the meal presets and the drink names — and that is deliberate:
+        // they are the two lists most likely to be edited, and eight arbitrary
+        // letters would be eight more things to keep unique for a surface that
+        // has no keyboard. A row of nulls is not eight options sharing a key.
+        const keys = stepOptions(one, drafts[panel]).map(([key]) => key).filter(Boolean);
         assert.equal(
           new Set(keys).size,
           keys.length,
-          `${panel} ▸ ${step.name} has a key on two options: ${keys.join(" ")}`,
+          `${panel} ▸ ${one.name} has a key on two options: ${keys.join(" ")}`,
         );
       }
     });
@@ -161,9 +203,9 @@ describe("every step's keys", () => {
       // `-` and `+` walk the hour from any step, so an option bound to one of
       // them would be unreachable in exactly the same silent way.
       const reserved = new Set(["-", "_", ",", "+", "=", "."]);
-      for (const step of steps) {
-        for (const [key] of step.options ?? []) {
-          assert.ok(!reserved.has(key), `${panel} ▸ ${step.name} binds the hour key ${key}`);
+      for (const one of steps) {
+        for (const [key] of stepOptions(one, drafts[panel])) {
+          assert.ok(!reserved.has(key), `${panel} ▸ ${one.name} binds the hour key ${key}`);
         }
       }
     });

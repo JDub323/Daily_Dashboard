@@ -58,6 +58,7 @@ import * as api from "./api.js";
 import { el, mount } from "./dom.js";
 import { focusPanel, markDone } from "./panel.js";
 import { weightToday } from "./panels/health.js";
+import { squareMeals } from "./logs.js";
 import { completionWrite, store } from "./store.js";
 
 /**
@@ -69,6 +70,12 @@ import { completionWrite, store } from "./store.js";
  * and the nudge that chases it have to mean the same number.
  */
 export const MEALS_A_DAY = 3;
+
+// Counted through `squareMeals`, which drops the rows flagged `snack`. Three
+// apples are three logged rows and are not three meals, and the chip saying
+// otherwise would mark a required task done on a day two meals went
+// unrecorded -- which is exactly the hole the required half of the day exists
+// to keep shut.
 
 
 /**
@@ -216,8 +223,8 @@ function tasks() {
       // a missing row, it reads as a light day, and `implied_lb_per_week` will
       // quietly believe it.
       id: "meals",
-      label: `meals (${Math.min(s.health.meals_today.length, MEALS_A_DAY)}/${MEALS_A_DAY})`,
-      done: s.health.meals_today.length >= MEALS_A_DAY,
+      label: `meals (${Math.min(squareMeals(s.health.meals_today).length, MEALS_A_DAY)}/${MEALS_A_DAY})`,
+      done: squareMeals(s.health.meals_today).length >= MEALS_A_DAY,
       panel: "health",
     },
 

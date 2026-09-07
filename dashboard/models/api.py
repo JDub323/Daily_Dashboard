@@ -24,14 +24,18 @@ from typing import Annotated
 from pydantic import Field, computed_field, model_validator
 
 from .common import (
+    SESSION_FOCUS,
     Base,
     BathroomKind,
     ChessOutcome,
+    DrinkName,
     DrinkTag,
     EntrySource,
     HealthMetric,
     InputState,
     MathOutcome,
+    MealFlag,
+    MealPreset,
     MealSize,
     Rating,
     Score,
@@ -40,6 +44,7 @@ from .common import (
     UrineColor,
     Url,
     Volume,
+    canonical_flags,
     canonical_tags,
 )
 from .domain import (
@@ -431,9 +436,47 @@ class SessionRequest(DateBody):
     minutes: int = Field(ge=1, le=600)
     note: str | None = Field(default=None, max_length=200)
 
+    focus: str | None = Field(default=None, max_length=64)
+    """What the session was, one level below `kind` -- a dotted leaf of
+    `SESSION_FOCUS`, or None where the tree was not walked that far.
+
+    Defaulted for the same reason `plan_key` is: the body that was posted
+    before this field existed is still a legal body, and declining to go a
+    level deeper is a real answer rather than a missing one."""
+
     plan_key: PlanKey = None
     """Which prescribed block this answers. Defaulted, so the freehand form --
     which stays -- posts exactly the body it always did."""
+
+    @model_validator(mode="after")
+    def _focus_agrees_with_kind(self) -> SessionRequest:
+        """A leaf implies its kind, and a body where the two disagree is
+        refused.
+
+        This is the only thing keeping the two columns honest, and it has to
+        live here: SQLite cannot express "this text implies that enum" without
+        the tree being hard-coded into the schema, which is the one thing
+        migration 33 set out to avoid.
+
+        Refusing rather than deriving `kind` from `focus`. Deriving would be
+        tidier and would quietly rewrite a field the caller stated -- and the
+        caller that states it is the plan, which names a kind for the block and
+        has the better claim to it. A contradiction here is a client bug, and a
+        client bug that silently produces a plausible row is one nobody finds.
+
+        The unknown-leaf case is refused too, and that is the whole reason the
+        vocabulary is enforced at the boundary rather than by a CHECK: a typo
+        in the tree would otherwise write a category that exists in exactly one
+        row and is never seen again.
+        """
+        if self.focus is None:
+            return self
+        implied = SESSION_FOCUS.get(self.focus)
+        if implied is None:
+            raise ValueError(f"{self.focus} is not a session focus")
+        if implied is not self.kind:
+            raise ValueError(f"{self.focus} is {implied.value}, not {self.kind.value}")
+        return self
 
 
 class BathroomRequest(DateBody):
@@ -472,7 +515,25 @@ class MealRequest(DateBody):
     quality: int = Field(ge=1, le=5)
     """1 = as processed as it gets, 5 = whole ingredients."""
 
+    preset: MealPreset | None = None
+    """Which of the usual meals this was, or None. A preset fills `size`,
+    `quality` and `flags` in on the client and then stops mattering -- it is
+    posted so the row can say what it was, not so the server can expand it.
+    Expanding it here would make a preset's meaning a thing that changes under
+    rows already written the next time the table above is edited."""
+
+    flags: list[MealFlag] = Field(default_factory=list, max_length=len(MealFlag))
+    """What was in it. Defaulted and canonicalised exactly as `DrinkRequest`
+    does its tags, and for the same reasons -- an empty list is a real answer,
+    and order is decided here so two clients cannot write the same meal two
+    ways."""
+
     note: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def canonicalise(self) -> MealRequest:
+        self.flags = canonical_flags(self.flags)
+        return self
 
 
 class DrinkRequest(DateBody):
@@ -489,9 +550,21 @@ class DrinkRequest(DateBody):
 
     Order and repeats are the client's business to get wrong and this model's
     to fix: `canonical_tags` below dedupes and sorts, so a phone that sends
-    `[coffee, sugar]` and a script that sends `[sugar, sugar, coffee]` write
+    `[caffeine, sugar]` and a script that sends `[sugar, sugar, caffeine]` write
     the same row. The `max_length` is the fat-finger guard the amount box has
-    -- there are five tags, and a body with fifty is not a drink."""
+    -- there are six tags, and a body with fifty is not a drink."""
+
+    name: DrinkName | None = None
+    """What it was, or None -- which is what "other" means on the phone and is
+    the ordinary answer.
+
+    Deliberately *not* validated against `tags`. The tree in `logs.js` decides
+    which names it offers for a given set of tags, and that is a question about
+    what is worth putting on a screen; making it a rule here would mean a
+    reasonable body -- a beer logged without remembering to say carbonated --
+    coming back a 422 for a disagreement about presentation. The tags are the
+    scored half and they stand on their own; the name adds to them and cannot
+    contradict them."""
 
     amount: float = Field(gt=0, le=20)
     """The bounds are the table's, restated here so a typo comes back as a 422
@@ -1329,7 +1402,7 @@ class HealthDerived(Base):
     this and still say something on a week it was not kept."""
 
     caffeine_drinks: float | None = None
-    """Mean drinks of coffee a day this week -- twelve ounces each."""
+    """Mean caffeinated drinks a day this week -- twelve ounces each."""
 
     alcohol_week: float | None = None
     """Standard drinks in the last seven days. A total, not a mean, and 0.0 is

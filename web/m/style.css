@@ -299,14 +299,6 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   box-shadow: inset 0 -1px 0 rgba(223,230,242,.14), inset 0 2px 6px rgba(0,0,0,.55);
   transform: translateY(1px);
 }
-/* Answered. Gold means "this is done" here exactly as it does on the
-   dashboard — the one colour in the palette that is about completion. */
-.opt.on {
-  color: var(--gold-text);
-  border-color: rgba(232,180,88,.45);
-  background: linear-gradient(180deg, rgba(232,180,88,.20), rgba(232,180,88,.04));
-  box-shadow: inset 0 -2px 0 var(--gold), inset 0 1px 0 rgba(255,255,255,.10);
-}
 /* Five of them, or ten. Orbitron's digits are the reason it is in this app —
    wide, flat-sided, evenly weighted — so the numeric rows get them at size. */
 .opt.num { font-size: var(--t-lede); letter-spacing: .04em; }
@@ -512,14 +504,6 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   cursor: pointer;
   touch-action: manipulation;
 }
-.tab.on {
-  color: var(--gold-text);
-  border-color: rgba(232,180,88,.30);
-  background: linear-gradient(180deg, rgba(232,180,88,.14), rgba(232,180,88,.02));
-  /* Underline on top here rather than beneath: the bar is at the foot of the
-     screen, so the edge that faces the content is the one that should light. */
-  box-shadow: inset 0 2px 0 var(--gold), inset 0 -1px 0 rgba(255,255,255,.08);
-}
 
 /* --- the toast --------------------------------------------------------------
    Above the tab bar rather than over it: the one thing it ever says is that a
@@ -581,3 +565,74 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   text-align: right;
 }
 .heard.cold { color: var(--gold-text); opacity: .8; text-align: left; }
+
+/* --- which tab you are on, in colour ---------------------------------------
+   The tab bar stays at the foot of the screen. What changes is that each log
+   owns a hue, and the hue is on screen in three places at once: the lit tab,
+   a hairline above the whole bar, and every answered cap in the panel above
+   it. Knowing which log you are in stops being something you read and becomes
+   something you cannot help noticing, which is the entire point -- this is a
+   screen used one-handed while doing something else, and the half-second spent
+   working out where you were was the most expensive half-second on it.
+
+   Set on `#shell` rather than on the bar, because the caps are what carry most
+   of the colour and they are three elements away from the tab that decides it.
+   One attribute at the top, `--tab` read all the way down.
+
+   Gold is now free to mean one thing. It used to mean both "this is the
+   selected answer" and "something here is stale" -- the hour resolved to
+   yesterday, the laptop not heard from since midnight -- and those are the two
+   messages on this screen that must never be confused. Selection has its own
+   colours now; gold is a warning and nothing else.
+
+   The hues are picked to be told apart at a glance in a dark room, and to have
+   some reason behind them rather than being five points on a wheel: food is
+   green, water is the cyan the app already uses for anything fluid, the
+   in-and-out log is clay, the morning check-in is the indigo of the hour
+   before it, and training is ember. All five are desaturated into the same
+   register as the rest of the palette -- this is a shift in hue, not a change
+   of skin. */
+
+#shell { --tab: var(--accent); --tab-text: var(--accent); }
+#shell[data-tab="meals"]    { --tab: #6fbf73; --tab-text: #9ad79e; }
+#shell[data-tab="drinks"]   { --tab: #5ccfe6; --tab-text: #8fe0f0; }
+#shell[data-tab="bathroom"] { --tab: #c98f5a; --tab-text: #dcb188; }
+#shell[data-tab="checkin"]  { --tab: #8f8fd6; --tab-text: #b3b3e6; }
+#shell[data-tab="session"]  { --tab: #d2705f; --tab-text: #e69a8c; }
+
+.tabs { border-top-color: color-mix(in srgb, var(--tab) 30%, transparent); }
+
+.tab.on {
+  color: var(--tab-text);
+  border-color: color-mix(in srgb, var(--tab) 30%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--tab) 14%, transparent),
+    color-mix(in srgb, var(--tab) 2%, transparent)
+  );
+  /* Underline on top here rather than beneath: the bar is at the foot of the
+     screen, so the edge that faces the content is the one that should light. */
+  box-shadow: inset 0 2px 0 var(--tab), inset 0 -1px 0 rgba(255,255,255,.08);
+}
+
+/* Answered. The tab's colour rather than gold -- see above. The geometry is
+   unchanged, so a cap reads as pressed by its shape before its hue, which
+   matters for the one viewer who cannot tell these five apart. */
+.opt.on {
+  color: var(--tab-text);
+  border-color: color-mix(in srgb, var(--tab) 45%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--tab) 20%, transparent),
+    color-mix(in srgb, var(--tab) 4%, transparent)
+  );
+  box-shadow: inset 0 -2px 0 var(--tab), inset 0 1px 0 rgba(255,255,255,.10);
+}
+
+/* The commit button takes it too. It is the largest thing on the panel and the
+   last thing looked at before a write, so it is the cheapest place to put a
+   second copy of "which log is this". */
+.go.commit:not(:disabled) {
+  border-color: color-mix(in srgb, var(--tab) 45%, transparent);
+  color: var(--tab-text);
+}

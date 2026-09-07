@@ -2117,7 +2117,13 @@ def _register(app: FastAPI) -> None:
     @app.post("/api/session")
     def session_add(cfg: Cfg, repo: Repo, body: api.SessionRequest) -> api.HealthPanel:
         repo.add_session(
-            body.date, body.kind, body.rpe, body.minutes, body.note, plan_key=body.plan_key
+            body.date,
+            body.kind,
+            body.rpe,
+            body.minutes,
+            body.note,
+            plan_key=body.plan_key,
+            focus=body.focus,
         )
         return state.health_panel(cfg, repo, body.date)
 
@@ -2168,7 +2174,15 @@ def _register(app: FastAPI) -> None:
 
     @app.post("/api/meal")
     def meal_add(cfg: Cfg, repo: Repo, body: api.MealRequest) -> api.HealthPanel:
-        repo.add_meal(body.date, body.hour, body.size, body.quality, body.note)
+        repo.add_meal(
+            body.date,
+            body.hour,
+            body.size,
+            body.quality,
+            body.note,
+            preset=body.preset,
+            flags=body.flags,
+        )
         return state.health_panel(cfg, repo, body.date)
 
     @app.post("/api/meal/delete")
@@ -2181,7 +2195,7 @@ def _register(app: FastAPI) -> None:
     def drink_add(cfg: Cfg, repo: Repo, body: api.DrinkRequest) -> api.HealthPanel:
         """One drink. `amount` is in drinks; the bounds are the request
         model's and the table's, which agree."""
-        repo.add_drink(body.date, body.hour, body.tags, body.amount)
+        repo.add_drink(body.date, body.hour, body.tags, body.amount, name=body.name)
         return state.health_panel(cfg, repo, body.date)
 
     @app.post("/api/drink/delete")

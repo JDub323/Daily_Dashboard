@@ -798,43 +798,106 @@ def test_a_drink_can_be_two_things_at_once(repo):
     """The whole reason the column became a table -- coffee with sugar in it
     was being filed as one or the other, and the sugar was the half that went
     missing."""
-    repo.add_drink(TODAY, 9, ["coffee", "sugar"], 1.0)
-    assert repo.drinks_on(TODAY)[0].tags == ["sugar", "coffee"]
+    repo.add_drink(TODAY, 9, ["caffeine", "sugar"], 1.0)
+    assert repo.drinks_on(TODAY)[0].tags == ["sugar", "caffeine"]
 
 
 def test_tags_come_back_in_one_order_however_they_went_in(repo):
     """`canonical_tags` order, not posting order and not whatever the join
     happens to yield: two rows of the same drink have to read the same."""
-    repo.add_drink(TODAY, 9, ["coffee", "sugar"], 1.0)
-    repo.add_drink(TODAY, 10, ["sugar", "coffee", "sugar"], 1.0)
+    repo.add_drink(TODAY, 9, ["caffeine", "sugar"], 1.0)
+    repo.add_drink(TODAY, 10, ["sugar", "caffeine", "sugar"], 1.0)
     assert [entry.tags for entry in repo.drinks_on(TODAY)] == [
-        ["sugar", "coffee"],
-        ["sugar", "coffee"],
+        ["sugar", "caffeine"],
+        ["sugar", "caffeine"],
     ]
 
 
 def test_drinks_are_appended_never_upserted(repo):
     first = repo.add_drink(TODAY, 9, [], 1.0)
-    second = repo.add_drink(TODAY, 9, ["coffee"], 1.0)
+    second = repo.add_drink(TODAY, 9, ["caffeine"], 1.0)
     assert first.id != second.id
     assert len(repo.drinks_on(TODAY)) == 2
 
     assert repo.delete_drink(first.id) is True
     assert repo.delete_drink(first.id) is False
-    assert [entry.tags for entry in repo.drinks_on(TODAY)] == [["coffee"]]
+    assert [entry.tags for entry in repo.drinks_on(TODAY)] == [["caffeine"]]
 
 
 def test_deleting_a_drink_takes_its_tags_with_it(repo, db):
     """Through ON DELETE CASCADE. Tags left behind would be inherited by
     whatever row SQLite next hands that id to."""
-    entry = repo.add_drink(TODAY, 9, ["sugar", "coffee"], 1.0)
+    entry = repo.add_drink(TODAY, 9, ["sugar", "caffeine"], 1.0)
     assert repo.delete_drink(entry.id) is True
     assert db.conn.execute("SELECT count(*) FROM drink_tag").fetchone()[0] == 0
 
 
+def test_a_meal_carries_a_preset_and_a_set_of_flags(repo):
+    """The meal log's half of migration 33. `preset` is identity, `flags` are
+    composition, and the two are stored the way the drink log stores the same
+    distinction -- a column and a table."""
+    repo.add_meal(
+        TODAY, 12, "large", 5, preset="chicken_broccoli_sweet_potato", flags=["protein"]
+    )
+    entry = repo.meals_on(TODAY)[0]
+    assert entry.preset == "chicken_broccoli_sweet_potato"
+    assert entry.flags == ["protein"]
+
+
+def test_meal_flags_come_back_in_one_order_however_they_went_in(repo):
+    """`canonical_flags`, exactly as `canonical_tags` does it next door: two
+    rows of the same meal have to read the same."""
+    repo.add_meal(TODAY, 12, "small", 5, flags=["snack", "protein"])
+    repo.add_meal(TODAY, 13, "small", 5, flags=["protein", "snack", "protein"])
+    assert [entry.flags for entry in repo.meals_on(TODAY)] == [
+        ["protein", "snack"],
+        ["protein", "snack"],
+    ]
+
+
+def test_a_meal_added_the_old_way_still_works(repo):
+    """Every positional call written before the two fields existed. They are
+    keyword-defaulted and sit after `note` for exactly this reason."""
+    entry = repo.add_meal(TODAY, 12, "medium", 3, "a note")
+    assert (entry.note, entry.preset, entry.flags, entry.is_snack) == ("a note", None, [], False)
+
+
+def test_deleting_a_meal_takes_its_flags_with_it(repo, db):
+    """Through ON DELETE CASCADE, the same guarantee `drink_tag` has. Flags
+    left behind would be inherited by whatever row SQLite next hands that id."""
+    entry = repo.add_meal(TODAY, 12, "small", 5, flags=["snack", "protein"])
+    assert repo.delete_meal(entry.id) is True
+    assert db.conn.execute("SELECT count(*) FROM meal_flag").fetchone()[0] == 0
+
+
+def test_a_drink_carries_a_name(repo):
+    entry = repo.add_drink(TODAY, 20, ["alcohol", "carbonated"], 2.0, name="beer")
+    assert entry.name == "beer"
+    assert repo.drinks_on(TODAY)[0].name == "beer"
+
+
+def test_a_drink_without_a_name_is_some_drink_like_that(repo):
+    repo.add_drink(TODAY, 9, ["sugar"], 1.0)
+    assert repo.drinks_on(TODAY)[0].name is None
+
+
+def test_a_session_carries_a_focus(repo):
+    repo.add_session(TODAY, SessionKind.roadwork, 5, 40, focus="cardio.steady.run")
+    assert repo.sessions_on(TODAY)[0].focus == "cardio.steady.run"
+
+
+def test_the_repository_does_not_police_the_focus_tree(repo):
+    """Trusted here on purpose. Whether a focus agrees with its kind is settled
+    at the request boundary, where the tree lives -- a Garmin import and a
+    hand-written script both reach this method, and neither should have to
+    carry the tree in order to log a run."""
+    repo.add_session(TODAY, SessionKind.boxing, 5, 40, focus="cardio.steady.run")
+    assert repo.sessions_on(TODAY)[0].focus == "cardio.steady.run"
+
+
 def test_drinks_come_back_in_time_order(repo):
     repo.add_drink(TODAY, 21, ["alcohol"], 2.0)
-    repo.add_drink(TODAY, 7, ["coffee"], 1.0)
+    repo.add_drink(TODAY, 7, ["caffeine"], 1.0)
     repo.add_drink(TODAY, 13, ["electrolyte", "sugar"], 1.5)
     assert [entry.hour for entry in repo.drinks_on(TODAY)] == [7, 13, 21]
 

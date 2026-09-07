@@ -78,36 +78,42 @@ fight = 2027-02-17
 name = "lower french contrast"
 label = "strength training"
 kind = "strength"
+focus = "strength.vjp.lower_french_contrast"
 detail = "VJP Monday. CNS work, vertical test, then the contrast circuit: band-resisted back squat clusters, drop jump, DB jump w/ pause, band-assisted jump, single-leg toes-up squat, ankle shuffle. 25s between cluster sets and exercises, 2 min between rounds."
 
 [library.UFC]
 name = "upper french contrast"
 label = "strength training"
 kind = "strength"
+focus = "strength.vjp.upper_french_contrast"
 detail = "VJP Tuesday. Med ball scoop/slam, iso bench pin press, then band-resisted close-grip bench clusters through the circuit. Optional 10-15 min explosive sport action at the end."
 
 [library.LC]
 name = "lower concentrics"
 label = "strength training"
 kind = "strength"
+focus = "strength.vjp.lower_concentrics"
 detail = "VJP Thursday. Box jump, iso calf raise, vertical test, then trap bar deadlift conc-only-drop, bulgarians, hip thrust, back extension. 30-45s between everything; loads 55-60% of 1RM."
 
 [library.UC]
 name = "upper concentrics"
 label = "strength training"
 kind = "strength"
+focus = "strength.vjp.upper_concentrics"
 detail = "VJP Friday. Med ball slam, rotation pass, pogo hops, then close-grip bench / 1-arm row / push-press / chin-up, all conc-only-drop, finishing on farmers walks."
 
 [library.P]
 name = "potentiation"
 label = "potentiation"
 kind = "strength"
+focus = "strength.vjp.potentiation"
 detail = "VJP's optional Sunday session, moved to Saturday. Explosive, low volume, nothing that needs recovering from."
 
 [library.VO2]
 name = "intervals"
 label = "intervals"
 kind = "conditioning"
+focus = "cardio.hiit.interval_run"
 detail = "Weeks 1-2: 15s at 70%, 60s rest, 6 reps; 2 min; repeat. Weeks 3-4: 10s at 75%, 45s rest, 6 reps; 2 min; repeat. Week 5: 5s at 80%, 60s rest, 6 reps."
 
 [library.A]
@@ -129,12 +135,14 @@ label = "neck"
 # bucket quietly inflates strength volume, and `kind` exists to answer "how much
 # of X did I actually do".
 kind = "other"
+focus = "other.neck"
 detail = "5 min cardio, slow neck rolls L/R, optional tspine/scaps/traps. Isometrics: flexion, extension, lateral L/R. Then 5-10 reps from failure on each, plus twists."
 
 [library.C]
 name = "core"
 label = "core"
 kind = "other"
+focus = "other.core"
 param = "index"
 detail = "The VJP core circuit, twice through."
 
@@ -142,6 +150,7 @@ detail = "The VJP core circuit, twice through."
 name = "1x20"
 label = "1x20"
 kind = "strength"
+focus = "strength.general.1x20"
 detail = "Sets of 20 on every basic movement of the body. Low volume, joint support, a deload rather than a session."
 
 # --- the parts of a club practice ---
@@ -158,11 +167,13 @@ detail = "Sets of 20 on every basic movement of the body. Low volume, joint supp
 name = "conditioning"
 label = "HIIT"
 kind = "conditioning"
+focus = "cardio.hiit.full"
 
 [library.TECH]
 name = "technique"
 label = "technique"
 kind = "boxing"
+focus = "boxing.shadowboxing"
 detail = "Shadowbox 4x2min/30s, full court drills, shadowbox with gloves, heavy bag."
 
 [library.SPAR]
@@ -173,6 +184,7 @@ label = "sparring"
 # equal RPE, and how much of it a camp contained is a question worth being able
 # to answer afterwards -- which folding it into `boxing` would make impossible.
 kind = "sparring"
+focus = "sparring.full"
 
 
 # --- standing commitments --------------------------------------------------

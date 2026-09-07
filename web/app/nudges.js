@@ -50,6 +50,7 @@
 import * as api from "./api.js";
 import { chipTasks } from "./chips.js";
 import { el } from "./dom.js";
+import { squareMeals } from "./logs.js";
 import { focusPanel } from "./panel.js";
 import { splashOpen } from "./splash.js";
 import { store } from "./store.js";
@@ -151,7 +152,11 @@ const RULES = [
     // Once each. Three named reminders that all repeat would be nine a day by
     // bedtime, and the third one is not more persuasive than the first.
     every: 24,
-    check: () => (store.state.health.meals_today.length > i ? null : `${meal} is not logged`),
+    // Snacks dropped, the same way the chip drops them: a nudge that stops
+    // asking about dinner because an apple was logged at four is a nudge that
+    // has stopped doing its job.
+    check: () =>
+      squareMeals(store.state.health.meals_today).length > i ? null : `${meal} is not logged`,
   })),
   {
     id: "required",
