@@ -187,11 +187,11 @@ describe("an answer that has gone stale", () => {
 });
 
 describe("the session tree", () => {
-  it("opens with the five umbrellas and nothing else", () => {
+  it("opens with the six umbrellas and nothing else", () => {
     const rows = focusLevels([]);
     assert.equal(rows.length, 1);
     assert.deepEqual(rows[0].options.map((n) => n.value), [
-      "boxing", "sparring", "cardio", "strength", "other",
+      "boxing", "sparring", "cardio", "strength", "sport", "other",
     ]);
   });
 

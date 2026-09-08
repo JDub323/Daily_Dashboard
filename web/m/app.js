@@ -61,6 +61,16 @@ import {
 // which is exactly what `GET /api/day` hands back, and it imports `logs.js` and
 // nothing else, which is what makes it legal here.
 import { dayTasks, optional, required, score } from "../app/day.js";
+// The week grid's arithmetic, with the week taken out of it: packing, the
+// drawn window, the twelve-hue table and the two clock conversions. Same
+// module the laptop draws its calendar from, which is the whole point —
+// the schedule below is one column of that grid rather than a second
+// implementation of it. It imports nothing, which is what makes it legal
+// here; `panels/calendar.js`, where it used to live, imports five things
+// that are not in the shell.
+import {
+  clock as atMinute, dayWindow, HUES, hueMap, pack, timedEvent,
+} from "../app/dayplan.js";
 // Where a todo row goes, and how its title is printed. Same argument, same
 // property: no DOM, no store, no imports at all.
 import {
@@ -237,10 +247,13 @@ const dayStale = () => left().stale;
  */
 let root = "home";
 
-/** Which log is open. */
-let tab = "meals";
+/** Which log is open. The first cap in the bar, which is the morning's: the
+ *  bar reads left to right through a day — check in, eat, drink, the
+ *  bathroom, train — and a lit tab that is not the leftmost one is the bar
+ *  and the screen disagreeing about where you are. */
+let tab = "checkin";
 
-/** Which of the day's three is open. Kept apart from `tab` so switching roots
+/** Which of the day's two is open. Kept apart from `tab` so switching roots
  *  twice comes back to where you were in each. */
 let dayTab = "todo";
 
@@ -563,7 +576,7 @@ const optsClass = (labels) =>
  * keyboard and a wizard that asks one question per screen is three taps and two
  * animations to say "a large clean meal".
  */
-function stepRow(step, draftValues, answer) {
+function stepRow(step, draftValues, answer, sheet = null) {
   // A `multi` step holds an array and a plain one holds a value. The two are
   // told apart by the step rather than by what is in the draft, because the
   // empty array — no tags, a glass of water — is a real answer and an
@@ -592,21 +605,60 @@ function stepRow(step, draftValues, answer) {
     else next.add(value);
     answer(step.name, options.map(([, v]) => v).filter((v) => next.has(v)));
   };
-  return el("div.q", null,
+
+  const caps = el(optsClass(options.map(([, , label]) => label)), null,
+    ...options.map(([, value, label]) =>
+      el("button.opt", {
+        class: isOn(value) ? "on" : "",
+        "aria-pressed": isOn(value),
+        text: label,
+        onclick: () => {
+          press(value);
+          // A row behind a button closes on the answer. It is a detour off the
+          // form and the tap that ends it is the tap that says so — leaving it
+          // open would put the four questions it just filled back below the
+          // fold, which is the thing being fixed.
+          if (sheet) sheet.close();
+        },
+      }),
+    ),
+  );
+
+  // The ordinary row: every answer on screen, all the time. Nine rows out of
+  // ten, and the default for the reason the head of this file gives — a
+  // question you have to open is a question you have to notice.
+  if (!sheet) {
+    return el("div.q", null,
+      el("div.q-head", null,
+        el("span.q-name", { text: step.name }),
+        step.hint ? el("span.q-hint", { text: step.hint }) : null,
+      ),
+      caps,
+    );
+  }
+
+  // The row behind a button. One question earns this and it is the meal
+  // presets: eight caps in a three-across grid is three rows and about a third
+  // of the panel, spent on a shortcut you take perhaps twice a day, sitting
+  // *above* the three questions every meal has to answer. So it collapses to
+  // one control, which either offers the shortcut or says which one you took.
+  //
+  // The label carries the state rather than a caption beside it — a button
+  // reading "chicken + rice" is the answer and the way to change it, and the
+  // row underneath is gone until you ask for it.
+  const chosen = options.find(([, value]) => isOn(value));
+  return el("div.q.q-sheet", null,
     el("div.q-head", null,
       el("span.q-name", { text: step.name }),
-      step.hint ? el("span.q-hint", { text: step.hint }) : null,
+      step.hint && !chosen ? el("span.q-hint", { text: step.hint }) : null,
     ),
-    el(optsClass(options.map(([, , label]) => label)), null,
-      ...options.map(([, value, label]) =>
-        el("button.opt", {
-          class: isOn(value) ? "on" : "",
-          "aria-pressed": isOn(value),
-          text: label,
-          onclick: () => press(value),
-        }),
-      ),
-    ),
+    el("button.opt.sheet-open", {
+      class: chosen ? "on" : "",
+      "aria-expanded": sheet.open,
+      text: chosen ? chosen[2] : `use ${step.name}`,
+      onclick: sheet.toggle,
+    }),
+    sheet.open ? caps : null,
   );
 }
 
@@ -626,6 +678,14 @@ const fillsFor = (steps, name) => steps.find((step) => step.name === name)?.fill
  */
 function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
   let answers = {};
+  /** Which collapsed rows are showing their answers. A set rather than a
+   *  boolean because nothing says only one step per log may be a sheet — the
+   *  drink log's names are the obvious next one — and a second boolean here
+   *  would be the point at which this became a thing to get wrong.
+   *
+   *  Cleared on commit along with the answers: the next meal starts from the
+   *  same screen the last one did. */
+  let opened = new Set();
 
   return {
     id,
@@ -651,8 +711,23 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
         // happened on. `send` fills in today only when a body does not say.
         const body = { date: dateForHour(hour), hour, ...answers };
         answers = {};
+        opened = new Set();
         await send(path, body, label);
       };
+
+      /** The open/closed state of one collapsed row, or null for a row that
+       *  is not collapsed at all. */
+      const sheetFor = (step) => (step.sheet
+        ? {
+            open: opened.has(step.name),
+            toggle: () => {
+              if (opened.has(step.name)) opened.delete(step.name);
+              else opened.add(step.name);
+              draw();
+            },
+            close: () => { opened.delete(step.name); draw(); },
+          }
+        : null);
 
       // Answering only ever changes the selection. It used to *post* the moment
       // the last question was filled, which made the fastest possible entry —
@@ -682,7 +757,7 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
         ...asked.map((step) =>
           step.field
             ? amountRow(step, answers, answer)
-            : stepRow(step, answers, answer)),
+            : stepRow(step, answers, answer, sheetFor(step))),
         // Disabled rather than hidden while the entry is incomplete: a button
         // that appears when you finish is a button you have to notice, and one
         // that is greyed the whole time you are answering is a progress
@@ -828,7 +903,19 @@ function entryList(rows, describe, empty, { at = (e) => clock(e.hour), byKind, r
 /** `1`, `1.5`, `0.5` — never `1.00`, and never `0.30000000000000004`. */
 const say = (amount) => String(Math.round(amount * 100) / 100);
 
+/**
+ * The five, in the order the bar draws them — which is the order of a day.
+ *
+ * Check in, eat, drink, the bathroom, train. It was meal-first, on the honest
+ * argument that meals are logged more often than anything else and the
+ * commonest thing should be nearest the thumb. What that missed is that the
+ * bar is read as well as pressed: the caps are the app's only map of itself,
+ * and a map whose order means nothing is one you re-read every time. The
+ * morning is at the left, the evening is at the right, and where you are in
+ * the day tells you where in the bar to reach.
+ */
 const LOGS = [
+  checkinLog(),
   quickLog({
     id: "meals",
     label: "meal",
@@ -872,7 +959,6 @@ const LOGS = [
     describe: (e) => `${e.kind} · ${e.solidity ?? e.color} · ${e.volume}`,
     remove: { path: "/api/bathroom/delete", field: "entry_id" },
   }),
-  checkinLog(),
   sessionLog(),
 ];
 
@@ -951,7 +1037,12 @@ function checkinLog() {
               el("span.q-name", { text: name }),
               el("span.q-hint", { text: `1 ${low} · 5 ${high}` }),
             ),
-            el("div.opts", null,
+            // Five across rather than the three every other row gets, so the
+            // scale is one row and reads as a scale. At three it wrapped to
+            // `1 2 3` over `4 5`, which is the one arrangement that makes a
+            // five-point answer look like two different questions — and five
+            // caps is five screenfuls of check-in turned into one.
+            el("div.opts.opts-5", null,
               ...[1, 2, 3, 4, 5].map((n) =>
                 el("button.opt.num", {
                   class: shown === n ? "on" : "",
@@ -1177,11 +1268,17 @@ function sessionLog() {
                 // `asks` is printed and never pre-filled, exactly as on the
                 // laptop — load is rpe x minutes and both halves are things you
                 // measure rather than things the plan decides.
-                el("span.q-hint", {
-                  text: block
-                    ? [block.name, block.kind, block.asks].filter(Boolean).join(" · ")
-                    : "what today asked for",
-                }),
+                //
+                // Nothing before one is picked. It read "what today asked for",
+                // which is a caption restating its own heading: the row is
+                // called `on the plan` and its buttons are the blocks, so the
+                // sentence was a line of type that could only be read and
+                // never acted on.
+                block
+                  ? el("span.q-hint", {
+                      text: [block.name, block.kind, block.asks].filter(Boolean).join(" · "),
+                    })
+                  : null,
               ),
               el(optsClass([...open.map((b) => b.label), "something else"]), null,
                 ...open.map((b) =>
@@ -1215,11 +1312,15 @@ function sessionLog() {
         // about every single time.
         ...rows.map((row, depth) =>
           el("div.q", null,
+            // No hint. It used to say "cardio is two kinds — say which" on the
+            // first row until a kind was reached, which is a sentence about
+            // one of six buttons printed above all six of them — and the row
+            // it is about answers the question by simply appearing underneath
+            // the moment cardio is tapped. The commit button already refuses
+            // an unfinished path, which is the same fact said at the moment it
+            // applies rather than the whole time it does not.
             el("div.q-head", null,
               el("span.q-name", { text: row.depth ? "which" : "what" }),
-              row.depth === 0 && !kind
-                ? el("span.q-hint", { text: "cardio is two kinds — say which" })
-                : null,
             ),
             el(optsClass(row.options.map((node) => node.label)), null,
               ...row.options.map((node) =>
@@ -1247,7 +1348,12 @@ function sessionLog() {
             // The anchor for whatever is selected. The ten of them at once is
             // a wall of words; the one you have chosen is the thing that stops
             // RPE 7 drifting into RPE 5 over a long camp.
-            el("span.q-hint", { text: session.rpe ? RPE_ANCHOR[session.rpe] : "1 nothing · 10 everything" }),
+            //
+            // Nothing before one is. The placeholder was "1 nothing · 10
+            // everything", which is what a row of caps numbered 1 to 10
+            // already says, and it was on screen for the whole of every
+            // session that had not reached this row yet.
+            session.rpe ? el("span.q-hint", { text: RPE_ANCHOR[session.rpe] }) : null,
           ),
           el("div.opts.opts-10", null,
             ...Array.from({ length: 10 }, (_, i) => i + 1).map((n) =>
@@ -1413,11 +1519,35 @@ function tickTodo(item) {
     : `“${shorten(item.title, item.subject)}” ticked — it is under “done”`);
 }
 
-/** One row of the list. A button, so the keyboard and a screen reader get it
- *  for free, with the tap guard over the top. */
-function todoRow(item, shortKey) {
+/**
+ * One row of the list. A button, so the keyboard and a screen reader get it
+ * for free, with the tap guard over the top.
+ *
+ * --- the subject, as colour -------------------------------------------------
+ *
+ * `hues` is the laptop's own subject colouring, off the same `hueMap` the week
+ * grid gives its calendars — one scheme across both devices and both screens,
+ * rather than three.
+ *
+ * It replaces a rail drawn in the tab's hue, which was orchid on every row
+ * because orchid is what `todo` means in the bar. That was a defensible rule
+ * and the wrong one here: every other screen in this app asks one question, so
+ * painting the whole of it one colour says which question you are answering.
+ * A todo list is the exception — it is six classes and a chore, and the thing
+ * you need to see from the doorway is *which* of them the next four rows are.
+ * A list where every row is the same colour is a list you have to read; a
+ * list where 380 is blue and Homework is green is one you skim.
+ *
+ * The alias key beside the title takes the same hue, so the rail and the three
+ * letters you actually typed say the same thing twice — which is what makes
+ * the colour learnable rather than decorative.
+ */
+function todoRow(item, shortKey, hues) {
+  const hue = item.subject ? hues.get(item.subject) : null;
   return el("button.todo", {
-    class: `${item.done ? "done" : ""}${item.queued ? " queued" : ""}`,
+    class: `${item.done ? "done" : ""}${item.queued ? " queued" : ""}`
+      + `${hue == null ? "" : " has-subject"}`,
+    style: hue == null ? null : `--hue:${hue}`,
     // The stored title, which is the one on the Google event, so what the row
     // is named after survives having its subject taken off the front.
     "aria-label": `${item.title} — ${item.done ? "mark as still to do" : "mark done"}`,
@@ -1477,7 +1607,11 @@ function addBox() {
   field.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); commit(); }
   });
-  return el("div.row", null, field, el("button.go.small", { text: "add", onclick: commit }));
+  // `.addbox` is the gap under it and nothing else. The box is a control and
+  // the heading below it is the top of the list — two different kinds of
+  // thing, an 8px `.row` margin apart, which read as one block with a line
+  // through it.
+  return el("div.row.addbox", null, field, el("button.go.small", { text: "add", onclick: commit }));
 }
 
 /** The todo list. */
@@ -1485,6 +1619,12 @@ function todoScreen() {
   if (!day) return [notRead("the list")];
   const rows = todoRows();
   const shortKey = keyFor(day.todo.aliases ?? []);
+  // Over every subject in the list rather than over the aliases in config, so
+  // an item whose class has since been removed from `[todo.subjects]` still
+  // gets a colour instead of falling to the default. Same rule the laptop's
+  // panel follows, for the same reason.
+  const hues = hueMap([...new Set(rows.map((i) => i.subject).filter(Boolean))]);
+  const row = (item) => todoRow(item, shortKey, hues);
   // Today's date and not the panel's, so a list cached yesterday re-groups
   // against the day you are standing in: what was "today" becomes "overdue"
   // on its own, which is the honest reading and the one that keeps a late
@@ -1498,11 +1638,11 @@ function todoScreen() {
     ...groups.map((group) =>
       section(
         group.overdue ? `overdue · ${group.items.length}` : dueLabel(group.date, today()),
-        group.items.map((i) => todoRow(i, shortKey)),
+        group.items.map(row),
         group.overdue ? "late" : "",
       )),
     undated.length ? section(`no date · ${undated.length}`,
-      undated.map((i) => todoRow(i, shortKey))) : null,
+      undated.map(row)) : null,
     !groups.length && !undated.length
       ? el("p.empty", { text: "nothing owed — add a line above" })
       : null,
@@ -1512,7 +1652,7 @@ function todoScreen() {
     finished.length
       ? el("details.done-box", null,
           el("summary", { text: `${finished.length} done` }),
-          ...finished.map((i) => todoRow(i, shortKey)))
+          ...finished.map(row))
       : null,
   ];
 }
@@ -1560,62 +1700,226 @@ function owedScreen() {
   ];
 }
 
-/** Today's schedule, and tomorrow's when today's has run out of laptop. */
+// --- the schedule, drawn to scale ---------------------------------------------
+//
+// This was a list: one line per event, in order, every line the same height.
+// Which answers "what is on today" and refuses the question actually being
+// asked, which is *when the gaps are*. Two lines reading `9am seminar` and
+// `7pm practice` look exactly like two lines reading `9am seminar` and `10am
+// practice`, and the difference between those two days is the whole day.
+//
+// So it is the laptop's week grid with six of the columns taken away. Same
+// module doing the arithmetic — `dayplan.js`, which is where that code moved
+// so this screen could have it — same packing for events that collide, same
+// hue per calendar, same line across the current time. What is different is
+// the policy, and there are two differences:
+//
+//   **The window fits the day.** The laptop clamps to 8am–8pm and exiles
+//   anything outside into edge strips, because a single 11:30pm event was
+//   making the whole home tab sixteen hours tall. Nothing here is competing
+//   for the space — it is one column in a screen you scroll — and an event in
+//   a strip is an event whose position has stopped meaning anything, which on
+//   a screen whose entire job is skimming is the thing it was there to say.
+//
+//   **One day, and it is today.** Tomorrow's events still arrive with the
+//   payload and are still *kept* — that is what makes the schedule survive a
+//   phone that has not reached the laptop since last night, and it is why the
+//   route sends two days at all. They are simply not drawn. A schedule you
+//   scroll past the end of to find tomorrow is a schedule with tomorrow in it;
+//   the question this screen is opened to answer is about the next few hours.
+
+/** How tall an hour is. The laptop's 0.42 gives 25px, which is right for
+ *  seven columns beside a year heatmap and is two-thirds of a line of text
+ *  here — a 50-minute class would have had nowhere to put its own name. At
+ *  0.8 an hour is 48px, a 50-minute block is 40px and holds a time and a
+ *  title, and a twelve-hour day is 576px: one long thumb-scroll. */
+const AG_PX_PER_MIN = 0.8;
+
+/** The height at which a block has room for a second line, derived from the
+ *  scale rather than fixed in minutes — the question is how many pixels the
+ *  block has, and a minutes threshold quietly means something else every time
+ *  the scale moves. */
+const AG_TWO_LINE_PX = 34;
+
+/**
+ * How many lines of title a block of a given height can hold.
+ *
+ * Clipping is what a fixed-height box does to text by default, and what it
+ * clips is a *fraction of a line* — a 40-minute block gives its title 1.6
+ * lines, so you get one line and the top third of the letters of the next,
+ * which reads as a rendering fault rather than as a title that was too long.
+ * An ellipsis on a whole line reads as what it is.
+ *
+ * The two constants are the block's own type: `.ag-event` is 12px on 1.25, so
+ * a line is 15px, and above the title sit 4px of padding and the 9px time
+ * stamp on the same leading — call it 16px before the first line starts. Both
+ * are here rather than measured because measuring means a layout read per
+ * block per redraw, and these move only when the stylesheet does.
+ */
+const AG_LINE_PX = 15;
+const AG_TITLE_TOP_PX = 16;
+const agLines = (px) => Math.max(1, Math.floor((px - AG_TITLE_TOP_PX) / AG_LINE_PX));
+
+/** The shortest window worth drawing, in minutes.
+ *
+ *  A day with one half-hour appointment spans one hour once it is rounded out,
+ *  and a 48px grid with a 24px block in it does not read as a day at all —
+ *  it reads as a mistake. Four hours is enough for the block to sit in
+ *  something, and it is what the extra empty grid is *for*: the emptiness is
+ *  the information. */
+const AG_MIN_SPAN = 4 * 60;
+
+/** `HH:MM` now, for the one comparison the past-dimming makes. */
+const nowHM = (d = new Date()) =>
+  `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+
+/** One calendar's hue, or the first of the twelve for a row that came back
+ *  without a calendar column. */
+const hueOf = (hues, event) => hues.get(event.calendar) ?? HUES[0];
+
+/**
+ * The all-day row, above the grid.
+ *
+ * Kept, though it is the part of this screen that has the weakest claim to
+ * the space: a holiday and a homework deadline have no hour, so they cannot
+ * be drawn to scale, and most of what lands here is already a row on the todo
+ * tab. It stays because *most* is not all — a shared course calendar's
+ * all-day rows never become todos — and one wrapped line of chips costs the
+ * grid under it nothing.
+ */
+function allDayRow(rows, hues) {
+  if (!rows.length) return null;
+  return el("div.ag-allday", null,
+    el("span.ag-allday-at", { text: "all day" }),
+    el("div.ag-chips", null,
+      ...rows.map((e) =>
+        el("span.ag-chip", { style: `--hue:${hueOf(hues, e)}`, text: e.title })),
+    ),
+  );
+}
+
+/** The hour labels down the left, one per hour of the drawn window. */
+const agRuler = (open, close) => {
+  const rows = [];
+  for (let m = open; m <= close; m += 60) {
+    rows.push(el("div.ag-hour", {
+      style: `top:${(m - open) * AG_PX_PER_MIN}px`,
+      text: atMinute(m),
+    }));
+  }
+  return rows;
+};
+
+/**
+ * The line across now.
+ *
+ * Only when it falls inside the drawn window, on the laptop's argument: a line
+ * pinned to the top edge at seven in the morning is a line claiming it is
+ * eight. Since the window here fits the day's own events, that means it is
+ * absent before the first thing and after the last, which is correct — at
+ * those hours "where am I in the day" has an answer the grid cannot draw and
+ * the empty screen above or below it already gives.
+ */
+function agNow(open, close) {
+  const now = new Date();
+  const mins = now.getHours() * 60 + now.getMinutes();
+  if (mins < open || mins > close) return null;
+  return el("div.ag-now", { style: `top:${(mins - open) * AG_PX_PER_MIN}px` });
+}
+
+/** Today's schedule, drawn against the clock. */
 function agendaScreen() {
   if (!day) return [notRead("the schedule")];
   const { events, stale } = left();
-  const byDay = new Map();
-  for (const e of events) {
-    if (!byDay.has(e.date)) byDay.set(e.date, []);
-    byDay.get(e.date).push(e);
+  // Today's alone. After a rollover this is what the route sent as *tomorrow*
+  // — which is the whole reason it sends two days, and the reason the phone
+  // does not have to reach the laptop to know what its morning looks like.
+  const mine = events.filter((e) => e.date === today());
+  const allDay = mine.filter((e) => !e.start);
+  const timed = mine.filter((e) => e.start).map(timedEvent);
+  // One hue per calendar, over today's list. Assigned by the same function the
+  // laptop's week grid uses, so a course is the same colour on both devices
+  // without either of them being told what the colour is.
+  const hues = hueMap([...new Set(mine.map((e) => e.calendar).filter(Boolean))]);
+
+  if (!mine.length) {
+    return [
+      el("p.empty", {
+        // The one distinction the phone cannot guess and the route can. An
+        // empty day and an unreadable calendar are the same list.
+        text: day.calendar_reached
+          ? "nothing on the calendar today"
+          : "the laptop could not read the calendar",
+      }),
+      stale ? el("p.heard.cold", { text: "yesterday's copy of today" }) : null,
+    ];
   }
-  const days = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
 
-  // Half past four in the afternoon, as `HH:MM`, for the one comparison this
-  // screen makes. Only ever applied to today's rows: an event at 9am is behind
-  // you today and ahead of you tomorrow, and dimming tomorrow's morning would
-  // be exactly backwards.
-  const nowHM = `${String(new Date().getHours()).padStart(2, "0")}`
-    + `:${String(new Date().getMinutes()).padStart(2, "0")}`;
+  // Fit the day, then give it a floor. `dayWindow` is seeded with the first
+  // event and widened by the rest, which for an empty `timed` would leave the
+  // seed as the answer — hence the guard: a day of nothing but all-day rows
+  // draws the chips and no grid at all, rather than a grid of one arbitrary
+  // hour.
+  const grid = [];
+  if (timed.length) {
+    const first = Math.min(...timed.map((e) => e.from));
+    const [open, wanted] = dayWindow(timed, { open: first, close: first });
+    // Stretched downward to the floor, and pulled back up only if that would
+    // run past midnight — the bottom of the window is the end of the day and
+    // there is nothing under it to borrow.
+    let close = Math.max(wanted, open + AG_MIN_SPAN);
+    let top = open;
+    if (close > 24 * 60) {
+      top = Math.max(0, 24 * 60 - AG_MIN_SPAN);
+      close = 24 * 60;
+    }
+    const hm = nowHM();
 
-  const line = (e) =>
-    el("div.event", {
-      // Been and gone. Dimmed rather than dropped: what has already happened is
-      // half of what makes a schedule readable — it is how you know where in
-      // the day you are without reading a clock. All-day rows are never past,
-      // because a holiday is not over at nine in the morning.
-      class: e.date === today() && e.start && (e.end ?? e.start) < nowHM ? "past" : "",
-    },
-      // "all day" rather than a blank column: a row with nothing in the time
-      // slot reads as a row that lost something, and half this list is
-      // homework and holidays that genuinely have no hour.
-      el("span.event-at", { text: e.start ? dueClock(e.start) : "all day" }),
-      el("span.todo-title", { text: e.title }),
-      e.calendar ? el("span.todo-key", { text: e.calendar.split(/[ :]/)[0].toLowerCase() }) : null,
-    );
+    const blocks = pack(timed).map((event) => {
+      const width = 100 / event.of;
+      const tall = (event.to - event.from) * AG_PX_PER_MIN;
+      const short = tall < AG_TWO_LINE_PX;
+      return el(`div.ag-event${short ? " is-short" : ""}`, {
+        // Been and gone. Dimmed rather than dropped: what has already happened
+        // is half of what makes a schedule readable, because it is how you
+        // know where in the day you are without reading a clock.
+        class: (event.end ?? event.start) < hm ? "past" : "",
+        style: [
+          `top:${(event.from - top) * AG_PX_PER_MIN}px`,
+          `height:${tall}px`,
+          `left:${event.column * width}%`,
+          `width:calc(${width}% - 2px)`,
+          `--hue:${hueOf(hues, event)}`,
+          // How many whole lines of title fit. See `agLines`: without it the
+          // block clips a fraction of a line, which looks like a bug rather
+          // than like a title that did not fit.
+          `--ag-lines:${agLines(tall)}`,
+        ].join(";"),
+      },
+        el("span.ag-event-at", { text: atMinute(event.from) }),
+        el("span.ag-event-title", { text: event.title }),
+      );
+    });
+
+    grid.push(el("div.ag", { style: `--ag-height:${(close - top) * AG_PX_PER_MIN}px` },
+      el("div.ag-ruler", null, ...agRuler(top, close)),
+      el("div.ag-col", {
+        // The hour gridlines are a painted gradient rather than a stack of
+        // empty divs, so the scale has to be handed to CSS or the lines and
+        // the blocks drift apart the moment one of them is edited.
+        style: `--ag-hour:${60 * AG_PX_PER_MIN}px`,
+      }, ...blocks, agNow(top, close)),
+    ));
+  }
 
   return [
-    ...days.map(([date, list]) =>
-      section(dueLabel(date, today()), list
-        // Timed events in order, all-day ones first — which is where they
-        // belong on a day you are reading top to bottom.
-        .slice()
-        .sort((a, b) => (a.start ?? "").localeCompare(b.start ?? ""))
-        .map(line))),
-    !days.length
-      ? el("p.empty", {
-          // The one distinction the phone cannot guess and the route can. An
-          // empty day and an unreadable calendar are the same list.
-          text: day.calendar_reached
-            ? "nothing on the calendar"
-            : "the laptop could not read the calendar",
-        })
-      : null,
-    // One day of lookahead and no more. Said out loud on a stale panel, because
-    // a schedule with no tomorrow on it looks like a quiet week rather than the
-    // end of what this phone knows.
+    allDayRow(allDay, hues),
+    ...grid,
+    // The panel is yesterday's and what is drawn above is what it called
+    // tomorrow. Worth saying: the events are right, and anything moved since
+    // last night is not in them.
     stale
-      ? el("p.heard.cold", { text: "yesterday's copy — this phone knows one day ahead of it" })
+      ? el("p.heard.cold", { text: "yesterday's copy — today as it looked last night" })
       : null,
   ];
 }
@@ -1632,9 +1936,24 @@ function section(name, rows, kind = "") {
 const notRead = (what) =>
   el("p.empty.cold", { text: `${what} has not been read from the laptop yet` });
 
+/**
+ * The day's tabs. Two of the three.
+ *
+ * **`owed` is parked, not deleted.** `owedScreen` above is whole, its rules
+ * (`stillTrue().owed`, the mark rather than a box, the read-only footnote) are
+ * intact, its hue and its `.owed` styles are still in `style.css`, and putting
+ * the row back below is the entire cost of reinstating it. It came off the bar
+ * because what it reports is already on the entrance in one line — `3 of 5
+ * done · 2 due · 6 open` — and a whole screen that restates a line you have
+ * just walked past is a tab you open once to check it still works.
+ *
+ * So this is the note for whoever comes back to it: the screen exists, and if
+ * the answer is that it should stay gone, the things to remove are
+ * `owedScreen`, the `--hue-owed` triple, the `.owed` rules and the `owed` cap
+ * in the entrance's hue rail.
+ */
 const DAYS = [
   { id: "todo", label: "todo", render: todoScreen },
-  { id: "owed", label: "owed", render: owedScreen },
   { id: "agenda", label: "agenda", render: agendaScreen },
 ];
 
@@ -1688,11 +2007,11 @@ function homeScreen() {
       ].filter(Boolean).join(" · ");
 
   return [
-    card("log", "log", "meal · drink · visit · check-in · session",
-      ["meals", "drinks", "bathroom", "checkin", "session"],
+    card("log", "log", "check-in · meal · drink · visit · session",
+      ["checkin", "meals", "drinks", "bathroom", "session"],
       waiting ? `${waiting} waiting to send` : "nothing waiting", !waiting),
-    card("day", "day", "todo · owed · agenda",
-      ["todo", "owed", "agenda"],
+    card("day", "day", "todo · agenda",
+      ["todo", "agenda"],
       dayState,
       // Quiet only when the day is both read and finished. "Not read yet" is
       // itself a thing to do something about.
@@ -1715,7 +2034,7 @@ function homeScreen() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v13";
+const BUILD = "log-v14";
 
 /**
  * The build, along the foot of the title screen.

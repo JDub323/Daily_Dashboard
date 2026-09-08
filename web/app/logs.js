@@ -144,6 +144,18 @@ export const MEAL_STEPS = [
     hint: "optional — fills the rest in",
     optional: true,
     fills: mealFills,
+    // Drawn behind a button rather than as eight caps in the open. This is a
+    // hint to the client about *space*, not a change to what is asked: the
+    // question, its answers and the fills are all unchanged, and a surface
+    // with room for eight caps is free to ignore it.
+    //
+    // It earns the flag because the row is the wrong shape for the screen it
+    // is on. Eight presets is three rows of a three-across grid — about a
+    // third of a phone panel — sitting above the three questions every meal
+    // has to answer, spent on a shortcut taken twice a day. Collapsed, the
+    // row is one control that either offers the shortcut or names the one you
+    // took.
+    sheet: true,
     options: MEAL_PRESETS.map(([value, label]) => [null, value, label]),
   },
   { name: "size", hint: "roughly, in calories", options: MEAL_SIZE },
@@ -311,7 +323,11 @@ export const drinkNames = (tags) => {
  * actually something to say.
  */
 export const DRINK_STEPS = [
-  { name: "tags", hint: "none = water", multi: true, options: DRINK_TAGS },
+  // No hint. It said "none = water", which was true and was being read every
+  // time the log was opened — the rule it states is the one thing about this
+  // screen you learn on the first drink and never need again, and a caption
+  // that is only useful once is a caption you stop seeing.
+  { name: "tags", multi: true, options: DRINK_TAGS },
   {
     name: "name",
     hint: "optional",
@@ -428,13 +444,15 @@ export const toShown = (key, stored) => (INVERTED.has(key) ? 6 - stored : stored
 // --- a training session -----------------------------------------------------
 
 /** `kind: key`. Alphabetical collision resolved once, here: sparring is `s`,
- *  so strength — the one you reach for less often — is `t`. */
+ *  so strength — the one you reach for less often — is `t`, and sport, which
+ *  arrived last and wants `s` just as badly, takes `p`. */
 export const SESSION_KINDS = {
   boxing: "b",
   sparring: "s",
   roadwork: "r",
   strength: "t",
   conditioning: "c",
+  sport: "p",
   other: "o",
 };
 
@@ -446,8 +464,8 @@ export const SESSION_KINDS = {
  * strength is a named programme and does.
  *
  * **The node carries the kind, and that is the whole trick.** The top row is
- * five words in the language the gym uses; `SessionKind` is six words the load
- * model uses; they are not the same five and they were never going to be.
+ * six words in the language the gym uses; `SessionKind` is seven words the
+ * load model uses; they are not the same six and they were never going to be.
  * `cardio` is not a kind and never becomes one — it resolves, one level down,
  * into `conditioning` if the work had intervals in it and `roadwork` if it did
  * not, which is the distinction `daily_load` has always drawn and the last one
@@ -557,6 +575,30 @@ export const SESSION_TREE = [
           { value: "full", label: "full" },
         ],
       },
+    ],
+  },
+  {
+    // A game, and the branch nothing on the plan can reach. `library.A` and
+    // the rest of `training.toml` resolve into boxing, cardio and strength;
+    // this one is only ever picked freehand, which is what it is *for* — it
+    // is the load that happened because somebody had a ball, and the whole
+    // reason it stopped being `other` is that an afternoon of it and a
+    // twelve-minute neck circuit were the same row to the load model.
+    //
+    // Indoor volleyball and the sand game are two leaves rather than one
+    // because they are two different afternoons: sand is roughly twice the
+    // work for the same scoreline. `throw` is playing catch — it is here
+    // rather than under `other.mobility` because it is a thing you do for an
+    // hour with somebody else, not a warm-up.
+    value: "sport",
+    label: "sport",
+    kind: "sport",
+    children: [
+      { value: "volleyball", label: "volleyball" },
+      { value: "sand_volleyball", label: "sand volleyball" },
+      { value: "basketball", label: "basketball" },
+      { value: "football", label: "football" },
+      { value: "throw", label: "throw" },
     ],
   },
   {

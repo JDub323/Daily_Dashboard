@@ -261,6 +261,14 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
    off. "Equal columns, always" was what the rule meant and not what it said. */
 .opts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s2); }
 .opts-10 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+/* The check-in's five-point scales, on one row. At three across they wrapped
+   to `1 2 3` over `4 5`, which is the one arrangement that makes a five-point
+   answer read as two questions — and five of these on a screen is five wraps.
+   Five columns of a 393px iPhone's panel is 59px a cap, comfortably past the
+   44px a thumb needs, so the row fits with room over. Same track sizing as the
+   RPE row above, kept as its own name because they are different questions
+   that happen to agree about the arithmetic. */
+.opts-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 /* Two across, for a row whose words do not fit three. `conditioning` and
    `electrolyte` are the two, and `optsClass` in app.js decides by measuring the
    labels rather than by naming the rows, so a kind added to logs.js gets the
@@ -302,6 +310,30 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 /* Five of them, or ten. Orbitron's digits are the reason it is in this app —
    wide, flat-sided, evenly weighted — so the numeric rows get them at size. */
 .opt.num { font-size: var(--t-lede); letter-spacing: .04em; }
+
+/* --- a question behind a button --------------------------------------------
+   One row in the app is collapsed and it is the meal presets: eight caps in a
+   three-across grid is three rows and a third of the panel, spent on a
+   shortcut, sitting above the three questions every meal has to answer. See
+   `sheet: true` in `logs.js` for the flag and `stepRow` for the two states.
+
+   The control is a key-cap the full width of the panel rather than a new kind
+   of thing — it is still "press this to answer the question", and it lights in
+   the tab's hue when it holds an answer exactly as the caps below it do. What
+   is different is only that its label is the answer: `use preset` when there
+   is none, the preset's own name when there is. */
+.opt.sheet-open {
+  width: 100%;
+  min-height: 44px;
+  text-align: center;
+}
+/* The caps, once it is open. A hairline back to the button above so the grid
+   reads as belonging to it rather than as the next question. */
+.q-sheet .opts, .q-sheet .opts-2 {
+  margin-top: var(--s2);
+  padding-top: var(--s3);
+  background: linear-gradient(90deg, var(--border) 0 38%, transparent) top / 100% 1px no-repeat;
+}
 
 /* --- a typed answer -------------------------------------------------------
    A field is the inverse of a key-cap: sunk, not raised. Same logic, opposite
@@ -845,16 +877,21 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   color: var(--gold-text);
 }
 
-/* --- the day's three lists -------------------------------------------------
-   One row shape across all three, which is most of why they read as one screen:
-   a box, a title that takes the width, and up to two small marks on the right.
-   The differences between a todo, a task and an event are in what fills those
-   slots, not in the shape.
+/* --- the day's lists --------------------------------------------------------
+   One row shape for both, which is most of why they read as one screen: a box,
+   a title that takes the width, and up to two small marks on the right. The
+   difference between a todo and a task is in what fills those slots, not in
+   the shape.
+
+   The schedule used to be a third list wearing the same shape, and it is not
+   any more -- see `.ag` below. A list cannot say when the gaps are, and on a
+   schedule that is the whole question. `.owed` stays here with `owedScreen`
+   in app.js: the tab is parked, not deleted.
 
    48px, like every cap in the app -- these are the first rows here you tap
    rather than read, and a row you have to aim at is a row you mis-hit. */
 
-.todo, .owed, .event {
+.todo, .owed {
   display: flex;
   align-items: center;
   gap: var(--s3);
@@ -871,6 +908,42 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 }
 .todo { cursor: pointer; touch-action: manipulation; }
 .todo:active { background-color: rgba(223,230,242,.05); }
+
+/* --- the subject, as colour ------------------------------------------------
+   The one screen in this app that is not painted a single hue, and the
+   exception is earned rather than an oversight.
+
+   Everywhere else the tab's colour answers "which question am I on", which is
+   the useful thing to know when the whole panel is one question. A todo list
+   is not one question — it is six classes and a chore — and the thing you need
+   from the doorway is *which* of them the next four rows belong to. Painted
+   entirely orchid, that was a list you had to read; with a rail per subject it
+   is one you skim.
+
+   `--hue` and the twelve-hue palette come from `dayplan.js`, which is the same
+   function and the same twelve numbers the laptop's list and week grid use — so
+   a course is the same colour on the phone as on the desktop without either
+   being told what the colour is. Gold stays out of the palette and stays
+   meaning "done".
+
+   The tick box deliberately does *not* take the hue. It is the control, and
+   the control is the same gesture on every screen here; the rail and the key
+   are the classification. Two things that answer differently to a finger must
+   not look like the same thing. */
+.todo.has-subject {
+  border-left: 3px solid hsl(var(--hue) 62% 58%);
+  padding-left: var(--s2);
+}
+.todo.has-subject .todo-key {
+  color: hsl(var(--hue) 55% 74%);
+  border-color: hsl(var(--hue) 40% 40%);
+}
+/* Done, and still legible as its subject — the rail keeps the hue and loses
+   the light, which is what "this one is finished" looks like everywhere else
+   on this screen. */
+.todo.done.has-subject { border-left-color: hsl(var(--hue) 22% 38%); }
+.todo.done.has-subject .todo-key { color: var(--faint); border-color: var(--border); }
+.todo.has-subject:active { background-color: hsl(var(--hue) 30% 16%); }
 
 /* The tick target's mark, and it is a mark rather than a checkbox: a 13px
    control with a chrome of its own would be the largest thing on a row whose
@@ -944,19 +1017,144 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   color: var(--gold-text);
 }
 
-/* The schedule's clock column, wide enough for `all day` so the titles beside
-   it line up down the list -- the thing that makes a schedule scannable is the
-   left edge of the second column, not the times themselves. */
-.event-at {
-  flex: none;
-  width: 7ch;
+/* --- the schedule, drawn to scale ------------------------------------------
+   The laptop's week grid with six columns taken off it. Same arithmetic, out
+   of `dayplan.js`; same hue per calendar; same line across now. What differs
+   is the scale (an hour is 48px here against 25px there, because a 50-minute
+   class has to hold its own name) and the window, which fits the day rather
+   than clamping to 8am–8pm — nothing on this screen is competing for the
+   height, and an event pushed into an edge strip is an event whose position
+   has stopped meaning anything.
+
+   The ruler is a fixed column so every block on the day hangs off one left
+   edge. 48px holds `10:30am` at 10px display type with a hair to spare. */
+
+.ag {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  /* The last hour label is centred on the bottom gridline, so half of it hangs
+     below the grid and would otherwise be clipped by the panel's padding. */
+  padding-bottom: var(--s3);
+}
+.ag-ruler {
+  position: relative;
+  height: var(--ag-height);
+  border-right: 1px solid var(--border);
+}
+.ag-hour {
+  position: absolute;
+  right: var(--s2);
+  /* Half a line-height up, so the label is centred on its gridline rather than
+     sitting under it. */
+  transform: translateY(-50%);
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 10px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ag-col {
+  position: relative;
+  height: var(--ag-height);
+  /* The hour lines are painted rather than being elements: one gradient
+     instead of a dozen empty divs per redraw, and — the part that matters —
+     they cannot drift out of step with the blocks, because both are driven by
+     the same `--ag-hour` the client wrote. */
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--border-soft) 0 1px,
+    transparent 1px var(--ag-hour, 48px)
+  );
+}
+
+.ag-event {
+  position: absolute;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 2px var(--s2);
+  border-left: 3px solid hsl(var(--hue) 62% 60%);
+  background: hsl(var(--hue) 32% 18%);
+  font: 12px/1.25 "Cascadia Code", Consolas, monospace;
+  color: var(--fg);
+}
+/* Under about 40 minutes there is one line of room, so the time and the title
+   run along it instead of stacking. */
+.ag-event.is-short {
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--s1);
+  white-space: nowrap;
+}
+.ag-event-at {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 9px;
   letter-spacing: .06em;
   text-transform: uppercase;
-  color: var(--tab-text);
+  color: hsl(var(--hue) 55% 76%);
   font-variant-numeric: tabular-nums;
+}
+.ag-event-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Ellipsised at a whole line rather than clipped part-way through one. The
+   count comes from the client, which knows the block's height in pixels — see
+   `agLines` in app.js. Without it a 40px block shows one line of title and the
+   top third of the letters of the next, which reads as a rendering fault. */
+.ag-event:not(.is-short) .ag-event-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--ag-lines, 2);
+  line-clamp: var(--ag-lines, 2);
+}
+
+/* Where you are in the day, without reading a clock. Absent outside the drawn
+   window on the laptop's argument: a line pinned to the top edge at seven in
+   the morning is a line claiming it is eight. */
+.ag-now { position: absolute; left: 0; right: 0; height: 1px; background: var(--accent); z-index: 2; }
+.ag-now::before {
+  content: "";
+  position: absolute;
+  left: -3px; top: -3px;
+  width: 7px; height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+
+/* The all-day row, above the grid. These have no hour and so cannot be drawn
+   to scale; they get one wrapped line of chips and hang off the same left edge
+   as the ruler's labels. */
+.ag-allday {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  padding-bottom: var(--s3);
+  margin-bottom: var(--s3);
+  background: repeating-linear-gradient(90deg, var(--border) 0 3px, transparent 3px 7px)
+              bottom / 100% 1px no-repeat;
+}
+.ag-allday-at {
+  flex: none;
+  width: 40px;
+  padding-top: 3px;
+  text-align: right;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.ag-chips { display: flex; flex-wrap: wrap; gap: var(--s1); min-width: 0; }
+.ag-chip {
+  font-size: var(--t-meta);
+  line-height: 1.5;
+  padding: 0 var(--s2);
+  border-left: 3px solid hsl(var(--hue) 62% 60%);
+  background: hsl(var(--hue) 30% 19%);
+  color: var(--fg);
 }
 
 /* Overdue, and the required half of a day that is not finished. Gold on the
@@ -1015,6 +1213,11 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 
 /* Been and gone. Not hidden: what has already happened is half of what makes a
    schedule readable, because it is how you know where in the day you are. */
-.event.past { opacity: .45; }
-.event.past .todo-key { border-color: var(--border-soft); }
+.ag-event.past { opacity: .45; }
 .rc-state.quiet { color: var(--faint); }
+
+/* The box above the list, and the gap under it. The `.row` it wears gives it a
+   top margin and nothing below, so the first day heading sat 8px under a text
+   field — a control and the top of the list reading as one block with a line
+   through it. */
+.addbox { margin-bottom: var(--s5); }

@@ -34,7 +34,7 @@
 // classic worker cannot import a module — and `shell.test.js` fails when the
 // two disagree.
 
-const VERSION = "log-v13";
+const VERSION = "log-v14";
 
 /** How long a *cold* request gets before the shell falls back to itself.
  *  Only ever spent on a file that is not in the cache, which after the first
@@ -84,6 +84,13 @@ const SHELL = [
   // out of, and `shell.test.js` is what keeps it true.
   "../app/day.js",
   "../app/todolist.js",
+  // The week grid's arithmetic — packing, the drawn window, the twelve-hue
+  // table. It came out of `panels/calendar.js` precisely so it could be listed
+  // here: the schedule screen is one column of that grid, and the panel it
+  // used to live in imports `api.js`, `dom.js`, `freshness.js`, a modal and
+  // `panel.js`. This imports nothing, which is the rule above stated as a
+  // file.
+  "../app/dayplan.js",
   // `splash.js` imports `dom.js` and `dom.js` imports nothing, so the two of
   // them close the graph.
   "../app/splash.js",

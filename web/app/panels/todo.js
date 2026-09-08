@@ -25,8 +25,9 @@
 // has its own subject stripped off the front — so the row reads "Quiz on the
 // Civil War and Saving the Union", which is the part that identifies it.
 //
-// The hues come from `hueMap` in the week grid, unchanged. Same function, same
-// twelve-hue palette, same rule that gold is reserved for "done" — a subject
+// The hues come from `hueMap` in `dayplan.js` — the same function the week grid
+// colours its calendars with, and now the same one the phone's todo list uses.
+// Same twelve-hue palette, same rule that gold is reserved for "done" — a subject
 // and a calendar are different things, but they are both "one of a small set of
 // named categories that has to be told apart on a 3px border", and two
 // colouring schemes on one screen is one more than anybody can hold.
@@ -45,7 +46,7 @@
 import * as api from "../api.js";
 import { el, mount } from "../dom.js";
 import { get as getPanel, rerender } from "../panel.js";
-import { hueMap } from "./calendar.js";
+import { hueMap } from "../dayplan.js";
 // The grouping and the two shortenings live in `../todolist.js` now, and are
 // re-exported here because they were this file's public surface before the
 // phone had a todo screen of its own. Where a row goes is as much the

@@ -18,10 +18,25 @@
 // running 00:00–24:00, and colliding events are packed into sub-columns.
 
 import * as api from "../api.js";
+// The arithmetic of drawing a day to scale — packing, the window, the hue
+// table, the two clock conversions. It lived here and moved to `dayplan.js`
+// when the phone's schedule screen became the same picture of one day: that
+// module imports nothing, which is what lets it into the phone's offline
+// shell, and this one imports five things that must never go near it.
+//
+// Re-exported below rather than merely used, because `hueMap` is what the todo
+// panel colours its subjects with and `pack`/`windowFor`/`outsiders` are what
+// `calendar.test.js` asserts against. Both were this file's public surface
+// before there was a second client.
+import {
+  clock, dayWindow, HUES, hueMap, outsiders, pack, timedEvent,
+} from "../dayplan.js";
 import { el, mount } from "../dom.js";
 import { feedStamp, refreshAfter } from "../freshness.js";
 import { openCalendarHelp } from "../modals/calhelp.js";
 import { rerender } from "../panel.js";
+
+export { hueMap, outsiders, pack };
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
@@ -61,75 +76,6 @@ const PX_PER_MIN = 0.42;
 // every time PX_PER_MIN moves.
 const TWO_LINE_PX = 34;
 
-// Twelve hues, none of them gold — gold means "done" everywhere else in this
-// app and has one job, so a calendar that happened to sort seventh must not
-// look finished. Twelve and no more: these have to be told apart at a glance
-// on a 3px border, and a palette fine enough to never collide is a palette
-// whose neighbours are the same colour.
-const HUES = [205, 262, 12, 152, 322, 96, 178, 288, 66, 232, 340, 128];
-
-function hash(name) {
-  // djb2, xor variant. Any stable string hash does; this one is short and has
-  // no surprises for ASCII calendar names.
-  let h = 5381;
-  for (let i = 0; i < name.length; i++) h = ((h * 33) ^ name.charCodeAt(i)) >>> 0;
-  return h >>> 0;
-}
-
-/**
- * Assign each calendar a hue: name -> colour, stable and distinct.
- *
- * Two properties are wanted and they pull against each other. A calendar
- * should keep its colour when *other* calendars come and go — otherwise
- * creating one repaints the whole week and the colour you had learned for
- * Classes now means something else. And no two should share, or the legend
- * stops being able to answer which is which.
- *
- * Assigning by position in the account list gets distinctness and loses
- * stability: a calendar inserted anywhere but the end shifts every colour
- * after it. Assigning by hash alone gets stability and loses distinctness —
- * on this account it collided twice with only nine calendars, because the
- * birthday paradox is unkind at these sizes.
- *
- * The two cannot both hold in general — a colour that never depends on the
- * rest of the set *is* a pure hash — so distinctness wins, because a repeated
- * colour stops the legend answering the one question it exists for. Hash picks
- * a *preferred* hue and ties probe forward, with the calendars walked in name
- * order so the result never depends on what gcalcli happened to list first.
- *
- * What that costs is bounded and measured: on this account's nine calendars,
- * deleting any one moves at most one other, and adding one moves none or two.
- * Both are pinned by tests. Past twelve calendars a repeat is unavoidable and
- * the earlier names alphabetically keep theirs.
- */
-export function hueMap(names) {
-  const taken = new Map();
-  const used = new Set();
-  for (const name of [...names].sort()) {
-    const preferred = hash(name) % HUES.length;
-    let hue = HUES[preferred];
-    for (let step = 1; used.has(hue) && step < HUES.length; step++) {
-      hue = HUES[(preferred + step) % HUES.length];
-    }
-    used.add(hue);
-    taken.set(name, hue);
-  }
-  return taken;
-}
-
-const minutes = (hhmm) => {
-  const [h, m] = hhmm.split(":").map(Number);
-  return h * 60 + m;
-};
-
-const clock = (mins) => {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  const suffix = h < 12 ? "am" : "pm";
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return m ? `${h12}:${String(m).padStart(2, "0")}${suffix}` : `${h12}${suffix}`;
-};
-
 const isoOf = (date) => api.localISO(date);
 
 function parseISO(iso) {
@@ -140,93 +86,16 @@ function parseISO(iso) {
 }
 
 /**
- * Lay overlapping events out side by side, the way gcal does.
+ * The drawn window, under this panel's own policy.
  *
- * Without this a 10:30 lecture and a 10:30 lab draw exactly on top of each
- * other and the one underneath is simply invisible — and this account has real
- * collisions, since a course calendar and a personal one both carry the same
- * class.
- *
- * Events are swept in start order into *clusters* of mutual overlap. Within a
- * cluster each event takes the first column whose last event has already
- * finished, which is the usual interval-graph colouring; the cluster's column
- * count then sets everyone's width. Column count is per cluster rather than
- * per day so that one crowded morning does not narrow a quiet afternoon.
+ * `dayWindow` does the arithmetic and takes no view; the three constants at
+ * the head of this file are the view. Exported because which events fall
+ * outside the window is the other half of the same decision, and both halves
+ * have to agree about where the edges are — `calendar.test.js` asserts them
+ * together for that reason.
  */
-export function pack(events) {
-  const sorted = [...events].sort((a, b) => a.from - b.from || b.to - a.to);
-  const out = [];
-  let cluster = [];
-  let columns = [];
-  let clusterEnd = -1;
-
-  const flush = () => {
-    for (const item of cluster) item.of = columns.length;
-    out.push(...cluster);
-    cluster = [];
-    columns = [];
-    clusterEnd = -1;
-  };
-
-  for (const event of sorted) {
-    if (cluster.length && event.from >= clusterEnd) flush();
-    let column = columns.findIndex((end) => end <= event.from);
-    if (column === -1) {
-      column = columns.length;
-      columns.push(0);
-    }
-    columns[column] = event.to;
-    clusterEnd = Math.max(clusterEnd, event.to);
-    cluster.push({ ...event, column });
-  }
-  if (cluster.length) flush();
-  return out;
-}
-
-/**
- * The drawn window.
- *
- * Fixed at the waking hours while `CLAMP` holds, and widened to fit the day's
- * own events when it does not. Exported and pure because which events fall
- * outside it is the other half of this decision, and both halves have to
- * agree about where the edges are.
- */
-export function windowFor(timed) {
-  let open = DEFAULT_OPEN;
-  let close = DEFAULT_CLOSE;
-  if (!CLAMP) {
-    for (const event of timed) {
-      open = Math.min(open, event.from);
-      close = Math.max(close, event.to);
-    }
-  }
-  // Rounded out to the hour so the ruler carries whole labels.
-  return [Math.floor(open / 60) * 60, Math.ceil(close / 60) * 60];
-}
-
-/**
- * Split a day's timed events into the ones the grid can draw and the ones it
- * cannot.
- *
- * `before` and `after` are the two strips above and below the grid. An event
- * that merely *overlaps* an edge — a 7:30 session that runs to 8:30 — stays in
- * the grid and is clipped by it, because it is mostly inside and a clipped
- * block still says roughly when it is. Only an event lying wholly outside
- * moves to a strip, where it keeps its title and its time and gives up only
- * its height.
- */
-export function outsiders(timed, open, close) {
-  const before = [];
-  const after = [];
-  const inside = [];
-  for (const event of timed) {
-    if (event.to <= open) before.push(event);
-    else if (event.from >= close) after.push(event);
-    else inside.push(event);
-  }
-  const byStart = (a, b) => a.from - b.from;
-  return { before: before.sort(byStart), after: after.sort(byStart), inside };
-}
+export const windowFor = (timed) =>
+  dayWindow(timed, { open: DEFAULT_OPEN, close: DEFAULT_CLOSE, clamp: CLAMP });
 
 export default {
   id: "cal",
@@ -450,15 +319,11 @@ export default {
     for (const event of week.events) {
       const bucket = byDay.get(event.date);
       if (!bucket) continue;
-      if (!event.start) {
-        bucket.allDay.push(event);
-      } else {
-        const from = minutes(event.start);
-        // An event with no end, or one ending before it starts (a span that
-        // crossed midnight), still has to occupy something.
-        const to = event.end ? Math.max(minutes(event.end), from + 15) : from + 30;
-        bucket.timed.push({ ...event, from, to });
-      }
+      // An event with no end, or one ending before it starts (a span that
+      // crossed midnight), still has to occupy something — `timedEvent` is
+      // where that guess is made, once, for both clients.
+      if (!event.start) bucket.allDay.push(event);
+      else bucket.timed.push(timedEvent(event));
     }
 
     const [open, close] = windowFor([...byDay.values()].flatMap((b) => b.timed));

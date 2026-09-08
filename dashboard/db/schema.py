@@ -2048,6 +2048,72 @@ MIGRATIONS: list[tuple[int, str]] = [
             CHECK (focus IS NULL OR length(focus) BETWEEN 3 AND 64);
         """,
     ),
+    (
+        34,
+        """
+        -- A sixth kind: `sport`. A game is load nobody prescribed.
+        --
+        -- Basketball and sand volleyball were going up as `other`, beside the
+        -- neck circuit and the mobility work -- twelve-minute accessory pieces
+        -- that the load model is entitled to treat as noise. Two hours of sand
+        -- is not that, and the bucket it was sharing is the one place the
+        -- difference could not be seen. `conditioning` was the other candidate
+        -- and is worse: it is the denominator the camp plan's compliance is
+        -- measured against, and filling it with work the plan never asked for
+        -- makes a week of pickup games look like a week of prescribed
+        -- intervals.
+        --
+        -- Why this is a table rebuild rather than an ALTER: `kind` carries a
+        -- CHECK, and SQLite has no way to widen one in place. This is the same
+        -- twelve-step dance migration 32 did to `drink_log`, and it is the
+        -- reason `focus` one migration ago was deliberately *not* given a CHECK
+        -- of its own -- the leaves are a vocabulary that gets edited, and
+        -- freezing them into the schema would mean this every time somebody
+        -- takes up a new sport. `kind` is different: six words that the load
+        -- model reads, that have not moved in a year, and whose sixth is
+        -- arriving precisely because the fifth was being made to mean two
+        -- things.
+        --
+        -- Nothing references this table, so the rename is safe. Ids are
+        -- carried across rather than reassigned: `plan_key` is unique against
+        -- them and the phone deletes a session by the id it is already
+        -- holding.
+        ALTER TABLE training_session RENAME TO training_session_five;
+
+        CREATE TABLE training_session (
+            id       INTEGER PRIMARY KEY,
+            date     TEXT NOT NULL
+                          CHECK (date IS strftime('%Y-%m-%d', date)),
+            kind     TEXT NOT NULL CHECK (kind IN (
+                          'boxing', 'sparring', 'roadwork', 'strength',
+                          'conditioning', 'sport', 'other')),
+            rpe      INTEGER NOT NULL CHECK (rpe     BETWEEN 1 AND 10),
+            minutes  INTEGER NOT NULL CHECK (minutes BETWEEN 1 AND 600),
+            note     TEXT CHECK (note IS NULL OR length(note) BETWEEN 1 AND 200),
+            garmin_activity_id INTEGER UNIQUE,
+            plan_key TEXT
+                     CHECK (plan_key IS NULL OR length(plan_key) BETWEEN 3 AND 64),
+            focus    TEXT
+                     CHECK (focus IS NULL OR length(focus) BETWEEN 3 AND 64)
+        ) STRICT;
+
+        INSERT INTO training_session
+                (id, date, kind, rpe, minutes, note,
+                 garmin_activity_id, plan_key, focus)
+            SELECT id, date, kind, rpe, minutes, note,
+                   garmin_activity_id, plan_key, focus
+              FROM training_session_five;
+
+        -- Dropped before the indexes are recreated, because dropping a table
+        -- takes its indexes with it and both of these want their old names
+        -- back.
+        DROP TABLE training_session_five;
+
+        CREATE INDEX training_session_date ON training_session (date);
+        CREATE UNIQUE INDEX training_session_plan_key
+            ON training_session (plan_key) WHERE plan_key IS NOT NULL;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

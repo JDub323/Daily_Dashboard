@@ -401,6 +401,23 @@ class SessionKind(StrEnum):
     roadwork = "roadwork"
     strength = "strength"
     conditioning = "conditioning"
+
+    sport = "sport"
+    """A game, and the one kind here that nobody prescribed.
+
+    Two hours of sand volleyball is real load -- it costs more to recover from
+    than the twelve-minute neck circuit it used to be filed beside -- and it is
+    load the plan did not ask for, which is the fact worth being able to see.
+    Folding it into `other` buried it in a bucket of accessory work; folding it
+    into `conditioning` would have inflated the volume the camp plan is
+    measured against with work that has no intervals and no prescription behind
+    it.
+
+    So it is its own word, and nothing in `training.toml` resolves here. That
+    asymmetry is the point: a week whose load came from games rather than from
+    the plan reads differently, and until this existed it did not read at all.
+    """
+
     other = "other"
 
 
@@ -435,6 +452,18 @@ SESSION_FOCUS: Mapping[str, SessionKind] = MappingProxyType(
         "strength.general.upper": SessionKind.strength,
         "strength.general.lower": SessionKind.strength,
         "strength.general.full": SessionKind.strength,
+        # --- games, which are load nobody prescribed ---
+        #
+        # `volleyball` is the indoor court and `sand_volleyball` is the beach,
+        # and they are two leaves rather than one because they are two
+        # different afternoons: sand is roughly twice the work for the same
+        # scoreline, and a leaf that could not tell them apart would be
+        # throwing that away at the only moment it is recoverable.
+        "sport.volleyball": SessionKind.sport,
+        "sport.sand_volleyball": SessionKind.sport,
+        "sport.basketball": SessionKind.sport,
+        "sport.football": SessionKind.sport,
+        "sport.throw": SessionKind.sport,
         # --- everything the load model must not fold into strength ---
         "other.neck": SessionKind.other,
         "other.core": SessionKind.other,
