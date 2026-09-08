@@ -260,14 +260,17 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
    pushed the row out through the side of the panel, where the label was clipped
    off. "Equal columns, always" was what the rule meant and not what it said. */
 .opts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s2); }
-.opts-10 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-/* The check-in's five-point scales, on one row. At three across they wrapped
-   to `1 2 3` over `4 5`, which is the one arrangement that makes a five-point
-   answer read as two questions — and five of these on a screen is five wraps.
+/* Every scale in the app: the check-in's five, the meal's quality, and the
+   session's RPE, which is ten and therefore two rows of this. At three across
+   a five-point answer wraps to `1 2 3` over `4 5`, which is the one
+   arrangement that makes one question read as two — and the check-in is five
+   of those wraps on one screen.
+
    Five columns of a 393px iPhone's panel is 59px a cap, comfortably past the
-   44px a thumb needs, so the row fits with room over. Same track sizing as the
-   RPE row above, kept as its own name because they are different questions
-   that happen to agree about the arithmetic. */
+   44px a thumb needs, so it fits with room over. There was an `.opts-10` here
+   with an identical declaration, back when the RPE row named its own grid;
+   `optsClass` now measures the labels instead, and the two names had no
+   difference to carry. */
 .opts-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 /* Two across, for a row whose words do not fit three. `conditioning` and
    `electrolyte` are the two, and `optsClass` in app.js decides by measuring the

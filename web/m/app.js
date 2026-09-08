@@ -549,7 +549,7 @@ const sessionRows = () =>
 // tab bar, the day and the hour are the shell's and are the same for all five.
 
 /**
- * Which grid a row of caps gets: three across, or two.
+ * Which grid a row of caps gets: five across, three, or two.
  *
  * Three is the default and the right answer for `small` `medium` `large`. It is
  * the wrong one for `conditioning` and `electrolyte`. A third of the panel on a
@@ -558,14 +558,28 @@ const sessionRows = () =>
  * the label was clipped off at the edge of the panel. In the gym that means the
  * kind you are reaching for is the one you cannot read.
  *
- * Decided by measuring the labels rather than by naming the rows that have the
- * problem, so a kind added to `logs.js` — the file whose whole point is that it
- * is edited once — gets the grid it needs without a second edit here.
+ * It is also the wrong one for a *scale*. `1 2 3 4 5` at three across wraps to
+ * `1 2 3` over `4 5`, which is the one arrangement that makes a five-point
+ * answer read as two different questions — and a scale is the one row where
+ * the shape of it is half the meaning. Five across is what a 375px row holds
+ * at a thumb's width, so the five-point rows are one line and the ten-point
+ * RPE row is two of five, which is what it has always drawn.
+ *
+ * All three decided by measuring the labels rather than by naming the rows
+ * that have the problem, so an answer added to `logs.js` — the file whose
+ * whole point is that it is edited once — gets the grid it needs without a
+ * second edit here. A scale is recognised the same way: every label a digit or
+ * two, which is true of the four rows that are scales and of nothing else in
+ * the file.
  */
 const FITS_IN_A_THIRD = 8;
+const A_SCALE_LABEL = 2;
 
-const optsClass = (labels) =>
-  labels.some((label) => String(label).length > FITS_IN_A_THIRD) ? "div.opts.opts-2" : "div.opts";
+const optsClass = (labels) => {
+  const measured = labels.map((label) => String(label).length);
+  if (measured.every((n) => n <= A_SCALE_LABEL)) return "div.opts.opts-5";
+  return measured.some((n) => n > FITS_IN_A_THIRD) ? "div.opts.opts-2" : "div.opts";
+};
 
 /**
  * A row of answer buttons for one step of a quick log.
@@ -1037,12 +1051,12 @@ function checkinLog() {
               el("span.q-name", { text: name }),
               el("span.q-hint", { text: `1 ${low} · 5 ${high}` }),
             ),
-            // Five across rather than the three every other row gets, so the
-            // scale is one row and reads as a scale. At three it wrapped to
-            // `1 2 3` over `4 5`, which is the one arrangement that makes a
-            // five-point answer look like two different questions — and five
-            // caps is five screenfuls of check-in turned into one.
-            el("div.opts.opts-5", null,
+            // Through `optsClass` like every other row in the app, rather
+            // than naming a grid here. These are five one-character labels, so
+            // it answers "five across" — and it answers it for the meal log's
+            // quality row and the session log's RPE by the same measurement,
+            // which is the point of asking rather than telling.
+            el(optsClass([1, 2, 3, 4, 5]), null,
               ...[1, 2, 3, 4, 5].map((n) =>
                 el("button.opt.num", {
                   class: shown === n ? "on" : "",
@@ -1355,7 +1369,7 @@ function sessionLog() {
             // session that had not reached this row yet.
             session.rpe ? el("span.q-hint", { text: RPE_ANCHOR[session.rpe] }) : null,
           ),
-          el("div.opts.opts-10", null,
+          el(optsClass(Array.from({ length: 10 }, (_, i) => i + 1)), null,
             ...Array.from({ length: 10 }, (_, i) => i + 1).map((n) =>
               el("button.opt.num", {
                 class: session.rpe === n ? "on" : "",
@@ -2034,7 +2048,7 @@ function homeScreen() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v14";
+const BUILD = "log-v15";
 
 /**
  * The build, along the foot of the title screen.

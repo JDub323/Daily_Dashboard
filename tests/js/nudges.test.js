@@ -26,6 +26,10 @@ globalThis.localStorage = {
 
 const { verdicts, wantsTodo } = await import("../../web/app/nudges.js");
 const { store } = await import("../../web/app/store.js");
+// The same "today" the module under test reads, rather than a second spelling
+// of it — see the note in the `wantsTodo` case below, which is what a second
+// spelling cost.
+const api = await import("../../web/app/api.js");
 
 /** The day, as the rules read it. `tasks` is `chipTasks()`'s shape — id, label,
  *  `points` for the optional layer, `done`. */
@@ -128,8 +132,19 @@ describe("wantsTodo", () => {
   it("fetches it for a card that is up, however quiet the rule has gone", () => {
     // The retraction path needs the same input the raise did. Without this the
     // due-today card — which speaks once a day — could never be taken down.
+    //
+    // `api.today()` and not `toISOString().slice(0, 10)`, which is what this
+    // was and is a UTC date. `memory()` in nudges.js keys on the *local* one
+    // and throws away a record dated anything else, so between 8pm and
+    // midnight Eastern the seeded timings were silently discarded, every rule
+    // read as never-shown, and this assertion — that a rule which has already
+    // spoken is quiet — failed. The window it failed in is the window the app
+    // is used in, which is the only reason it was ever seen.
+    //
+    // [Invariant 1]: the browser owns "today" and it is local. A test that
+    // spells that itself is a test free to spell it differently.
     store_.set("nudges", JSON.stringify({
-      date: new Date().toISOString().slice(0, 10),
+      date: api.today(),
       at: { "due-today": Date.now(), overdue: Date.now() },
     }));
     assert.equal(wantsTodo({ hour: 9 }, []), false);
