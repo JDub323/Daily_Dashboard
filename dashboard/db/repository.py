@@ -2394,6 +2394,71 @@ class Repository:
         rows = self.conn.execute("SELECT * FROM training_session ORDER BY date, id").fetchall()
         return [d.TrainingSession(**dict(r)) for r in rows]
 
+    # -- the camp stopping and starting -------------------------------------
+    #
+    # Read whole, like `sessions` and for a smaller version of the same reason:
+    # `trainplan.shift` sums every break that has already taken effect, so a
+    # windowed read would quietly un-shift the camp the moment the first break
+    # fell off the back of the window. There will be a handful of rows a year.
+
+    def camp_breaks(self) -> list[d.CampBreak]:
+        rows = self.conn.execute("SELECT * FROM camp_break ORDER BY started, id").fetchall()
+        return [d.CampBreak(**dict(r)) for r in rows]
+
+    def open_camp_break(self) -> d.CampBreak | None:
+        """The break that has no resume date yet, if there is one.
+
+        Distinct from "is the camp paused today", which is `trainplan.paused_on`
+        and is a question about a date. A break with its Sunday still ahead of
+        it is closed here and paused there, and both are right.
+        """
+        row = self.conn.execute(
+            "SELECT * FROM camp_break WHERE resumed IS NULL"
+        ).fetchone()
+        return d.CampBreak(**dict(row)) if row else None
+
+    def pause_camp(self, started: dt.date, reason: str) -> d.CampBreak:
+        """Stop the camp from `started`.
+
+        The partial unique index refuses a second open break, and that error is
+        left to surface rather than being pre-checked: a pre-check is a race
+        with itself, and the index is the thing that is actually true.
+        """
+        try:
+            row = self.conn.execute(
+                "INSERT INTO camp_break (started, reason) VALUES (?, ?) RETURNING *",
+                (_iso(started), reason),
+            ).fetchone()
+        except sqlite3.IntegrityError as error:
+            if "camp_break_open" in str(error):
+                raise ValueError("the camp is already paused") from None
+            raise
+        return d.CampBreak(**dict(row))
+
+    def resume_camp(self, resumed: dt.date) -> d.CampBreak | None:
+        """Give the open break its Sunday. None when nothing was open."""
+        row = self.conn.execute(
+            "UPDATE camp_break SET resumed = ? WHERE resumed IS NULL RETURNING *",
+            (_iso(resumed),),
+        ).fetchone()
+        return d.CampBreak(**dict(row)) if row else None
+
+    def cancel_resume(self, today: dt.date) -> d.CampBreak | None:
+        """Take back a resume date that has not arrived yet.
+
+        The Friday decision reversed on the Saturday, which is a thing illness
+        does. Bounded to `resumed > today` and that bound is the whole of the
+        method: a break whose Sunday has passed has already shifted the grid,
+        and reopening it would un-shift a camp that has been running on the new
+        numbering for weeks. Those are not the same button -- one is an undo,
+        the other is rewriting history -- and only the undo exists.
+        """
+        row = self.conn.execute(
+            "UPDATE camp_break SET resumed = NULL WHERE resumed > ? RETURNING *",
+            (_iso(today),),
+        ).fetchone()
+        return d.CampBreak(**dict(row)) if row else None
+
     # -- what goes in and what comes out ------------------------------------
     #
     # Both logs are append-only and many-per-day, like sessions and unlike

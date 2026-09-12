@@ -56,4 +56,24 @@ describe("emptyLine", () => {
   it("copes with a plan that has no blocks at all", () => {
     assert.equal(emptyLine(plan({ ends: null }), "2026-08-26"), "no plan written for this week.");
   });
+
+  // The fourth empty state, and the one that has to be checked before
+  // `week_planned` rather than after it. A paused week is still a *written*
+  // week — the plan for it exists and you are simply not in it — so the
+  // wrong order here renders a fortnight of illness as a fortnight of rest.
+  const paused = { since: "2026-09-08", reason: "flu", days: 4, resumes: "2026-09-27" };
+
+  it("says the camp is paused rather than calling it a rest day", () => {
+    const line = emptyLine(plan({ week_planned: true, paused }), "2026-09-11");
+    assert.notEqual(line, "rest day.");
+    assert.equal(line, "camp paused since 2026-09-08 — day 4. flu.");
+  });
+
+  it("still says nothing when a paused day somehow asks for something", () => {
+    // Belt and braces on the server's own rule: `prescription` returns nothing
+    // on a paused day, so this pairing should be unreachable. If it ever
+    // arrives, what the day asks for wins — a block on screen with "paused"
+    // written under it is the one reading that helps nobody.
+    assert.equal(emptyLine(plan({ today: [{ token: "LFC" }], paused }), "2026-09-11"), null);
+  });
 });

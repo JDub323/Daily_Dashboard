@@ -41,12 +41,13 @@ from __future__ import annotations
 
 import datetime as dt
 import tomllib
+from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import Field, model_validator
 
 from .models.common import SESSION_FOCUS, Base, SessionKind
-from .models.domain import PlanGroup, PrescribedBlock
+from .models.domain import CampBreak, PlanGroup, PrescribedBlock
 
 SUNDAY = 6
 """`date.weekday()`, where Monday is 0."""
@@ -452,12 +453,99 @@ def _parse_day(text: str, library: dict[str, Exercise], where: str) -> list[list
     return slots
 
 
+# --- breaks ----------------------------------------------------------------
+#
+# A camp that stops for a fortnight and picks up where it left off, which is
+# what being ill for two weeks actually does to a plan.
+#
+# The obvious implementation is to move `[program].start` forward, and it is
+# wrong in a way that only shows up later: every function below reads the week
+# out of `today - start`, so moving `start` renumbers days already lived. The
+# Tuesday that asked for UFC stops having asked for it, and the week of
+# compliance behind it silently becomes a week of something else. A break is
+# dated instead, and a day is never inside a break that began after it -- so
+# history recompiles to exactly what it was, forever, which is the property the
+# whole design is bent around.
+#
+# Everything here takes `breaks` as an argument and defaults it to empty. The
+# default is load-bearing: a camp with no breaks behaves byte for byte as it
+# did before this existed, so the existing tests are the regression net for
+# that claim rather than a wall of churn.
+
+
+def week_start(day: dt.date) -> dt.date:
+    """The Sunday on or before `day` -- the start of the grid row it is in."""
+    return day - dt.timedelta(days=(day.weekday() + 1) % 7)
+
+
+def next_sunday(day: dt.date) -> dt.date:
+    """The Sunday on or after `day`. `day` itself, when it is one.
+
+    What the resume control offers. You press it on the day you feel better and
+    the camp comes back at the top of the next row of the grid, because a row
+    is the unit the sheet is written in and re-entering one halfway through is
+    how the week index and the weekday lookup start disagreeing.
+    """
+    return day + dt.timedelta(days=(6 - day.weekday()) % 7)
+
+
+def paused_on(breaks: Sequence[CampBreak], today: dt.date) -> CampBreak | None:
+    """The break `today` falls inside, if any.
+
+    Half-open -- `started <= today < resumed` -- which is what makes the
+    Sunday you come back on the first day that asks for something again rather
+    than one more day off.
+    """
+    for entry in breaks:
+        if entry.started <= today and (entry.resumed is None or today < entry.resumed):
+            return entry
+    return None
+
+
+def shift(breaks: Sequence[CampBreak], today: dt.date) -> dt.timedelta:
+    """How far back the grid has been pushed, as of `today`.
+
+    Counted from the *Sunday* of the week a break started in, not from the day
+    it started, so the shift is always a whole number of weeks: `resumed` is a
+    Sunday by CHECK and this subtracts another one. The consequence, which is
+    intended, is that the week you fell ill in runs again in full when you come
+    back -- including the days of it you had already done. After a fortnight
+    off that is the right training, and the plan keys are date-stamped, so
+    nothing collides with what was logged the first time round.
+
+    A break that has not reached its Sunday yet contributes nothing. That is
+    the two days between pressing resume on a Friday and the camp restarting:
+    still paused, not yet shifted.
+    """
+    return sum(
+        (entry.resumed - week_start(entry.started) for entry in breaks if _effective(entry, today)),
+        dt.timedelta(),
+    )
+
+
+def _effective(entry: CampBreak, today: dt.date) -> bool:
+    return entry.resumed is not None and entry.resumed <= today
+
+
 # --- what today asks for ---------------------------------------------------
 
 
-def camp_week(program: Program, today: dt.date) -> int | None:
-    """Which week of the camp `today` falls in, or None if outside it."""
-    offset = (today - program.start).days
+def camp_week(
+    program: Program, today: dt.date, breaks: Sequence[CampBreak] = ()
+) -> int | None:
+    """Which week of the camp `today` falls in, or None if outside it.
+
+    **Frozen while a break is open**, at the week it stopped in. An open break
+    has no shift yet -- nobody knows how long it will be -- so without the
+    freeze the number would go on climbing through the illness and the panel
+    would say "week 6 of 28" about a camp that stopped in week 4 and has not
+    run since. It would then jump *backwards* on the Sunday it resumed. The
+    week you are paused in is the only one of those three that is true.
+    """
+    entry = paused_on(breaks, today)
+    if entry is not None:
+        today = entry.started
+    offset = (today - program.start - shift(breaks, today)).days
     if offset < 0:
         return None
     week = offset // 7
@@ -472,7 +560,7 @@ def days_out(program: Program, today: dt.date) -> int | None:
     return delta if delta >= 0 else None
 
 
-def week_planned(program: Program, today: dt.date) -> bool:
+def week_planned(program: Program, today: dt.date, breaks: Sequence[CampBreak] = ()) -> bool:
     """Whether any block covers today's week.
 
     The distinction this exists to draw: an empty Saturday in week 7 and any
@@ -480,22 +568,36 @@ def week_planned(program: Program, today: dt.date) -> bool:
     things. One is a rest day the plan chose; the other is eleven weeks nobody
     has written yet. A panel that renders them the same way is quietly telling
     you to rest for three months.
+
+    A paused day is a third of those, and it stays True here on purpose: the
+    week *is* planned, you are simply not in it today. The panel tells that
+    apart by asking `paused_on` first, which is the only place the difference
+    is worth a sentence.
     """
-    week = camp_week(program, today)
+    week = camp_week(program, today, breaks)
     return week is not None and any(week in b.week_numbers() for b in program.block)
 
 
-def plan_ends(program: Program) -> dt.date | None:
+def plan_ends(program: Program, breaks: Sequence[CampBreak] = ()) -> dt.date | None:
     """The last date any block covers.
 
     Surfaced because the honest thing for the panel to say once VJP runs out is
     the date it ran out on, rather than nothing -- an empty day and an
     unwritten week look identical otherwise, and only one of them is a rest day.
+
+    Every break that has been given a resume date moves this, including one
+    whose Sunday has not arrived yet: pressing resume is the decision, and the
+    date the camp now runs to is the first thing that decision changes. An open
+    break moves nothing, because how long it will be is not known.
     """
     weeks = [week for block in program.block for week in block.week_numbers()]
     if not weeks:
         return None
-    return program.start + dt.timedelta(days=max(weeks) * 7 + 6)
+    pushed = sum(
+        (entry.resumed - week_start(entry.started) for entry in breaks if entry.resumed),
+        dt.timedelta(),
+    )
+    return program.start + dt.timedelta(days=max(weeks) * 7 + 6) + pushed
 
 
 def _block(
@@ -527,16 +629,33 @@ def _block(
     )
 
 
-def prescription(program: Program, today: dt.date) -> list[PrescribedBlock]:
+def prescription(
+    program: Program, today: dt.date, breaks: Sequence[CampBreak] = ()
+) -> list[PrescribedBlock]:
     """What the plan asks for on `today`, blocks and standing commitments both.
 
     The two layers are merged here rather than kept apart, because the panel
     wants one list of things to fill in and does not care which file section
     each came from. What it does care about is `group`, which is what turns a
     practice's several parts into one card with one button.
+
+    A paused day asks for nothing, and the check is here rather than in the two
+    callers so that it cannot be remembered in one and forgotten in the other --
+    `state.py` calls this for today and again for each of the last seven days,
+    and a compliance window that counted blocks from days you were ill would be
+    the one number this feature exists to stop being wrong.
+
+    The pause takes `[[recurring]]` with it. A break is a fact about the body,
+    not about which section of the file a thing was written in, and there is no
+    reading of "too ill to lift" that leaves you at practice. What it does not
+    touch is `starts` on a commitment: that is a date in the world -- the gym
+    reopening -- and nothing about being ill moves it.
     """
+    if paused_on(breaks, today):
+        return []
+
     out: list[PrescribedBlock] = []
-    week = camp_week(program, today)
+    week = camp_week(program, today, breaks)
 
     block = None
     if week is not None:
@@ -575,7 +694,12 @@ def prescription(program: Program, today: dt.date) -> list[PrescribedBlock]:
     return out
 
 
-def groups(program: Program, today: dt.date, blocks: list[PrescribedBlock]) -> list[PlanGroup]:
+def groups(
+    program: Program,
+    today: dt.date,
+    blocks: list[PrescribedBlock],
+    breaks: Sequence[CampBreak] = (),
+) -> list[PlanGroup]:
     """The point-scoring bundles today is offering.
 
     One per standing commitment that is running, holding the keys that have to
@@ -583,7 +707,17 @@ def groups(program: Program, today: dt.date, blocks: list[PrescribedBlock]) -> l
     purpose: sparring is a thing a practice sometimes contained, and a bundle
     that only completed on the days you sparred would be unfinishable most of
     the week.
+
+    Nothing is offered on a paused day. `blocks` is already empty by then, so a
+    bundle built anyway would carry no keys, and `every` over no keys is true --
+    three points for a day spent in bed. `day.js` happens to skip a keyless
+    group and would have caught it, but that is the client's guard against its
+    own arithmetic, and a rule about what the camp offers should not be sitting
+    on the far side of the wire from the camp.
     """
+    if paused_on(breaks, today):
+        return []
+
     out: list[PlanGroup] = []
     for entry in program.recurring:
         running = entry.on(today)

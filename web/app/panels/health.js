@@ -43,7 +43,7 @@
 import * as api from "../api.js";
 import { el, mount, svg } from "../dom.js";
 import { rerender } from "../panel.js";
-import { store } from "../store.js";
+import { put, store } from "../store.js";
 
 const BAND = { low: 0.8, high: 1.5 };
 const MONOTONY_FLAG = 2.0;
@@ -351,16 +351,25 @@ function balance(d) {
  * What to say on a day the plan asks for nothing — and null when it asks for
  * something, so the caller can just test it.
  *
- * Three different sentences on purpose, and this is the whole reason the
+ * Four different sentences on purpose, and this is the whole reason the
  * function is exported and tested rather than inlined. A rest day the plan
- * chose, a week nobody has written yet, and a plan that has run out all arrive
- * as the same empty list, and they mean completely different things. The one
- * that would do real damage is the middle reading as the first: eleven
- * unwritten weeks quietly telling you to rest for three months, in a panel
- * whose entire job is to notice that kind of thing.
+ * chose, a week nobody has written yet, a plan that has run out, and a camp
+ * that is stopped all arrive as the same empty list, and they mean completely
+ * different things. The one that would do real damage is the second reading as
+ * the first: eleven unwritten weeks quietly telling you to rest for three
+ * months, in a panel whose entire job is to notice that kind of thing.
+ *
+ * Paused is checked before `week_planned` and that order is load-bearing. A
+ * paused week is still a written week — `week_planned` stays true, because the
+ * plan for it exists and you are simply not in it — so testing that first
+ * would render a fortnight of illness as a fortnight of "rest day.".
  */
 export function emptyLine(plan, today) {
   if (plan.today.length) return null;
+  if (plan.paused) {
+    const day = `day ${plan.paused.days}`;
+    return `camp paused since ${plan.paused.since} — ${day}. ${plan.paused.reason}.`;
+  }
   if (plan.week_planned) return "rest day.";
   return plan.ends && plan.ends < today
     ? `the plan runs out on ${plan.ends}. nothing written past it yet.`
@@ -412,7 +421,12 @@ function hero(plan) {
       phase ? el("span.figure-label", { text: phase.toLowerCase() }) : null,
     ),
     empty
-      ? el("div.faint.gap", { text: empty })
+      // A paused camp is the one empty line that is not faint. The other three
+      // are the plan working as designed and are footnotes to a day you are
+      // getting on with; this one is a state the app is in until you come back
+      // and end it, and an open break nobody notices is a camp that is quietly
+      // off for a month.
+      ? el(`div.gap.${plan.paused ? "value" : "faint"}`, { text: empty })
       : el("div.asks", null,
           ...outings.map((slot) => {
             // One row per outing, because `*` in the plan means a separate trip
@@ -725,6 +739,108 @@ function watch(panel) {
   return el(`span.${g.last_ok ? "faint" : "err"}.small`, { text: line });
 }
 
+// --- stopping the camp -------------------------------------------------------
+//
+// The one control on this tab, and it is deliberately the least convenient
+// thing in the app.
+//
+// Everything else here is built to be answered in one keystroke from a doorway.
+// This is the opposite case: it fires a handful of times a year, it moves weeks
+// of training, and the cost of pressing it by accident is a camp that silently
+// stops. So it sits in the foot rather than the hero, it takes two presses
+// rather than one, the second of them will not go without a reason typed into
+// it, and it has no `f`-key — the hint alphabet is close enough to the floor
+// `keys.test.js` guards that spending a letter here would be spending it badly,
+// and this is not a thing you should be able to reach by muscle memory.
+//
+// What it does NOT do is ask "are you sure". The reason field is the
+// confirmation, and it is a better one: it costs the same pause for thought and
+// leaves something behind that is worth reading in February.
+
+/** Whether the reason field is showing.
+ *
+ *  Module-level rather than in the store, because it is not a fact about the
+ *  day — nothing has happened yet. Putting it through `put` to open a text box
+ *  would have every other subscriber redraw for a keystroke.
+ *
+ *  What survives a redraw is the flag and not the text: a meal logged on the
+ *  phone lands through `pulse.js`, redraws this panel, and the field comes back
+ *  empty. That is worth knowing and not worth fixing — the field holds four
+ *  words for about as many seconds, and the alternative is a draft cached
+ *  somewhere for a control used twice a year. */
+let asking = false;
+
+/** Open or close the reason field without touching the day. */
+function ask(open) {
+  asking = open;
+  rerender("health");
+  if (open) document.querySelector(".camp-why")?.focus();
+}
+
+async function send(path, body) {
+  put("health", await api.post(path, body));
+}
+
+function campControl(plan) {
+  if (!plan) return null;
+  const paused = plan.paused;
+
+  if (paused?.committed) {
+    return el("span.row.gap", null,
+      el("span.small.faint", { text: `camp resumes ${paused.resumes}` }),
+      // The undo, and the reason the committed state is worth distinguishing
+      // at all: resume is pressed on the day you feel better, and feeling
+      // better on a Friday is a claim the Saturday sometimes withdraws.
+      el("button.ghost.tiny", {
+        text: "not yet",
+        onclick: () => send("/api/camp/resume", { cancel: true }),
+      }),
+    );
+  }
+
+  if (paused) {
+    // The whole arithmetic, printed before it is agreed to. Which week runs
+    // again and from what date are exactly the two things that would otherwise
+    // be discovered a week later, by which time the shift is in the table and
+    // the only way back is the one button that deliberately does not exist.
+    const week = paused.restarts_week;
+    const what = week == null ? "camp restarts" : `week ${week} restarts`;
+    return el("button", {
+      text: `resume — ${what} ${paused.resumes}`,
+      onclick: () => send("/api/camp/resume", {}),
+    });
+  }
+
+  if (!asking) {
+    return el("button.ghost.tiny", { text: "pause camp", onclick: () => ask(true) });
+  }
+
+  const reason = el("input.camp-why", {
+    placeholder: "why — illness, travel, injury",
+    maxlength: 200,
+    oninput: () => reason.classList.remove("bad"),
+  });
+  const commit = async () => {
+    const why = reason.value.trim();
+    // The reason IS the confirmation step. An empty one refuses rather than
+    // defaulting to something bland, because a break labelled "paused" is a
+    // break you will find in February and be unable to explain.
+    if (!why) return void reason.classList.add("bad");
+    asking = false;
+    await send("/api/camp/pause", { reason: why });
+  };
+  reason.onkeydown = (e) => {
+    if (e.key === "Enter") commit();
+    if (e.key === "Escape") ask(false);
+  };
+
+  return el("span.row.gap", null,
+    reason,
+    el("button", { text: "pause camp", onclick: commit }),
+    el("button.ghost.tiny", { text: "cancel", onclick: () => ask(false) }),
+  );
+}
+
 export default {
   id: "health",
   title: "training",
@@ -793,6 +909,13 @@ export default {
         watch(panel),
       ),
       loadBars(panel.loads),
+
+      // Last of all, under the bars. This is the only thing on the tab that
+      // writes, and where it sits is most of what stops it being pressed by
+      // accident — see `campControl`. It keeps its own row so the two states
+      // of it (a four-word button, or a text field and two more) do not shove
+      // the load figure around as they swap.
+      el("div.row.gap.camp-control", null, campControl(panel.plan)),
     );
   },
 };

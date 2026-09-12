@@ -11,6 +11,7 @@ invisible at a glance and both are caught at load.
 from __future__ import annotations
 
 import datetime as dt
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from pydantic import ValidationError
 from dashboard import trainplan
 from dashboard.config import project_root
 from dashboard.models.common import SessionKind
+from dashboard.models.domain import CampBreak
 
 # A minimal library, so the grammar tests do not depend on the real plan's
 # contents and the real plan is free to change without breaking them.
@@ -294,6 +296,109 @@ def test_plan_ends_on_the_saturday_of_the_last_written_week() -> None:
     assert trainplan.plan_ends(p) == SUNDAY + dt.timedelta(days=2 * 7 + 6)
 
 
+# --- breaks ----------------------------------------------------------------
+#
+# The camp stopping for a fortnight and picking up where it left off. The tests
+# that matter here are not about the shift being computed correctly -- that is
+# two subtractions -- but about the two things the obvious implementation gets
+# wrong: moving `[program].start` would renumber days already lived, and a
+# resume on any day but a Sunday would slide the week boundary off the grid.
+
+TUESDAY = dt.date(2026, 8, 11)
+"""Week 0, day 2. The day the camp stops in every test below."""
+
+
+def brk(started: dt.date, resumed: dt.date | None = None, ident: int = 1) -> CampBreak:
+    return CampBreak(id=ident, started=started, resumed=resumed, reason="flu")
+
+
+def test_a_day_before_a_break_asks_exactly_what_it_always_did() -> None:
+    """The property the whole design is bent around.
+
+    Moving `[program].start` would have been three lines and would have
+    renumbered every day already lived -- the Monday that asked for LC stops
+    having asked for it, and the week of compliance behind it becomes a week of
+    something else. A break is dated, so no past day is ever inside one.
+    """
+    p = program(mon="LC", tue="LFC")
+    monday = SUNDAY + dt.timedelta(days=1)
+    before = trainplan.prescription(p, monday)
+
+    for entry in (brk(TUESDAY), brk(TUESDAY, SUNDAY + dt.timedelta(weeks=3))):
+        assert trainplan.prescription(p, monday, [entry]) == before
+        assert trainplan.camp_week(p, monday, [entry]) == 0
+
+
+def test_a_paused_day_asks_for_nothing() -> None:
+    p = program(mon="LC", tue="LFC")
+    paused = [brk(TUESDAY)]
+    assert trainplan.prescription(p, TUESDAY, paused) == []
+
+
+def test_the_week_freezes_while_the_camp_is_paused() -> None:
+    """Otherwise the number climbs through the illness and then jumps backwards
+    on the Sunday it resumes: "week 6 of 28" about a camp that stopped in week 0
+    and has not run since."""
+    p = program(mon="LC")
+    paused = [brk(TUESDAY)]
+    for weeks in range(3):
+        assert trainplan.camp_week(p, TUESDAY + dt.timedelta(weeks=weeks), paused) == 0
+
+
+def test_a_break_reruns_the_week_it_stopped_in_from_that_week_s_sunday() -> None:
+    """Counted from the Sunday of the week the break started in, not from the
+    day it started -- which is what makes the shift a whole number of weeks, and
+    what makes the interrupted week run again in full rather than resuming
+    halfway through."""
+    p = program(sun="R", mon="LC", tue="LFC")
+    back = SUNDAY + dt.timedelta(weeks=2)
+    resumed = [brk(TUESDAY, back)]
+
+    assert trainplan.shift(resumed, back) == dt.timedelta(weeks=2)
+    assert trainplan.camp_week(p, back, resumed) == 0
+    assert [b.token for b in trainplan.prescription(p, back, resumed)] == ["R"]
+    # The Tuesday it stopped on comes round again and asks the same thing.
+    assert [
+        b.token for b in trainplan.prescription(p, back + dt.timedelta(days=2), resumed)
+    ] == ["LFC"]
+
+
+def test_the_days_between_pressing_resume_and_its_sunday_are_still_paused() -> None:
+    """Press resume on a Friday and the camp comes back on the Sunday. Those two
+    days are inside `started <= today < resumed` and the shift has not landed
+    yet -- one rule covering both, which is why neither needed a special case."""
+    back = SUNDAY + dt.timedelta(weeks=1)
+    pending = [brk(TUESDAY, back)]
+
+    saturday = back - dt.timedelta(days=1)
+    assert trainplan.paused_on(pending, saturday) is not None
+    assert trainplan.shift(pending, saturday) == dt.timedelta()
+    assert trainplan.paused_on(pending, back) is None
+    assert trainplan.shift(pending, back) == dt.timedelta(weeks=1)
+
+
+def test_plan_ends_moves_by_the_length_of_the_break() -> None:
+    """And moves as soon as a resume date is set, not when it arrives: pressing
+    resume is the decision, and where the camp now runs to is the first thing
+    that decision changes."""
+    p = trainplan.Program(
+        name="t", start=SUNDAY, weeks=8, **LIB, block=[{"weeks": "1-2", "mon": "LC"}]
+    )
+    ran_to = SUNDAY + dt.timedelta(days=2 * 7 + 6)
+    assert trainplan.plan_ends(p, [brk(TUESDAY)]) == ran_to
+    assert trainplan.plan_ends(p, [brk(TUESDAY, SUNDAY + dt.timedelta(weeks=2))]) == (
+        ran_to + dt.timedelta(weeks=2)
+    )
+
+
+def test_the_sunday_arithmetic() -> None:
+    friday = dt.date(2026, 9, 11)
+    assert trainplan.next_sunday(friday) == dt.date(2026, 9, 13)
+    assert trainplan.next_sunday(dt.date(2026, 9, 13)) == dt.date(2026, 9, 13)
+    assert trainplan.week_start(dt.date(2026, 9, 8)) == dt.date(2026, 9, 6)
+    assert trainplan.week_start(dt.date(2026, 9, 6)) == dt.date(2026, 9, 6)
+
+
 # --- the key ---------------------------------------------------------------
 
 
@@ -511,6 +616,23 @@ def test_a_commitment_does_not_run_before_it_starts() -> None:
     assert trainplan.groups(p, MONDAY, []) == []
 
 
+def test_a_break_takes_the_standing_commitment_with_it() -> None:
+    """The pause is a fact about the body rather than about which section of
+    the file a thing was written in, and there is no reading of "too ill to
+    lift" that leaves you at the club.
+
+    The group has to go too, and not only the blocks. `every` over no keys is
+    true, so a bundle built on a paused day would be three points for a day
+    spent in bed.
+    """
+    p = club()
+    assert [b.token for b in trainplan.prescription(p, MONDAY)] == ["HIIT", "TECH", "SPAR", "N"]
+
+    paused = [brk(SUNDAY)]
+    assert trainplan.prescription(p, MONDAY, paused) == []
+    assert trainplan.groups(p, MONDAY, [], paused) == []
+
+
 def test_a_commitment_and_a_block_cannot_prescribe_the_same_token() -> None:
     """Both land on the same day and are merged into one list of keys, so a
     token in both would produce two blocks nothing could tell apart."""
@@ -613,3 +735,175 @@ def test_freehand_logging_still_carries_no_plan_key(client) -> None:
         json={"date": CARD_DATE, "kind": "roadwork", "rpe": 4, "minutes": 30},
     ).json()
     assert panel["sessions_today"][-1]["plan_key"] is None
+
+
+# --- pausing the camp, through the table and over the wire ------------------
+#
+# The rules that live in the schema rather than in Python, and the round trip
+# the health tab's one control makes.
+
+def test_only_one_break_can_be_open_at_a_time(repo) -> None:
+    """A partial unique index, not a check in `pause_camp`.
+
+    "The camp is paused" is a fact about the table, and a second open row is
+    not a state any reader knows how to answer -- `paused_on` would return
+    whichever came back first and `shift` would count both.
+    """
+    repo.pause_camp(dt.date(2026, 9, 8), "flu")
+    with pytest.raises(ValueError, match="already paused"):
+        repo.pause_camp(dt.date(2026, 9, 10), "still flu")
+
+    repo.resume_camp(dt.date(2026, 9, 27))
+    repo.pause_camp(dt.date(2026, 10, 1), "a different flu")
+    assert len(repo.camp_breaks()) == 2
+
+
+def test_a_resume_has_to_be_a_sunday(repo) -> None:
+    """The constraint the week arithmetic stands on. A Thursday resume shifts
+    by sixteen days, which slides the week boundary off Sunday and breaks the
+    invariant `Program._check` exists to protect -- three weeks later, in a way
+    nobody would trace back to here."""
+    repo.pause_camp(dt.date(2026, 9, 8), "flu")
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.resume_camp(dt.date(2026, 9, 24))
+
+
+def test_a_resume_can_only_be_taken_back_before_it_arrives(repo) -> None:
+    """Undoing a Friday decision on the Saturday is one thing; reopening a
+    break whose Sunday passed weeks ago is another, and would un-shift a camp
+    that has been running on the new numbering since. Only the first exists."""
+    repo.pause_camp(dt.date(2026, 9, 8), "flu")
+    repo.resume_camp(dt.date(2026, 9, 27))
+
+    assert repo.cancel_resume(dt.date(2026, 9, 12)) is not None
+    assert repo.open_camp_break() is not None
+
+    repo.resume_camp(dt.date(2026, 9, 27))
+    assert repo.cancel_resume(dt.date(2026, 9, 30)) is None
+    assert repo.open_camp_break() is None
+
+
+PAUSE_DAY = "2026-09-08"
+"""A Tuesday in camp week 4, which asks for the upper french contrast."""
+
+
+def test_pausing_the_camp_empties_the_day_and_says_why(client) -> None:
+    """End to end. What the panel has to be able to draw: nothing prescribed,
+    the week it stopped in rather than one that keeps climbing, and the Sunday
+    coming back would use -- printed before it is agreed to."""
+    before = client.get("/api/state", params={"date": PAUSE_DAY}).json()["health"]["plan"]
+    assert [b["token"] for b in before["today"]] == ["UFC", "C1"]
+    assert before["paused"] is None
+
+    plan = client.post(
+        "/api/camp/pause", json={"date": PAUSE_DAY, "reason": "flu"}
+    ).json()["plan"]
+
+    assert plan["today"] == []
+    assert plan["week"] == 4
+    assert plan["paused"] == {
+        "since": PAUSE_DAY,
+        "reason": "flu",
+        "days": 1,
+        "resumes": "2026-09-13",
+        "committed": False,
+        "restarts_week": 4,
+    }
+    # The fight does not move with the camp, and that the gap narrows by
+    # exactly the length of the illness is the useful fact here.
+    assert plan["days_out"] == before["days_out"]
+
+
+def test_a_paused_camp_owes_nothing_for_the_week_it_was_out(client) -> None:
+    """The compliance number this feature exists to stop being wrong.
+
+    `load_score` already reports `not_asked` rather than zero when the week
+    prescribed nothing -- the eleven unwritten weeks taught it that -- so a
+    paused week lands in a state that was already there.
+    """
+    owed_before = _blocks_owed(client.get("/api/health", params={"date": "2026-09-11"}).json())
+    client.post("/api/camp/pause", json={"date": PAUSE_DAY, "reason": "flu"})
+
+    # Friday: the window still reaches back to the Saturday before the illness,
+    # so it scores -- off the three days that were actually asked for, and not
+    # off the four that were not.
+    owed_after = _blocks_owed(client.get("/api/health", params={"date": "2026-09-11"}).json())
+    assert 0 < owed_after < owed_before
+
+    # The following Sunday, the whole seven days are inside the break. A week
+    # that asked nothing cannot be failed, and the input says which kind of
+    # nothing it is rather than scoring a zero.
+    whole_week = client.get("/api/health", params={"date": "2026-09-14"}).json()
+    assert _plan_input(whole_week)["state"] == "not_asked"
+
+
+def _plan_input(panel: dict) -> dict:
+    return next(i for i in panel["derived"]["load"]["inputs"] if i["key"] == "prescribed")
+
+
+def _blocks_owed(panel: dict) -> int:
+    """The denominator out of `N of M blocks logged`."""
+    return int(_plan_input(panel)["reading"].split(" of ")[1].split()[0])
+
+
+def test_resuming_names_its_sunday_and_can_be_taken_back(client) -> None:
+    client.post("/api/camp/pause", json={"date": PAUSE_DAY, "reason": "flu"})
+
+    # Pressed on the Friday: the camp comes back on the Sunday, and the two
+    # days in between are still paused.
+    paused = client.post("/api/camp/resume", json={"date": "2026-09-11"}).json()["plan"]["paused"]
+    assert paused["committed"] is True
+    assert paused["resumes"] == "2026-09-13"
+
+    back = client.get("/api/state", params={"date": "2026-09-13"}).json()["health"]["plan"]
+    assert back["paused"] is None
+    assert back["week"] == 4
+    assert [b["token"] for b in back["today"]] == ["R"]
+
+    undone = client.post(
+        "/api/camp/resume", json={"date": "2026-09-12", "cancel": True}
+    ).json()["plan"]["paused"]
+    assert undone["committed"] is False
+
+
+def test_the_week_that_was_interrupted_runs_again_in_full(client) -> None:
+    """Two weeks off, and the Tuesday that asked for UFC asks for it again --
+    on a new date, so nothing collides with what was logged the first time."""
+    client.post("/api/camp/pause", json={"date": PAUSE_DAY, "reason": "flu"})
+    client.post("/api/camp/resume", json={"date": "2026-09-20"})
+
+    plan = client.get("/api/state", params={"date": "2026-09-22"}).json()["health"]["plan"]
+    assert plan["week"] == 4
+    assert [b["token"] for b in plan["today"]] == ["UFC", "C1"]
+    assert [b["key"] for b in plan["today"]] == ["2026-09-22:UFC", "2026-09-22:C1"]
+    assert plan["ends"] == "2026-10-17"
+
+
+def test_the_camp_cannot_be_paused_twice_over(client) -> None:
+    """Two refusals behind one message, and they are different mechanisms.
+
+    A second *open* break is refused by the partial unique index. A second
+    break while an earlier one is closed but has not reached its Sunday is
+    refused in the handler, because the index cannot see it -- and two breaks
+    covering the same days would have `paused_on` answer with whichever came
+    back first and `shift` count them both.
+    """
+    first = client.post("/api/camp/pause", json={"date": PAUSE_DAY, "reason": "flu"})
+    assert first.status_code == 200
+
+    again = client.post("/api/camp/pause", json={"date": "2026-09-10", "reason": "still flu"})
+    assert again.status_code == 409
+
+    # Committed but not yet arrived: the window the index is blind to.
+    client.post("/api/camp/resume", json={"date": "2026-09-11"})
+    pending = client.post("/api/camp/pause", json={"date": "2026-09-12", "reason": "worse"})
+    assert pending.status_code == 409
+
+
+def test_a_reason_is_not_optional(client) -> None:
+    """The one piece of friction this control is supposed to have. A break you
+    cannot explain in February is a fortnight missing out of the camp for no
+    recorded cause."""
+    for reason in ("", "   "):
+        body = {"date": PAUSE_DAY, "reason": reason}
+        assert client.post("/api/camp/pause", json=body).status_code == 422

@@ -2114,6 +2114,63 @@ MIGRATIONS: list[tuple[int, str]] = [
             ON training_session (plan_key) WHERE plan_key IS NOT NULL;
         """,
     ),
+    (
+        35,
+        """
+        -- The camp can stop, and then pick up where it left off.
+        --
+        -- Illness is the case this was built for, and what makes it a table
+        -- rather than a hand-edit of `training.toml` is that the obvious edit
+        -- is wrong. `camp_week` is `(today - start) // 7`, so moving
+        -- `[program].start` renumbers every day already lived: the Tuesday
+        -- that asked for UFC stops having asked for it, and a week of
+        -- compliance quietly becomes a week of something else. A break is
+        -- dated instead, and a day is never inside a break that began after
+        -- it -- which is the whole property. History recompiles identically.
+        --
+        -- `started` is any weekday, because it is the day you stopped. Days
+        -- from it forward prescribe nothing until the break closes.
+        --
+        -- `resumed` is NULL while you are out, and **a Sunday** once it is
+        -- set. That is a CHECK rather than a convention. The shift a break
+        -- applies is `resumed - the Sunday of started's week`, and
+        -- constraining `resumed` to a Sunday is what makes that a whole number
+        -- of weeks -- which is what keeps the week index and the weekday
+        -- lookup agreeing. A Thursday resume shifts by sixteen days, slides
+        -- the week boundary off Sunday, and breaks the invariant
+        -- `Program._check` already exists to protect, three weeks later, in a
+        -- way nobody would trace.
+        --
+        -- `resumed` may be in the future, and that is not an edge case: press
+        -- resume on a Friday and the camp comes back on the Sunday. Those two
+        -- days are still inside the break -- `started <= today < resumed` --
+        -- and the shift does not apply until the Sunday arrives. One rule
+        -- covers both, so neither needed a special case.
+        --
+        -- At most one break may be open, enforced by a partial unique index on
+        -- an expression rather than in Python: "the camp is paused" is a fact
+        -- about the table, and a second open row is not a state any reader
+        -- here knows how to answer. Every row in the partial index has the
+        -- same expression value, so it holds one row or none.
+        CREATE TABLE camp_break (
+            id       INTEGER PRIMARY KEY,
+            started  TEXT    NOT NULL
+                             CHECK (started IS strftime('%Y-%m-%d', started)),
+            resumed  TEXT    CHECK (resumed IS NULL OR (
+                                 resumed IS strftime('%Y-%m-%d', resumed)
+                                 AND strftime('%w', resumed) = '0'
+                                 AND resumed > started)),
+            -- Required, and as much the point of the table as the dates are.
+            -- A camp with a fortnight missing out of it is a thing you read in
+            -- February, and "why" is the only part of it you will not be able
+            -- to reconstruct from anything else.
+            reason   TEXT    NOT NULL CHECK (length(reason) BETWEEN 1 AND 200)
+        ) STRICT;
+
+        CREATE UNIQUE INDEX camp_break_open
+            ON camp_break ((resumed IS NULL)) WHERE resumed IS NULL;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

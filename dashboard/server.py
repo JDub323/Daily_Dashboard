@@ -2196,6 +2196,48 @@ def _register(app: FastAPI) -> None:
             raise LookupError(f"no session {body.session_id}")
         return state.health_panel(cfg, repo, body.date)
 
+    # -- the camp stopping and starting --------------------------------------
+    #
+    # The two writes the health tab is allowed to make, and they are worth a
+    # word because that tab took no input at all between 2026-09-01 and this.
+    # The rule that emptied it holds: *logging what happened* belongs to the
+    # phone, because it is something you say standing in a doorway having just
+    # finished. Editing the plan is the other thing -- a decision made at a
+    # desk, off the same panel that shows the camp -- and there is nowhere
+    # better for it than beside the weeks it moves.
+
+    @app.post("/api/camp/pause")
+    def camp_pause(cfg: Cfg, repo: Repo, body: api.CampPauseRequest) -> api.HealthPanel:
+        """Stop the camp from `date`. Refused if it is already stopped.
+
+        Two refusals, and they are not the same one. The index refuses a second
+        *open* break -- see `Repository.pause_camp`. This refuses a second break
+        while an earlier one is closed but has not reached its Sunday, which the
+        index cannot see and which would leave two breaks covering the same
+        days: `paused_on` would answer with whichever came back first and
+        `shift` would count them both. The panel never offers it, because a
+        committed pause shows no pause button; an API client could.
+        """
+        if trainplan.paused_on(repo.camp_breaks(), body.date):
+            raise ValueError("the camp is already paused")
+        repo.pause_camp(body.date, body.reason)
+        return state.health_panel(cfg, repo, body.date)
+
+    @app.post("/api/camp/resume")
+    def camp_resume(cfg: Cfg, repo: Repo, body: api.CampResumeRequest) -> api.HealthPanel:
+        """Set the Sunday the camp comes back on, or take one back.
+
+        The date is derived here, from the browser's `today`, rather than taken
+        from the body: `next_sunday` has one answer and a field that can hold
+        only one value is a field a client can only get wrong.
+        """
+        if body.cancel:
+            if repo.cancel_resume(body.date) is None:
+                raise LookupError("there is no pending resume to cancel")
+        elif repo.resume_camp(trainplan.next_sunday(body.date)) is None:
+            raise LookupError("the camp is not paused")
+        return state.health_panel(cfg, repo, body.date)
+
     @app.post("/api/bathroom")
     def bathroom_add(cfg: Cfg, repo: Repo, body: api.BathroomRequest) -> api.HealthPanel:
         """One visit. The kind/field pairing is already validated by the

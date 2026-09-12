@@ -14,6 +14,7 @@ while the client compared against its own, so any skew silently broke every
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -652,28 +653,85 @@ def health_series(repo: Repository) -> list[api.HealthSeries]:
     ]
 
 
-def training_plan(cfg: Settings, today: dt.date) -> api.TrainingPlan | None:
+def camp_pause(
+    program: trainplan.Program,
+    breaks: Sequence[d.CampBreak],
+    today: dt.date,
+) -> api.CampPause | None:
+    """The paused state as the panel needs it, or None if the camp is running.
+
+    The two dates this computes are the whole reason the panel can be trusted
+    with a button: `resumes` is the Sunday coming back would use, and it is on
+    screen *before* it is agreed to, so the week that gets re-run is a thing
+    you chose rather than a thing you discovered.
+    """
+    entry = trainplan.paused_on(breaks, today)
+    if entry is None:
+        return None
+    resumes = entry.resumed or trainplan.next_sunday(today)
+    return api.CampPause(
+        since=entry.started,
+        reason=entry.reason,
+        days=(today - entry.started).days + 1,
+        resumes=resumes,
+        committed=entry.resumed is not None,
+        # Asked of the day the camp comes back on rather than of today, which
+        # is the point: on that Sunday the shift has taken effect, so this is
+        # the week that will actually be served -- the one it stopped in.
+        restarts_week=trainplan.camp_week(program, resumes, _as_if_resumed(breaks, entry, resumes)),
+    )
+
+
+def _as_if_resumed(
+    breaks: Sequence[d.CampBreak], entry: d.CampBreak, resumes: dt.date
+) -> list[d.CampBreak]:
+    """`breaks` with `entry` given the resume date it is being offered.
+
+    Replaced rather than appended. An appended copy would leave the open row in
+    the list too, and `paused_on` would find it and freeze the answer at the
+    week it stopped in -- which is the right number here for the wrong reason,
+    and would stop being the right number the moment anything else changed.
+    """
+    resumed = entry.model_copy(update={"resumed": resumes})
+    return [resumed if b.id == entry.id else b for b in breaks]
+
+
+def training_plan(
+    cfg: Settings, repo: Repository, today: dt.date
+) -> api.TrainingPlan | None:
     """The camp, as the panel needs it. None when there is no plan file.
 
     Note what is *not* here: anything comparing the plan to the log. The
     prescription is what was asked and the sessions are what happened, and
     keeping the join out of this function is what lets the plan be edited
     without a month of history quietly changing meaning.
+
+    It takes a `repo` now, which it did not before, and the reason is the one
+    thing the plan cannot read out of its own file: whether the camp is
+    currently stopped. `trainplan.py` stays pure -- it is handed the breaks
+    rather than fetching them -- and this is the seam where the file and the
+    table meet.
     """
     program = trainplan.program(cfg.path("training"))
     if program is None:
         return None
-    blocks = trainplan.prescription(program, today)
+    breaks = repo.camp_breaks()
+    blocks = trainplan.prescription(program, today, breaks)
     return api.TrainingPlan(
         name=program.name,
         fight=program.fight,
+        # Unmoved by a break, and deliberately so. The camp slides; the fight
+        # does not. That the gap between them narrows by exactly the length of
+        # the illness is the true and useful fact here, and the panel should go
+        # on printing it in the same large type it always has.
         days_out=trainplan.days_out(program, today),
-        week=trainplan.camp_week(program, today),
+        week=trainplan.camp_week(program, today, breaks),
         weeks=program.weeks,
         today=blocks,
-        groups=trainplan.groups(program, today, blocks),
-        week_planned=trainplan.week_planned(program, today),
-        ends=trainplan.plan_ends(program),
+        groups=trainplan.groups(program, today, blocks, breaks),
+        week_planned=trainplan.week_planned(program, today, breaks),
+        ends=trainplan.plan_ends(program, breaks),
+        paused=camp_pause(program, breaks, today),
     )
 
 
@@ -759,11 +817,18 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
     # Read here rather than inside `load_score` because `health.py` has never
     # known what a `TrainingPlan` is -- it takes lists of rows and returns
     # numbers, and the whole reason it is testable is that it stayed that way.
-    plan = training_plan(cfg, today)
+    plan = training_plan(cfg, repo, today)
     sessions_today = repo.sessions_on(today)
     answered = {s.plan_key for s in sessions if s.plan_key}
 
     program = trainplan.program(cfg.path("training"))
+    # The same breaks the plan above was built from, and they matter more here:
+    # a paused day prescribes nothing, so a week spent ill leaves this window
+    # empty rather than full of blocks nobody could have answered. `plan_total`
+    # of zero already reports `not_asked` rather than a zero score -- the
+    # eleven unwritten weeks taught `load_score` that -- so a paused week falls
+    # into a state that was already there and needed no second name.
+    breaks = repo.camp_breaks()
     owed = [
         block
         for offset in range(health.ACUTE_DAYS)
@@ -771,7 +836,7 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
         # a practice sometimes contains, not things the week asked for, and a
         # compliance figure that counted them could never reach 100.
         for block in (
-            trainplan.prescription(program, today - dt.timedelta(days=offset))
+            trainplan.prescription(program, today - dt.timedelta(days=offset), breaks)
             if program
             else []
         )

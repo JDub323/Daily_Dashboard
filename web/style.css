@@ -1775,3 +1775,12 @@ input:focus, textarea:focus {
 /* The prose half of the ballot. Wider line height than the rest of the panel
    because this is read as paragraphs rather than scanned as a row. */
 .feedback { white-space: pre-wrap; line-height: 1.55; }
+
+/* The camp's pause control, in the foot of the training panel. Sized to look
+   like a footnote rather than a thing to press: it fires a few times a year
+   and moves weeks of training, so the styling is doing the same job the two
+   presses and the required reason do. */
+.camp-control { margin-top: var(--s2); }
+.camp-control input { width: 22ch; font-size: var(--t-meta); }
+.camp-control input.bad { border-color: var(--bad); }
+.camp-control input.bad:focus { outline-color: var(--bad); }

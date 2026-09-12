@@ -640,6 +640,34 @@ class SessionDeleteRequest(DateBody):
     session_id: int
 
 
+class CampPauseRequest(DateBody):
+    """Stop the camp, from `date`.
+
+    `reason` is required and has no default. That is the one piece of friction
+    this control is supposed to have: pausing a camp is a decision you want to
+    be able to read back in February, and a reason that could be skipped is one
+    that would be.
+    """
+
+    reason: str = Field(min_length=1, max_length=200)
+
+
+class CampResumeRequest(DateBody):
+    """Start it again -- on the Sunday derived from `date`, never on `date`.
+
+    The resume date is computed server-side from the browser's today rather
+    than sent, because there is exactly one legal answer and a field that can
+    only hold one value is a field a client can get wrong.
+    """
+
+    cancel: bool = False
+    """Take back a resume that has not arrived yet, rather than setting one.
+
+    One endpoint and a flag, rather than two routes, because they are the same
+    decision in two directions and the thing that must not drift between them
+    is which break they act on."""
+
+
 class DayLogRequest(DateBody):
     text: str = Field(max_length=2000)
 
@@ -1452,6 +1480,40 @@ class GarminStatus(Base):
     the window has usually already been pulled."""
 
 
+class CampPause(Base):
+    """The camp, stopped: since when, why, and what coming back would cost.
+
+    Everything here is derived at read time from one `camp_break` row and the
+    browser's `today`. Nothing is stored in this shape, which is what keeps
+    `days` from being a number that was right on the morning it was written.
+    """
+
+    since: dt.date
+    reason: str
+    days: int = Field(ge=1)
+    """Inclusive, so the day you stop is day 1. It is a count of days spent
+    ill, and the day you went to bed was one of them."""
+
+    resumes: dt.date
+    """The Sunday the camp comes back on -- the one already committed to, or
+    the one pressing resume today would use. The panel prints it either way,
+    because the point of showing it is that the arithmetic is on screen
+    *before* it is agreed to rather than discovered a week later."""
+
+    committed: bool = False
+    """Whether `resumes` has been pressed or is still hypothetical.
+
+    The gap between the two is real and ordinary: resume on a Friday and there
+    are two more days of nothing prescribed before the camp restarts. A panel
+    that could not tell those apart would be offering a button that had already
+    been pressed."""
+
+    restarts_week: int | None = None
+    """The camp week that runs again from `resumes`. The week you fell ill in,
+    in full -- see `trainplan.shift` for why it is the whole week and not the
+    remainder of it."""
+
+
 class TrainingPlan(Base):
     """The camp: how far out the fight is, and what today asks for.
 
@@ -1494,6 +1556,10 @@ class TrainingPlan(Base):
     behind us, because a schedule that has run out and a schedule that says
     "rest" look identical from the inside, and only one of them means you have
     a decision to make."""
+
+    paused: CampPause | None = None
+    """Set only while the camp is stopped. Its presence is the state -- there
+    is no boolean beside it that could disagree with it."""
 
 
 class HealthPanel(Base):

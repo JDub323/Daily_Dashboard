@@ -962,6 +962,39 @@ class PlanGroup(Base):
     """
 
 
+class CampBreak(Base):
+    """A stretch the camp was stopped for, and how far it pushes what follows.
+
+    The row is deliberately dumb -- two dates and a sentence -- and every
+    question asked of it is answered in `trainplan.py`, which owns the Sunday
+    grid the arithmetic depends on. Putting `shift` here would have split the
+    camp's calendar across two files, and the half in this one would have had
+    to restate the rule that the week starts on Sunday.
+
+    What it is *not*: a record of a session that did not happen. Nothing here
+    touches `training_session`, and a break leaves no row in it -- a day you
+    were ill is a day with no training on it, which is a fact the load model
+    should see as the zero it is.
+    """
+
+    id: int
+    started: dt.date
+    """The day the camp stopped. Any weekday: illness does not wait for
+    Sunday."""
+
+    resumed: dt.date | None = None
+    """The Sunday it picks back up on, or None while it is still open.
+
+    Always a Sunday -- see the CHECK in migration 35 -- and allowed to be in
+    the future, which is the ordinary case rather than an edge one: resume is
+    pressed on the day you feel better and takes effect on the coming Sunday.
+    Until then the break is closed but not yet over, and both halves of that
+    fall out of `started <= today < resumed` without a special case.
+    """
+
+    reason: str = Field(min_length=1, max_length=200)
+
+
 class DayLog(Base):
     date: dt.date
     text: str = Field(max_length=2000)
