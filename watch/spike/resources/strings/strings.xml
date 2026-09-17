@@ -1,0 +1,4 @@
+<strings>
+    <!-- What the app list calls it. Short, because the app list is narrow. -->
+    <string id="AppName">In-Out Probe</string>
+</strings>

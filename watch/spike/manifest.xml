@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!--
+  The Phase 1 spike. It exists to answer one question that nobody on the
+  internet has answered: will Garmin Connect, relaying for the watch over BLE,
+  resolve and route a *.ts.net name to a 100.x address.
+
+  Products are the two FR165 variants and nothing else. A spike that builds for
+  thirty devices is a spike that takes thirty times as long to fail.
+-->
+<iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="3">
+    <iq:application
+        id="25bae424ef4841f79bc0d029decaaf44"
+        type="watch-app"
+        name="@Strings.AppName"
+        entry="SpikeApp"
+        launcherIcon="@Drawables.LauncherIcon"
+        minApiLevel="5.0.0">
+        <iq:products>
+            <iq:product id="fr165"/>
+            <iq:product id="fr165m"/>
+        </iq:products>
+        <!--
+          Communications is the whole point. Without it makeWebRequest is not
+          merely refused at runtime, the app will not load.
+        -->
+        <iq:permissions>
+            <iq:uses-permission id="Communications"/>
+        </iq:permissions>
+        <iq:languages>
+            <iq:language>eng</iq:language>
+        </iq:languages>
+    </iq:application>
+</iq:manifest>
