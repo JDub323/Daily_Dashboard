@@ -2048,7 +2048,7 @@ function homeScreen() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v15";
+const BUILD = "log-v16";
 
 /**
  * The build, along the foot of the title screen.
@@ -2297,11 +2297,83 @@ function toast(message) {
   toastTimer = setTimeout(() => node.classList.remove("up"), 3200);
 }
 
+/**
+ * The tab bar, held against the bottom of the *screen* rather than the bottom
+ * of the layout.
+ *
+ * The bar is `position: fixed; bottom: 0`, which reads as "the bottom of the
+ * screen" and is not what it means. It means the bottom of the **layout
+ * viewport** — the box the page is laid out in — and a soft keyboard does not
+ * shrink that box. It covers the lower third of it with a keyboard and slides
+ * the **visual viewport** up, which is the window you can actually see. The
+ * bar stays at the bottom of the box: a strip of furniture stranded in the
+ * middle of the display with the page still scrolling behind it, which is what
+ * "the bottom bar detaches from the bottom of the screen" is.
+ *
+ * It shows up on the session log and nowhere else, and the reason is worth
+ * writing down because it is not about sessions. The minutes field is the only
+ * typed answer in the whole app that sits **below the fold**: on a 375×812
+ * screen with a focus chosen it lands at y=754 against a bar whose top edge is
+ * at 753, so tapping it is the one time the browser has to scroll the page to
+ * bring a field into view. Every other field — the check-in's measures at
+ * y=158, the drink's amount at y=493 — is already on screen, the page does not
+ * move, and a bar sitting still on a page that is also sitting still looks
+ * exactly like a bar that is behaving. The keyboard was always doing this. The
+ * session log is where the page moves enough to see it.
+ *
+ * So: measure how much of the layout viewport is hidden below the visual one
+ * and hand it to the stylesheet as `--lift`. `visualViewport` is the only
+ * honest source for this — the keyboard fires no event of its own on either
+ * platform, and guessing its height from `innerHeight` deltas is the thing
+ * that breaks on the next phone.
+ *
+ * Doing the arithmetic rather than naming a platform is the point: where the
+ * browser *does* shrink the layout viewport for the keyboard — Chromium with
+ * `interactive-widget=resizes-content`, and a standalone Android window that
+ * resizes — the two viewports agree, the difference is zero, and this sets a
+ * lift of nothing. Nothing to detect, nothing to undo, no user-agent test.
+ */
+const KEYBOARD_MIN = 120;
+
+function holdTheFoot() {
+  const seen = window.visualViewport;
+  if (!seen) return;
+
+  const measure = () => {
+    // The layout viewport, which is what `bottom: 0` is measured against, and
+    // `clientHeight` rather than `innerHeight` — the latter includes a
+    // horizontal scrollbar's gutter and is a float on a pinched page.
+    const box = document.documentElement.clientHeight;
+    const hidden = box - (seen.offsetTop + seen.height);
+    // A pinch is the other way the two viewports disagree, and lifting the bar
+    // for it would be wrong — zoomed in, the bar belongs where the page put
+    // it. Only a keyboard is worth correcting, and `KEYBOARD_MIN` is the floor
+    // under "a keyboard and not a rounding error": the smallest phone keyboard
+    // is a little over 200px and the disagreements that are not keyboards are
+    // a pixel or two of rubber band.
+    const keyboard = seen.scale <= 1.01 && hidden > KEYBOARD_MIN;
+    document.documentElement.style.setProperty(
+      "--lift", keyboard ? `${Math.round(hidden)}px` : "0px");
+  };
+
+  // `scroll` as well as `resize`: on iOS the keyboard's arrival is a resize,
+  // but scrolling afterwards moves the visual viewport within the layout one
+  // without resizing anything, and the offset changes under us.
+  seen.addEventListener("resize", measure);
+  seen.addEventListener("scroll", measure);
+  measure();
+}
+
 // --- boot ---------------------------------------------------------------------
 
 onQueueChange(drawNet);
 
 $("#net").addEventListener("click", sendNow);
+
+// Bound once, for the life of the app: the bar it corrects is furniture in
+// index.html rather than anything `draw` replaces, so there is nothing to
+// re-bind when the screen changes.
+holdTheFoot();
 
 // Coming back to the front means the hour has moved, and nothing else. It used
 // to also flush and reload, on the theory that a phone returning to the front

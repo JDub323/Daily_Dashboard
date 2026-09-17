@@ -1,8 +1,34 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
-  <!-- Same mark inside the maskable safe zone: Android crops this to whatever
-       shape the launcher uses, and anything outside the middle 80% can go. -->
-  <rect width="192" height="192" fill="#0a0c12"/>
-  <rect x="48" y="58" width="96" height="11" rx="5.5" fill="#e8b458"/>
-  <rect x="48" y="91" width="96" height="11" rx="5.5" fill="#dfe6f2"/>
-  <rect x="48" y="124" width="56" height="11" rx="5.5" fill="#5ccfe6"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192" role="img" aria-label="Sharpness">
+  <!-- The same mark inside the maskable safe zone. Android crops this to
+       whatever shape the launcher uses, so the ground is full-bleed with no
+       corner radius and no hairline — a border would be sliced off-centre by a
+       circle mask — and the S is scaled to .74 so all four of its chamfers
+       clear the middle 80% the spec guarantees. At full size the corners of
+       the letter land exactly on that circle, which is a crop waiting to
+       happen on the one launcher that rounds hardest. -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#11151f"/>
+      <stop offset="1" stop-color="#05070c"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4cd80"/>
+      <stop offset=".55" stop-color="#e8b458"/>
+      <stop offset="1" stop-color="#cf9636"/>
+    </linearGradient>
+    <radialGradient id="pool" cx=".5" cy=".46" r=".62">
+      <stop offset="0" stop-color="#e8b458" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#e8b458" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="192" height="192" fill="url(#plate)"/>
+  <rect width="192" height="192" fill="url(#pool)"/>
+
+  <g transform="translate(96,96) scale(.74) translate(-96,-96)">
+    <path transform="translate(0,5)" fill="#04060a" fill-opacity=".85"
+          d="M62 36 H130 L144 50 V58 H70 V85 H144 V142 L130 156 H62 L48 142 V134 H122 V107 H48 V50 Z"/>
+    <path fill="url(#gold)"
+          d="M62 36 H130 L144 50 V58 H70 V85 H144 V142 L130 156 H62 L48 142 V134 H122 V107 H48 V50 Z"/>
+  </g>
 </svg>

@@ -26,6 +26,14 @@ html {
   /* Stops iOS scaling text up in landscape, which on a page of button rows
      turns a tidy 3-across into a 2-across with one orphan. */
   -webkit-text-size-adjust: 100%;
+  /* The one number the browser's own "scroll the field you just tapped into
+     view" does not know: the tab bar is fixed furniture painted over the page,
+     so without this the field it scrolls to is flush with the bottom of the
+     screen and therefore behind the bar. The session log's minutes field is
+     the case — it is the only typed answer in the app that sits below the fold
+     once a focus is chosen, so it is the only one the browser has to scroll to
+     at all. Same height as the body's bottom padding, for the same reason. */
+  scroll-padding-bottom: calc(78px + env(safe-area-inset-bottom));
 }
 
 body {
@@ -512,7 +520,15 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
    The dashboard's segmented bar, moved to the bottom, which is where a thumb
    is. A mouse is equidistant from everything on screen; a thumb is not. The
    cyan hairline is the title screen's horizon doing the same job one storey
-   down — separating the fixed furniture from the thing that scrolls. */
+   down — separating the fixed furniture from the thing that scrolls.
+
+   `--lift` is the correction for the soft keyboard, written by `holdTheFoot`
+   in app.js and zero the rest of the time. `bottom: 0` on a fixed element
+   means the bottom of the *layout* viewport, and a phone keyboard does not
+   change that — it covers the bottom of the layout viewport with a keyboard
+   and then scrolls the page under it. So the bar stayed where the screen used
+   to end: adrift in the middle of the display with the page still moving
+   behind it, which is the bug. See the long note at `holdTheFoot`. */
 
 .tabs {
   position: fixed;
@@ -523,6 +539,9 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   background: linear-gradient(180deg, #0c0f16, #06080d);
   border-top: 1px solid rgba(92,207,230,.18);
   padding-bottom: env(safe-area-inset-bottom);
+  /* No transition. This tracks a keyboard that is already sliding, and half a
+     second of easing behind it is the detachment again, briefly. */
+  transform: translateY(calc(-1 * var(--lift, 0px)));
 }
 .tab {
   font-family: var(--font-display);
@@ -553,7 +572,9 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 /* --- the toast --------------------------------------------------------------
    Above the tab bar rather than over it: the one thing it ever says is that a
    write was refused, and covering the control you would reach for next is a
-   poor way to report it. */
+   poor way to report it. Which means it rides on `--lift` too — it is measured
+   off the bar, so a bar that has moved and a toast that has not is the same
+   mistake one storey up. */
 
 .toast {
   position: fixed;
@@ -567,11 +588,11 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   color: var(--fg);
   box-shadow: inset 0 1px 0 rgba(223,230,242,.12);
   opacity: 0;
-  transform: translateY(8px);
+  transform: translateY(calc(8px - var(--lift, 0px)));
   transition: opacity .18s ease, transform .18s ease;
   pointer-events: none;
 }
-.toast.up { opacity: 1; transform: none; }
+.toast.up { opacity: 1; transform: translateY(calc(-1 * var(--lift, 0px))); }
 
 /* A tablet, or a phone in landscape. The column stops growing — a 700px row of
    three buttons is three buttons you have to reach across — and centres. */

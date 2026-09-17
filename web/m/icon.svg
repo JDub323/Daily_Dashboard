@@ -1,9 +1,47 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
-  <!-- The wordmark's two colours on the page's own ground, which is all an
-       icon at 48px can carry. Gold for the mark because gold is what this app
-       means by "written down". -->
-  <rect width="192" height="192" rx="42" fill="#0a0c12"/>
-  <rect x="34" y="46" width="124" height="12" rx="6" fill="#e8b458"/>
-  <rect x="34" y="90" width="124" height="12" rx="6" fill="#dfe6f2"/>
-  <rect x="34" y="134" width="72" height="12" rx="6" fill="#5ccfe6"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192" role="img" aria-label="Sharpness">
+  <!-- The wordmark's initial, cut the way the display face cuts it.
+       This was three coloured rules on a black square, which is a legible
+       *mark* and not this app's: a launcher tray full of app glyphs is where a
+       stack of lines reads as a hamburger menu, which is exactly what it
+       looked like on a home screen. The S is the one shape that says which app
+       this is at 48px, and it is drawn rather than set — a webfont is not
+       loaded for a manifest icon, so Orbitron's chamfered S is reproduced as a
+       path and the two stay the same shape by eye rather than by reference.
+       Everything else is the dashboard's own device: the panel's ground, the
+       panel's cyan hairline, gold for the mark because gold is what this app
+       means by "written down", and the title screen's hard dark offset under
+       it instead of a soft shadow no launcher would keep. -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#11151f"/>
+      <stop offset="1" stop-color="#05070c"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4cd80"/>
+      <stop offset=".55" stop-color="#e8b458"/>
+      <stop offset="1" stop-color="#cf9636"/>
+    </linearGradient>
+    <radialGradient id="pool" cx=".5" cy=".46" r=".62">
+      <stop offset="0" stop-color="#e8b458" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#e8b458" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="192" height="192" rx="42" fill="url(#plate)"/>
+  <rect width="192" height="192" rx="42" fill="url(#pool)"/>
+
+  <!-- The mark. The hard +4px copy first, which is the title screen's
+       `drop-shadow(0 3px 0 #05070c)` at this scale and the reason the S reads
+       as struck into the plate rather than laid on it. -->
+  <g>
+    <path transform="translate(0,4)" fill="#04060a" fill-opacity=".85"
+          d="M62 36 H130 L144 50 V58 H70 V85 H144 V142 L130 156 H62 L48 142 V134 H122 V107 H48 V50 Z"/>
+    <path fill="url(#gold)"
+          d="M62 36 H130 L144 50 V58 H70 V85 H144 V142 L130 156 H62 L48 142 V134 H122 V107 H48 V50 Z"/>
+  </g>
+
+  <!-- The panel edge, last so it sits over the mark's shadow. Inset by half a
+       stroke so the hairline is inside the square rather than straddling it. -->
+  <rect x="1.5" y="1.5" width="189" height="189" rx="40.5"
+        fill="none" stroke="#5ccfe6" stroke-opacity=".3" stroke-width="3"/>
 </svg>

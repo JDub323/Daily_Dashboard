@@ -34,7 +34,7 @@
 // classic worker cannot import a module — and `shell.test.js` fails when the
 // two disagree.
 
-const VERSION = "log-v15";
+const VERSION = "log-v16";
 
 /** How long a *cold* request gets before the shell falls back to itself.
  *  Only ever spent on a file that is not in the cache, which after the first
@@ -96,6 +96,10 @@ const SHELL = [
   "../app/splash.js",
   "../app/dom.js",
   "./icon.svg",
+  // The launcher's copy, and the one entry here that is not for the app's own
+  // benefit: Android re-reads the maskable icon when the home screen is
+  // rebuilt, which is not an occasion it checks for a network first.
+  "./icon-maskable.svg",
   "./manifest.webmanifest",
 ];
 
