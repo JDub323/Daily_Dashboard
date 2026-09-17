@@ -2169,6 +2169,7 @@ def _register(app: FastAPI) -> None:
             body.note,
             plan_key=body.plan_key,
             focus=body.focus,
+            quality=body.quality,
         )
         return state.health_panel(cfg, repo, body.date)
 

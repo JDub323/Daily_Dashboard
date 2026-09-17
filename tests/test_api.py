@@ -2047,6 +2047,43 @@ def test_a_session_with_no_focus_is_the_body_it_always_was(client):
     assert panel["sessions_today"][0]["focus"] is None
 
 
+def test_a_session_can_say_how_well_it_went_as_well_as_how_hard(client):
+    """The two are different questions and `rpe` can only answer one of them.
+    An rpe 7 x 50 is the same row sharp or dragging, which is exactly the
+    property that makes it a load metric and exactly why it cannot say whether
+    the programming is working."""
+    panel = client.post(
+        "/api/session",
+        json={"date": DATE, "kind": "strength", "rpe": 7, "minutes": 50,
+              "quality": 4, "note": "new shoes, tested before the lift"},
+    ).json()
+    assert panel["sessions_today"][0]["quality"] == 4
+    assert panel["sessions_today"][0]["note"] == "new shoes, tested before the lift"
+
+
+def test_a_session_nobody_was_asked_about_is_the_body_it_always_was(client):
+    """Both fields default, so the body the phone posted before they existed is
+    still legal -- and unanswered is a real answer. A quality that must be
+    filled in is one filled in with whatever makes the form submit, and that
+    number is worse than the absence because it reads as a measurement."""
+    panel = client.post(
+        "/api/session", json={"date": DATE, "kind": "boxing", "rpe": 6, "minutes": 60}
+    ).json()
+    assert panel["sessions_today"][0]["quality"] is None
+    assert panel["sessions_today"][0]["note"] is None
+
+
+def test_a_quality_outside_one_to_five_is_a_422(client):
+    """Five and not ten, deliberately out of step with the `rpe` beside it:
+    ten points of resolution on a feeling is precision nobody has."""
+    for bad in (0, 6):
+        response = client.post(
+            "/api/session",
+            json={"date": DATE, "kind": "boxing", "rpe": 6, "minutes": 60, "quality": bad},
+        )
+        assert response.status_code == 422
+
+
 
 def test_the_quick_logs_are_quiet_until_they_have_history(client):
     """One meal and one visit say nothing at all.

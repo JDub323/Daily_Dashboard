@@ -53,8 +53,8 @@
 import {
   applicableSteps, BATHROOM_STEPS, CHECKIN_ITEMS, drinkNameLabel, DRINK_STEPS,
   focusLabel, focusLevels, forcedPath, mealPresetLabel, MEAL_STEPS, missingSteps,
-  openBlocks, parseAmount, prunedDraft, prunedTree, RPE_ANCHOR, sessionFocus,
-  SESSION_TREE, sessionKind, stepOptions, toShown, toStored,
+  openBlocks, parseAmount, prunedDraft, prunedTree, QUALITY_ANCHOR, RPE_ANCHOR,
+  sessionFocus, SESSION_TREE, sessionKind, stepOptions, toShown, toStored,
 } from "../app/logs.js";
 // What today asks for, and it is the desktop's own list rather than a second
 // opinion about it — see the head of `day.js`. Pure over a `DashboardState`,
@@ -288,10 +288,15 @@ function setDraft(answers) {
 }
 
 /** The session being built: which prescribed block it answers, if any, then the
- *  three things every session is. Not persisted: it is answered in one sitting
- *  on the way out of a gym, and a stale kind from Tuesday is worse than an
- *  empty form. */
-let session = { pick: null, path: [], rpe: null, minutes: "" };
+ *  three things every session is, then the two it may also carry. Not
+ *  persisted: it is answered in one sitting on the way out of a gym, and a
+ *  stale kind from Tuesday is worse than an empty form.
+ *
+ *  `quality` and `note` are null and "" rather than absent, and both stay
+ *  optional through the commit — see `SessionRequest`, which defaults them. A
+ *  form that will not submit until you have rated the session is a form that
+ *  teaches you to press 3. */
+let session = { pick: null, path: [], rpe: null, minutes: "", quality: null, note: "" };
 
 /** `session.pick` for a session the plan never asked for.
  *
@@ -1128,6 +1133,42 @@ function measure(metric, unit, name) {
 }
 
 /**
+ * What to call a scalar a block asks you to measure, and what unit it is in.
+ *
+ * One entry, and a table anyway. The alternative is `measure("vert_jump",
+ * "in", "vertical jump")` written into the session card, which makes adding a
+ * second test — a broad jump, a bench pin press, whatever February wants — an
+ * edit to the phone rather than a line in `training.toml`. The whole point of
+ * `PrescribedBlock.tests` naming a `HealthMetric` is that the plan gets to
+ * decide; hardcoding the one metric here would hand that back.
+ */
+const TESTED = {
+  vert_jump: { unit: "in", name: "vertical jump" },
+};
+
+/**
+ * The boxes for whatever today is supposed to produce a reading of.
+ *
+ * Off the *whole* day's blocks rather than the open ones, because the reading
+ * and the session are two separate writes and the wrong order must not lose
+ * one. You log the lift, the block closes and leaves `openBlocks`, and the
+ * number you were about to type would have had its box disappear out from
+ * under it — on the one screen whose entire job is to be usable while standing
+ * up holding a phone.
+ *
+ * Empty on every other day, which is the point and is `HealthMetric.vert_jump`'s
+ * own standing instruction: it is not on the daily form because an empty box
+ * every morning reads as a log you failed to keep, and a Tuesday is not a day
+ * you forgot to jump on.
+ */
+function tests() {
+  const metrics = [...new Set((panel?.plan?.today ?? []).map((b) => b.tests).filter(Boolean))];
+  return metrics
+    .filter((metric) => TESTED[metric])
+    .map((metric) => measure(metric, TESTED[metric].unit, TESTED[metric].name));
+}
+
+/**
  * The plan's own notation for a session that answered it — `LFC`, `A3`.
  *
  * Out of the key rather than looked up in the plan, so it reads the same for a
@@ -1221,6 +1262,28 @@ function sessionLog() {
         minutes.classList.remove("bad");
       });
 
+      // The column has been on the table since the first migration and has
+      // never had a box: the laptop's card could write it and the laptop's
+      // card is gone, so `note` has zero rows across every session ever
+      // logged. It is here and not on a screen of its own because the thing
+      // worth writing down is the thing that made *this* session unusual, and
+      // that is a sentence you have thirty seconds of wanting to write.
+      //
+      // No `bad` class and no validation. The server caps it at 200 and the
+      // commit slices to the same number, so there is no length a person can
+      // type that this has to refuse — and a free-text box that rejects what
+      // you wrote is a box you stop using.
+      const note = el("input.amount", {
+        type: "text",
+        value: session.note,
+        placeholder: "anything worth remembering",
+        "aria-label": "note",
+        enterkeyhint: "done",
+        autocapitalize: "sentences",
+        autocomplete: "off",
+      });
+      note.addEventListener("input", () => { session.note = note.value; });
+
       const commit = () => {
         const mins = Number(String(session.minutes).trim());
         // `kind` rather than the path, because the path is allowed to stop
@@ -1232,6 +1295,12 @@ function sessionLog() {
           return void minutes.classList.add("bad");
         }
         const body = { kind, rpe: session.rpe, minutes: mins };
+        // Both omitted when unanswered rather than sent as null, so the body
+        // this card posts on a day you say nothing extra is byte-for-byte the
+        // body it has always posted. An empty note is not a note.
+        if (session.quality) body.quality = session.quality;
+        const written = session.note.trim().slice(0, 200);
+        if (written) body.note = written;
         // Only where the walk reached a leaf. A path that stopped short is a
         // kind with no focus, and posting the half of it that was answered
         // would invent a category meaning "they stopped here" — see
@@ -1240,7 +1309,7 @@ function sessionLog() {
         if (focus) body.focus = focus;
         // The one line the laptop's plan card is waiting for.
         if (block) body.plan_key = block.key;
-        session = { pick: null, path: [], rpe: null, minutes: "" };
+        session = { pick: null, path: [], rpe: null, minutes: "", quality: null, note: "" };
         send("/api/session", body, "session");
       };
 
@@ -1269,6 +1338,12 @@ function sessionLog() {
       };
 
       return [
+        // Above the plan row, because on a testing day it is the thing you
+        // have just done and are holding a number for. It is also the only
+        // control on this card that does not post a session: it writes a
+        // health row on its own save button, so it neither waits for the form
+        // below it nor is lost by it.
+        ...tests(),
         // Absent on a rest day, on the eleven unwritten weeks, and once every
         // block has been logged — all three are days on which there is nothing
         // to answer, and a row of no buttons above the form would be the card
@@ -1379,6 +1454,40 @@ function sessionLog() {
               })),
           ),
         ),
+        // How well it went, under how hard it was, and the order is the
+        // argument. Asked before RPE it would be answered with RPE — "how was
+        // it" straight after a hard session means "it was hard" — and the
+        // effort is already written down one row up, better. Underneath, with
+        // the effort just recorded, the question that is left is the one this
+        // row is for: did the body do what it was told.
+        //
+        // Optional, and it says so out loud rather than growing a `skip`
+        // button. Tapping the answer already on takes it off, which is the
+        // same gesture the tree rows use to go back up a level.
+        el("div.q", null,
+          el("div.q-head", null,
+            el("span.q-name", { text: "how it went" }),
+            el("span.q-hint", {
+              text: session.quality ? QUALITY_ANCHOR[session.quality] : "optional",
+            }),
+          ),
+          el(optsClass([1, 2, 3, 4, 5]), null,
+            ...[1, 2, 3, 4, 5].map((n) =>
+              el("button.opt.num", {
+                class: session.quality === n ? "on" : "",
+                "aria-pressed": session.quality === n,
+                text: String(n),
+                onclick: () => { session.quality = session.quality === n ? null : n; draw(); },
+              })),
+          ),
+        ),
+        el("div.q", null,
+          el("div.q-head", null,
+            el("span.q-name", { text: "note" }),
+            el("span.q-hint", { text: "optional" }),
+          ),
+          el("div.row", null, note),
+        ),
         el("div.q", null,
           el("div.q-head", null, el("span.q-name", { text: "minutes" })),
           el("div.row", null, minutes, el("button.go", { text: "log", onclick: commit })),
@@ -1390,7 +1499,17 @@ function sessionLog() {
           // merely that some training happened, which is the difference the
           // laptop's plan card turns on and the one you cannot otherwise see
           // from here.
-          (e) => [focusLabel(e.focus), `rpe ${e.rpe} · ${e.minutes}m`, planToken(e)]
+          // The note is truncated and the full one is not shown anywhere here,
+          // which is deliberate: this line is a receipt saying the thing you
+          // typed went up, not the place the note is read. It is read in
+          // February, on a laptop, next to a series.
+          (e) => [
+            focusLabel(e.focus),
+            `rpe ${e.rpe} · ${e.minutes}m`,
+            e.quality ? QUALITY_ANCHOR[e.quality] : null,
+            planToken(e),
+            e.note ? (e.note.length > 60 ? `“${e.note.slice(0, 59)}…”` : `“${e.note}”`) : null,
+          ]
             .filter(Boolean)
             .join(" · "),
           "nothing trained yet today",
@@ -2048,7 +2167,7 @@ function homeScreen() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v16";
+const BUILD = "log-v17";
 
 /**
  * The build, along the foot of the title screen.

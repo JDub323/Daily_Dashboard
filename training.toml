@@ -79,6 +79,9 @@ name = "lower french contrast"
 label = "strength training"
 kind = "strength"
 focus = "strength.vjp.lower_french_contrast"
+# The vertical comes out of this session, so the phone draws a box for it on
+# the days this is prescribed and on no others. See `PrescribedBlock.tests`.
+tests = "vert_jump"
 detail = "VJP Monday. CNS work, vertical test, then the contrast circuit: band-resisted back squat clusters, drop jump, DB jump w/ pause, band-assisted jump, single-leg toes-up squat, ankle shuffle. 25s between cluster sets and exercises, 2 min between rounds."
 
 [library.UFC]
@@ -93,6 +96,7 @@ name = "lower concentrics"
 label = "strength training"
 kind = "strength"
 focus = "strength.vjp.lower_concentrics"
+tests = "vert_jump"
 detail = "VJP Thursday. Box jump, iso calf raise, vertical test, then trap bar deadlift conc-only-drop, bulgarians, hip thrust, back extension. 30-45s between everything; loads 55-60% of 1RM."
 
 [library.UC]

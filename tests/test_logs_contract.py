@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from dashboard.models import api
 from dashboard.models.common import (
     SESSION_FOCUS,
     DrinkName,
@@ -62,6 +63,8 @@ console.log(JSON.stringify({
   flags: m.MEAL_FLAGS.map(([, value]) => value),
   focus: Object.fromEntries(leaves),
   combinations: [...m.DRINK_NAMES.entries()].map(([key, names]) => [key, names.length]),
+  quality: Object.keys(m.QUALITY_ANCHOR).map(Number),
+  rpe: Object.keys(m.RPE_ANCHOR).map(Number),
 }));
 """
 
@@ -135,3 +138,32 @@ def test_every_leaf_reaches_a_kind(tables: dict) -> None:
     `hiit` or `steady`. A branch that inherited nothing would draw a form whose
     commit button can never light."""
     assert all(kind is not None for kind in tables["focus"].values())
+
+
+def test_the_quality_row_offers_exactly_what_the_server_takes(tables: dict) -> None:
+    """1-5, matching `SessionRequest.quality` and the `CHECK` under it.
+
+    A sixth button here would be a 422 from a gym, which is the failure this
+    whole file exists to prevent -- and it would arrive on the one field that is
+    *optional*, so the queue would be carrying a rejected body for a session
+    that looked logged.
+    """
+    field = api.SessionRequest.model_fields["quality"]
+    bounds = {type(m).__name__: getattr(m, "ge", None) or getattr(m, "le", None)
+              for m in field.metadata}
+    assert tables["quality"] == [1, 2, 3, 4, 5]
+    assert bounds == {"Ge": 1, "Le": 5}
+
+
+def test_quality_and_rpe_are_deliberately_different_scales(tables: dict) -> None:
+    """Five against ten, and it is a decision rather than an oversight.
+
+    They sit one row apart on the same card and the temptation to make them
+    match is real. Ten points of resolution on how a session *felt* is
+    precision nobody has -- the readiness check-in settled that argument on the
+    same kind of question -- while effort genuinely is reported on the
+    borrowed-from-Borg ten. Pinned here so that "tidying" them into agreement
+    has to be an argument someone makes on purpose.
+    """
+    assert len(tables["quality"]) == 5
+    assert len(tables["rpe"]) == 10

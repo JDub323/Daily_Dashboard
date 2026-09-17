@@ -788,14 +788,100 @@ def test_the_prescription_scores_as_the_weeks_fraction_logged():
     assert "9 of 12" in zone_input(score, "prescribed").reading
 
 
+def jumps(values: list[float], last: dt.date = TODAY) -> list[tuple[dt.date, float]]:
+    """A Monday/Thursday testing series, oldest first, ending on `last`.
+
+    The gaps alternate three and four days because that is what Monday and
+    Thursday are, and the gaps are the entire point of these tests. What was
+    wrong with the old scoring was never the arithmetic -- it was that the
+    arithmetic was `_against_baseline`, which counts readings inside a trailing
+    month and wants fourteen of them. This cadence produces nine. No series
+    built by this helper can ever have satisfied it, at any length.
+    """
+    out: list[tuple[dt.date, float]] = []
+    day = last
+    for value in reversed(values):
+        out.append((day, value))
+        day -= dt.timedelta(days=3 if len(out) % 2 else 4)
+    return sorted(out)
+
+
 def test_the_vertical_jump_never_gates_the_load_bar():
-    """It is measured every six weeks and the bar is read every morning. Below
-    ten points it reports `no_baseline` and contributes nothing -- and the bar
-    is a number regardless, which is the property being pinned."""
-    thin = [(TODAY - dt.timedelta(days=42 * n), 28.0) for n in range(3)]
+    """It moves over a fortnight and the bar is read every morning. Below ten
+    tests it reports `no_baseline` and contributes nothing -- and the bar is a
+    number regardless, which is the property being pinned."""
+    thin = jumps([28.0] * 3)
     score = health.load_score(daily(30), plan_open=0, plan_total=9, jump=thin, today=TODAY)
     assert states(score)["vert_jump"] is InputState.no_baseline
     assert score.value is not None
+
+
+def test_a_twice_weekly_vertical_can_actually_be_scored():
+    """The regression this scoring exists for.
+
+    `LFC` and `LC` both take a vertical, so the plan asks for one on Monday and
+    again on Thursday -- and that series was being handed to the machinery
+    built for the watch's nightly scalars, which needs fourteen readings inside
+    thirty days. Two a week is nine. The input was not conservative, it was
+    unreachable: it would have read `no_baseline` after a year of testing, and
+    the panel would have gone on saying "not enough history" to a man who had
+    jumped a hundred times.
+    """
+    series = jumps([23.5, 24.0, 24.5, 24.0, 23.5, 24.5, 24.0, 24.0] + [24.5] * 4)
+    assert health._against_baseline(series, TODAY, higher_is_better=True) is None
+    assert health.jump_score(series, TODAY) is not None
+
+
+def test_the_vertical_is_the_last_four_tests_against_the_ones_before():
+    """A fortnight against the block behind it, and in the direction you would
+    expect: up is up. One test is mostly shoes and warm-up, which is why the
+    present tense here is four of them."""
+    older = [23.5, 24.0, 24.5, 24.0, 23.5, 24.5, 24.0, 24.0]
+    assert health.jump_score(jumps(older + [24.5] * 4), TODAY) > 50.0
+    assert health.jump_score(jumps(older + [23.5] * 4), TODAY) < 50.0
+    assert health.jump_score(jumps(older + [24.0] * 4), TODAY) == pytest.approx(50.0)
+
+
+def test_a_vertical_nobody_has_taken_in_a_fortnight_goes_quiet():
+    """And goes quiet as `not_logged`, not `no_baseline`.
+
+    The two absences are fixed by different things -- one by waiting and one by
+    jumping -- and a sparse metric that kept printing its last score would put
+    November's vertical on a February panel with nothing on screen to say how
+    old it was.
+    """
+    lapsed = jumps([24.0, 24.5, 23.5, 24.0] * 3, last=TODAY - dt.timedelta(days=15))
+    assert health.jump_score(lapsed, TODAY) is None
+    assert health.jump_absence(lapsed, TODAY) is InputState.not_logged
+
+    kept = jumps([24.0, 24.5, 23.5, 24.0] * 3, last=TODAY - dt.timedelta(days=13))
+    assert health.jump_score(kept, TODAY) is not None
+
+
+def test_too_few_tests_is_a_young_series_and_not_a_lapsed_one():
+    """Nine tests taken this week is still `no_baseline`: there is nothing
+    wrong with the logging, there is just not enough of it yet."""
+    assert health.jump_absence(jumps([24.0] * 9), TODAY) is InputState.no_baseline
+
+
+def test_a_vertical_that_has_not_moved_has_no_scale():
+    """The same rule `scalar_baseline` follows. A series with zero spread
+    supplies no unit in which to measure a departure from it, and an inch is a
+    lot for one man and noise for another."""
+    assert health.jump_score(jumps([24.0] * 12), TODAY) is None
+
+
+def test_the_vertical_prints_the_comparison_it_is_a_rescaling_of():
+    """The month's words over this arithmetic would describe a calculation
+    nobody ran, so it gets its own sentence."""
+    score = health.load_score(
+        daily(30),
+        plan_open=0,
+        plan_total=9,
+        jump=jumps([23.5, 24.0, 24.5, 24.0, 23.5, 24.5, 24.0, 24.0] + [24.5] * 4),
+        today=TODAY,
+    )
+    assert "last 4 average 24.5 against 24.0" in zone_input(score, "vert_jump").reading
 
 
 def test_a_workload_ratio_inside_the_band_is_a_hundred():

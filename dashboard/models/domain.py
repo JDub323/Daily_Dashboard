@@ -720,6 +720,19 @@ class TrainingSession(Base):
     logged as `cardio.steady.stairmaster` must not become unloadable the day
     the stairmaster leaves the gym."""
 
+    quality: int | None = Field(default=None, ge=1, le=5)
+    """How well it went, 1-5, or None because nobody was asked.
+
+    Beside `rpe` and measuring the other thing entirely. Effort is what the
+    load model needs and is blind to by design -- rpe 7 x 50 minutes is the
+    same row whether you were sharp or dragging through it -- so this is the
+    only column that can say which of those two a session was.
+
+    None is a real answer and the common one. See the migration: a quality that
+    must be filled in is a quality that gets filled in with whatever makes the
+    form submit, and that number is worse than the absence because it reads as
+    a measurement."""
+
     plan_key: str | None = None
     """Which prescribed block this answers -- `<date>:<token>` -- or None for a
     session logged freehand, which stays the ordinary case.
@@ -913,6 +926,26 @@ class PrescribedBlock(Base):
     asks: str | None = None
     """The duration the plan asks for, when it asks for one. Printed, never
     pre-filled: load is rpe x minutes and both have to be measured."""
+
+    tests: HealthMetric | None = None
+    """A scalar this block is supposed to produce a reading of, if any.
+
+    The one thing on this model that is not about the training itself. `LFC`
+    and `LC` both take a vertical before the lifting starts, and until this
+    existed there was no way for a client to know that -- so the number had
+    nowhere to go, and the metric sat at zero rows while the plan asked for it
+    twice a week.
+
+    Declared in the library rather than inferred from `detail`, which says
+    "vertical test" in prose and would have the phone grepping English to
+    decide whether to draw a box. A `HealthMetric` rather than a string for the
+    same reason `focus` is checked against `SESSION_FOCUS`: a typo should be a
+    plan that refuses to compile on the laptop, not a box that silently never
+    appears in a gym.
+
+    It does not make the reading owed. Nothing chases it and no chip counts it
+    -- a testing day you did not test on is an ordinary day, and the series is
+    better with a gap in it than with a number somebody reconstructed."""
 
     detail: str | None = None
     slot: int = 0

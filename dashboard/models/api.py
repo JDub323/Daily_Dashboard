@@ -436,6 +436,11 @@ class SessionRequest(DateBody):
     minutes: int = Field(ge=1, le=600)
     note: str | None = Field(default=None, max_length=200)
 
+    quality: int | None = Field(default=None, ge=1, le=5)
+    """How well it went, 1-5. Optional, like `note` and for the same reason:
+    a body posted before this field existed is still a legal body, and a
+    session nobody was asked about is a real session."""
+
     focus: str | None = Field(default=None, max_length=64)
     """What the session was, one level below `kind` -- a dotted leaf of
     `SESSION_FOCUS`, or None where the tree was not walked that far.

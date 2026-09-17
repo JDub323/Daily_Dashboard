@@ -757,9 +757,35 @@ sweated out, so what a day asks for moves with the week rather than being a
 number somebody chose."""
 
 MIN_POINTS_FOR_JUMP = 10
-"""Testing days before the vertical is worth a line. Ten of them at six-week
-intervals is a year, which is the honest timescale for that measurement and the
-reason the load bar is not gated on it."""
+"""Testing days before the vertical is worth a line.
+
+It used to say "ten of them at six-week intervals is a year", and that was
+never true of this camp: `LFC` and `LC` both take a vertical, so the plan asks
+for one every Monday and every Thursday and ten of them is five weeks.
+
+The correction matters more than a stale comment usually would, because the
+cadence is what decided how the number is *scored*. A twice-weekly measurement
+was being fed to `_against_baseline`, which wants fourteen readings inside a
+trailing thirty days -- a bar two a week cannot clear, at any point, ever. The
+input was not merely toothless; it was unreachable, and would have read
+`no_baseline` after a year of testing. See `jump_score`."""
+
+JUMP_RECENT = 4
+"""Tests that make up "where you are now" -- a fortnight at two a week.
+
+Four rather than one because a single vertical is mostly noise: shoes, how the
+warm-up went, which rep you decided was the one. The question this input exists
+to answer is whether a block of training moved anything, and that question is
+asked of a fortnight, not of a Thursday."""
+
+JUMP_STALE_DAYS = 14
+"""How old the last test may be before the input stops answering.
+
+Without this the score would be the vertical you had in November, printed in
+February beside four fresh bars, with nothing on screen to say it was four
+months old. A sparse metric has to be allowed to go quiet -- and it reports
+`not_logged` rather than `no_baseline`, because a testing day nobody tested on
+is a fact about the week and not about the length of the series."""
 
 VO2MAX_WINDOW = 90
 """Days over which the VO2max change is measured. A quarter, because the
@@ -849,6 +875,71 @@ def _against_baseline(
     mean, spread = baseline
     z = (value - mean) / spread
     return _clamp(50.0 + (z if higher_is_better else -z) * 50.0 / sds)
+
+
+def jump_score(
+    points: Sequence[tuple[dt.date, float]], today: dt.date
+) -> float | None:
+    """The vertical as 0-100: the last four tests against everything before
+    them. None when there is not enough, or when testing has lapsed.
+
+    A separate function rather than another `_against_baseline` caller, and the
+    difference between them is the whole point. That one is built for a metric
+    the watch produces every night: it windows by *days*, wants fourteen
+    readings inside thirty of them, and requires one dated today. Every one of
+    those three is wrong here. Two tests a week is nine readings in a month, so
+    the count gate can never pass; and a vertical is taken on a Monday, so
+    requiring one today would blank the input on five days out of seven even
+    when the testing is going perfectly.
+
+    So this windows by *tests*. `JUMP_RECENT` of them are the present, whatever
+    span they cover, and the rest of the series is what the present is measured
+    against -- which makes the reading "the last fortnight against the block
+    behind it", the shape the question is actually asked in.
+
+    What stays borrowed is the scale: a z against the older tests' own spread,
+    2 SD to the ends, 50 at no change -- identical to `_against_baseline`, so
+    this bar means the same thing as the four beside it. A vertical's honest
+    unit is its own variance and nothing else; an inch is a lot for one man and
+    noise for another.
+
+    Population SD, like `scalar_baseline`, and zero spread is None for the same
+    reason: a series that has not moved supplies no scale to measure a
+    departure from.
+    """
+    series = sorted(points)
+    if len(series) < MIN_POINTS_FOR_JUMP:
+        return None
+    # Testing has stopped, or the camp is paused, or the phone has not been
+    # opened in a gym for a fortnight. The caller renders this as `not_logged`.
+    if (today - series[-1][0]).days > JUMP_STALE_DAYS:
+        return None
+
+    recent = [value for _, value in series[-JUMP_RECENT:]]
+    older = [value for _, value in series[:-JUMP_RECENT]]
+    spread = statistics.pstdev(older)
+    if spread == 0:
+        return None
+    z = (statistics.fmean(recent) - statistics.fmean(older)) / spread
+    return _clamp(50.0 + z * 50.0 / 2.0)
+
+
+def jump_absence(
+    points: Sequence[tuple[dt.date, float]], today: dt.date
+) -> InputState:
+    """Which kind of nothing a vertical with no score is.
+
+    The same distinction `_absence` draws for the watch's scalars, drawn
+    against the other absence: too few tests ever is a young series, and a
+    long-enough series that has gone quiet is a log that stopped being kept.
+    One of those is fixed by waiting and the other by jumping, and a panel that
+    printed the same word for both would be telling you to wait.
+    """
+    if len(points) < MIN_POINTS_FOR_JUMP:
+        return InputState.no_baseline
+    if (today - max(date for date, _ in points)).days > JUMP_STALE_DAYS:
+        return InputState.not_logged
+    return InputState.no_baseline
 
 
 def _absence(points: Sequence[tuple[dt.date, float]], today: dt.date) -> InputState:
@@ -947,6 +1038,31 @@ def _vs_baseline_words(
     if baseline is None:
         return f"{value:g} {unit}, no baseline yet"
     return f"{value:g} {unit} against a {baseline[0]:.0f} baseline"
+
+
+def _jump_words(points: Sequence[tuple[dt.date, float]]) -> str | None:
+    """`24.5 in, last four 24.1 against 23.4` -- what the bar is a rescaling of.
+
+    Same job as `_vs_baseline_words` and a different sentence, because the
+    comparison underneath it is a different one: four tests against the tests
+    before them, not tonight against a trailing month. Printing the month's
+    words over this arithmetic would be a caption describing a calculation
+    nobody ran.
+
+    Takes no `today`. Everything here is about the series' own last readings,
+    and the staleness that today decides is already said by the score going
+    absent -- saying it twice, in two places that could disagree, is how a
+    panel ends up printing a number it has just called missing.
+    """
+    if not points:
+        return None
+    series = sorted(points)
+    last = series[-1][1]
+    if len(series) < MIN_POINTS_FOR_JUMP:
+        return f"{last:g} in, best of three — {len(series)} of {MIN_POINTS_FOR_JUMP} tests"
+    recent = statistics.fmean([value for _, value in series[-JUMP_RECENT:]])
+    older = statistics.fmean([value for _, value in series[:-JUMP_RECENT]])
+    return f"{last:g} in — last {JUMP_RECENT} average {recent:.1f} against {older:.1f}"
 
 
 def _plain_words(
@@ -1092,10 +1208,20 @@ def load_score(
     an argument rather than an accident, and the zoom shows both so the
     doubling is visible instead of baked in.
 
-    The vertical jump is here and deliberately toothless. Below
-    `MIN_POINTS_FOR_JUMP` testing days it reports `no_baseline` and contributes
-    nothing, which is the whole reason the bar is not gated on it: a metric
-    measured every six weeks must not decide a number read every morning.
+    The vertical jump is here and stays ungated: below `MIN_POINTS_FOR_JUMP`
+    tests, or after a fortnight of not testing, it contributes nothing and the
+    other four inputs carry the bar between them. What it is no longer is
+    *unreachable* -- it was scored through `_against_baseline`, which cannot be
+    satisfied by a twice-weekly measurement at all, so the input had never once
+    produced a number and could not have. `jump_score` is the comparison this
+    one actually admits of.
+
+    It is still the slowest thing on the panel, and it should be. Four tests
+    move over a fortnight, so this bar answers a fortnight's question while the
+    three beside it answer a week's -- which is the correct division of labour
+    and not a defect: whether the training is working and whether this week was
+    sensible are different questions, and only one of them can be asked on a
+    Tuesday morning.
     """
     ratio = acwr(sessions, today)
     mono = monotony(sessions, today)
@@ -1137,11 +1263,9 @@ def load_score(
         _input(
             "vert_jump",
             "vertical jump",
-            None
-            if len(jump) < MIN_POINTS_FOR_JUMP
-            else _against_baseline(jump, today, higher_is_better=True),
-            absent=InputState.no_baseline,
-            reading=None if not jump else f"{jump[-1][1]:g} in, best of three",
+            jump_score(jump, today),
+            absent=jump_absence(jump, today),
+            reading=_jump_words(jump),
         ),
     ])
 

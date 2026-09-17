@@ -46,7 +46,7 @@ from pathlib import Path
 
 from pydantic import Field, model_validator
 
-from .models.common import SESSION_FOCUS, Base, SessionKind
+from .models.common import SESSION_FOCUS, Base, HealthMetric, SessionKind
 from .models.domain import CampBreak, PlanGroup, PrescribedBlock
 
 SUNDAY = 6
@@ -115,6 +115,18 @@ class Exercise(Base):
     param: str | None = Field(default=None, pattern=r"^(deciminutes|index)$")
     """What a numeric suffix means. `deciminutes` -- `A3` is 30 minutes -- or
     `index`, which just numbers a progression (`C2` is core 2)."""
+
+    tests: HealthMetric | None = None
+    """A scalar this exercise is supposed to produce a reading of.
+
+    Set on `LFC` and `LC`, the two days that take a vertical. What it buys is
+    one box on the phone on the days there is something to type into it -- see
+    `PrescribedBlock.tests`, and `HealthMetric.vert_jump`, which has refused to
+    appear on the daily form since the day it was written and was therefore
+    reachable from nowhere at all.
+
+    Validated by being a `HealthMetric`, so a misspelling here is a plan that
+    will not load rather than a box that never draws."""
 
     detail: str | None = None
     """What to actually do, for the panel to show on demand."""
@@ -618,6 +630,7 @@ def _block(
         kind=ask.exercise.kind,
         choose=ask.exercise.choose,
         focus=ask.exercise.focus,
+        tests=ask.exercise.tests,
         asks=ask.asks,
         detail=ask.exercise.detail,
         slot=slot,

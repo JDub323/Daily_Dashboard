@@ -2171,6 +2171,41 @@ MIGRATIONS: list[tuple[int, str]] = [
             ON camp_break ((resumed IS NULL)) WHERE resumed IS NULL;
         """,
     ),
+    (
+        36,
+        """
+        -- How well it went, beside how hard it was.
+        --
+        -- RPE is effort and nothing else: a 7 is a 7 whether you were sharp or
+        -- dragging, which is exactly the property that makes it a load metric
+        -- and exactly why it cannot answer "is the programming working". Two
+        -- sessions at rpe 7 x 50 minutes are the same row in this table and can
+        -- be the opposite fortnight, and until now the difference was not
+        -- written down anywhere.
+        --
+        -- 1-5 rather than 1-10, deliberately out of step with `rpe` beside it.
+        -- Ten points of resolution on a subjective quality is precision nobody
+        -- has -- the readiness table settled this argument already and this is
+        -- the same kind of question, so it gets the same scale and the phone
+        -- can render it with the same row of five buttons.
+        --
+        -- Nullable, and that is the whole design rather than a convenience. It
+        -- is one more tap at the end of a session in a doorway, and a field
+        -- that must be answered is a field that gets answered badly -- the
+        -- number you press to make the form submit is worse than no number,
+        -- because it looks like a measurement. A session logged without it is
+        -- a session whose quality was not asked about, which is a true thing
+        -- to record. Every row already in the table is one of those.
+        --
+        -- ALTER rather than the twelve-step rebuild migrations 33 and 34 did:
+        -- this adds a column with a CHECK of its own rather than widening one
+        -- that already exists, and SQLite does that in place. The CHECK binds
+        -- from here forward, which is all that is being asked of it -- there
+        -- are no rows with a quality in them to be checked against.
+        ALTER TABLE training_session ADD COLUMN quality INTEGER
+            CHECK (quality IS NULL OR quality BETWEEN 1 AND 5);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

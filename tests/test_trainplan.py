@@ -19,7 +19,7 @@ from pydantic import ValidationError
 
 from dashboard import trainplan
 from dashboard.config import project_root
-from dashboard.models.common import SessionKind
+from dashboard.models.common import HealthMetric, SessionKind
 from dashboard.models.domain import CampBreak
 
 # A minimal library, so the grammar tests do not depend on the real plan's
@@ -248,6 +248,49 @@ def test_the_real_plan_names_a_focus_wherever_it_knows_one() -> None:
     assert plan is not None
     silent = [key for key, ex in plan.library.items() if ex.kind and not ex.focus]
     assert silent == []
+
+
+def test_a_token_can_name_a_scalar_it_is_supposed_to_produce() -> None:
+    """`tests` is a `HealthMetric` and not a string, so a misspelling is a plan
+    that will not load rather than a box that silently never draws -- the same
+    bargain `focus` makes against `SESSION_FOCUS`."""
+    assert trainplan.Exercise(name="x", label="x", kind="strength").tests is None
+    assert (
+        trainplan.Exercise(name="x", label="x", kind="strength", tests="vert_jump").tests
+        is HealthMetric.vert_jump
+    )
+    with pytest.raises(ValidationError):
+        trainplan.Exercise(name="x", label="x", kind="strength", tests="vertical_jump")
+
+
+def test_the_tested_metric_reaches_the_prescribed_block() -> None:
+    """It has to cross into `PrescribedBlock`, because the phone decides
+    whether to draw the box off the day's blocks and off nothing else."""
+    library = {**LIB["library"]}
+    library["LFC"] = {**library["LFC"], "tests": "vert_jump"}
+    plan = trainplan.Program(
+        name="t",
+        start=SUNDAY,
+        weeks=4,
+        library=library,
+        block=[{"weeks": "0", "sun": "LFC"}],
+    )
+    blocks = trainplan.prescription(plan, SUNDAY)
+    assert [b.tests for b in blocks] == [HealthMetric.vert_jump]
+
+
+def test_the_real_plan_asks_for_a_vertical_on_both_days_that_take_one() -> None:
+    """The plan on disk. `LFC` and `LC` both say "vertical test" in their
+    `detail` and have done since the sheet was transcribed -- and that prose is
+    unreadable by anything, which is why the metric had zero rows in it. These
+    two tokens are what the whole feature hangs off; a re-translation of the
+    spreadsheet that dropped them would put the box back to never appearing,
+    silently, on the one surface nobody is looking at while it fails.
+    """
+    plan = trainplan.load_program(project_root() / "training.toml")
+    assert plan is not None
+    testing = {key for key, ex in plan.library.items() if ex.tests}
+    assert testing == {"LFC", "LC"}
 
 
 # --- the calendar ----------------------------------------------------------

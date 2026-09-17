@@ -2317,6 +2317,7 @@ class Repository:
         garmin_activity_id: int | None = None,
         plan_key: str | None = None,
         focus: str | None = None,
+        quality: int | None = None,
     ) -> d.TrainingSession:
         """Append a session. Never an upsert -- two-a-days are the normal case,
         and a second session today is a second row, not a correction of the
@@ -2330,8 +2331,8 @@ class Repository:
         try:
             row = self.conn.execute(
                 "INSERT INTO training_session "
-                "(date, kind, rpe, minutes, note, garmin_activity_id, plan_key, focus) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+                "(date, kind, rpe, minutes, note, garmin_activity_id, plan_key, focus, quality) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
                 (
                     _iso(date),
                     SessionKind(kind).value,
@@ -2341,6 +2342,7 @@ class Repository:
                     garmin_activity_id,
                     plan_key,
                     focus,
+                    quality,
                 ),
             ).fetchone()
         except sqlite3.IntegrityError as error:

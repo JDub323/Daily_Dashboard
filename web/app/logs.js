@@ -748,6 +748,24 @@ export const RPE_ANCHOR = {
   6: "working", 7: "hard", 8: "very hard", 9: "near maximal", 10: "everything",
 };
 
+/**
+ * The same job for session quality, and the words are chosen to keep it from
+ * collapsing back into RPE.
+ *
+ * That collapse is the entire risk in the field. Asked "how was it", the
+ * honest-sounding answer after a brutal session is a low one — and that number
+ * is already recorded, in the column next door, more carefully. So none of
+ * these five say anything about effort. They are about *sharpness*: whether
+ * the body did what it was told, which is the thing a block of training is
+ * supposed to move and the thing an rpe 7 is blind to.
+ *
+ * Five rather than ten, matching the check-in and not the RPE row beside it.
+ * Ten points of resolution on a feeling is precision nobody has.
+ */
+export const QUALITY_ANCHOR = {
+  1: "nothing there", 2: "flat", 3: "ordinary", 4: "sharp", 5: "everything worked",
+};
+
 // --- what the plan is still owed --------------------------------------------
 //
 // One definition of "already answered", and the server now shares it: `/m`

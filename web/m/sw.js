@@ -34,7 +34,7 @@
 // classic worker cannot import a module — and `shell.test.js` fails when the
 // two disagree.
 
-const VERSION = "log-v16";
+const VERSION = "log-v17";
 
 /** How long a *cold* request gets before the shell falls back to itself.
  *  Only ever spent on a file that is not in the cache, which after the first
