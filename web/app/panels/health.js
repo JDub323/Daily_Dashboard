@@ -791,7 +791,7 @@ function campControl(plan) {
       // The undo, and the reason the committed state is worth distinguishing
       // at all: resume is pressed on the day you feel better, and feeling
       // better on a Friday is a claim the Saturday sometimes withdraws.
-      el("button.ghost.tiny", {
+      el("button.tiny", {
         text: "not yet",
         onclick: () => send("/api/camp/resume", { cancel: true }),
       }),
@@ -812,7 +812,15 @@ function campControl(plan) {
   }
 
   if (!asking) {
-    return el("button.ghost.tiny", { text: "pause camp", onclick: () => ask(true) });
+    // A plain button, with the border and the body size that every other
+    // control in the app has. The first version of this was `ghost tiny` —
+    // no border, 11px, 55% opacity — on the theory that a rarely-used control
+    // should be quiet. That was the wrong reading of "it need not be
+    // convenient": what it produced was a caption under the load bars that
+    // could not be found at all, which is a different thing from one that
+    // takes deliberate effort to use. The friction belongs in the two presses
+    // and the required reason below, not in whether you can see it.
+    return el("button", { text: "pause camp", onclick: () => ask(true) });
   }
 
   const reason = el("input.camp-why", {
@@ -837,7 +845,7 @@ function campControl(plan) {
   return el("span.row.gap", null,
     reason,
     el("button", { text: "pause camp", onclick: commit }),
-    el("button.ghost.tiny", { text: "cancel", onclick: () => ask(false) }),
+    el("button.tiny", { text: "cancel", onclick: () => ask(false) }),
   );
 }
 
