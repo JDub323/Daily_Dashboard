@@ -15,6 +15,7 @@ from .common import (
     Base,
     BathroomKind,
     ChessStatus,
+    ClockTime,
     Deck,
     DrinkName,
     DrinkTag,
@@ -35,6 +36,7 @@ from .common import (
     UrineColor,
     Url,
     Volume,
+    span_hours,
 )
 
 # --- ratings ---------------------------------------------------------------
@@ -679,6 +681,25 @@ class Readiness(Base):
     stress: int = Field(ge=1, le=5)
     motivation: int = Field(ge=1, le=5)
 
+    bed: ClockTime | None = None
+    """When you got into bed, as you say it -- not when the watch decided you
+    were asleep. None on every morning answered before migration 37."""
+
+    woke: ClockTime | None = None
+    """When you got up. Both or neither; the table CHECKs it."""
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def in_bed_hours(self) -> float | None:
+        """Hours in bed, derived and never stored -- see migration 37.
+
+        The self-reported half of a pair. The watch's `sleep_hours` is the
+        other, and the gap between them is the time spent lying awake, which
+        is the one thing neither measures alone."""
+        if self.bed is None or self.woke is None:
+            return None
+        return round(span_hours(self.bed, self.woke), 2)
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def score(self) -> int:
@@ -700,6 +721,11 @@ class TrainingSession(Base):
     rpe: int = Field(ge=1, le=10)
     minutes: int = Field(ge=1, le=600)
     note: str | None = Field(default=None, max_length=200)
+
+    started: ClockTime | None = None
+    """When the session proper began -- after the warm-up, which is where
+    `minutes` starts counting too. None on everything logged before migration
+    37, and on anything a script writes without one."""
 
     garmin_activity_id: int | None = None
     """Set only by an import, and UNIQUE, so re-running a sync cannot
@@ -764,6 +790,9 @@ class BathroomLog(Base):
     id: int
     date: dt.date
     hour: int = Field(ge=0, le=23)
+    minute: int | None = Field(default=None, ge=0, le=59)
+    """Set only when the entry was made as it happened -- the phone's `exact
+    time` button. None is the ordinary answer: the hour, remembered."""
     kind: BathroomKind
     solidity: Stool | None = None
     color: UrineColor | None = None
@@ -772,8 +801,9 @@ class BathroomLog(Base):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def at(self) -> str:
-        """`14:00` -- what the panel prints, formatted once, here."""
-        return f"{self.hour:02d}:00"
+        """`14:00`, or `14:07` when the minute is known -- what the panel
+        prints, formatted once, here."""
+        return f"{self.hour:02d}:{self.minute or 0:02d}"
 
 
 class MealLog(Base):
@@ -789,6 +819,9 @@ class MealLog(Base):
     id: int
     date: dt.date
     hour: int = Field(ge=0, le=23)
+    minute: int | None = Field(default=None, ge=0, le=59)
+    """Set only when the entry was made as it happened -- the phone's `exact
+    time` button. None is the ordinary answer: the hour, remembered."""
     size: MealSize
     quality: int = Field(ge=1, le=5)
 
@@ -824,7 +857,7 @@ class MealLog(Base):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def at(self) -> str:
-        return f"{self.hour:02d}:00"
+        return f"{self.hour:02d}:{self.minute or 0:02d}"
 
 
 class DrinkLog(Base):
@@ -856,6 +889,9 @@ class DrinkLog(Base):
     id: int
     date: dt.date
     hour: int = Field(ge=0, le=23)
+    minute: int | None = Field(default=None, ge=0, le=59)
+    """Set only when the entry was made as it happened -- the phone's `exact
+    time` button. None is the ordinary answer: the hour, remembered."""
     tags: list[DrinkTag] = Field(default_factory=list)
 
     name: DrinkName | None = None
@@ -873,7 +909,7 @@ class DrinkLog(Base):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def at(self) -> str:
-        return f"{self.hour:02d}:00"
+        return f"{self.hour:02d}:{self.minute or 0:02d}"
 
 
 class PrescribedBlock(Base):

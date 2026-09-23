@@ -85,7 +85,20 @@ import {
   forget, forgetDay, recall, recallDay, remember, rememberDay, stillTrue,
 } from "./held.js";
 import { enqueue, flush, isDay, isPanel, onQueueChange, pending, pendingOn } from "./queue.js";
-import { clock, dateForHour, dayLabel, nowHour, timeLabel, today } from "./when.js";
+import {
+  clock,
+  clockTime,
+  dateForHour,
+  dateForTime,
+  dayLabel,
+  entryClock,
+  hhmm,
+  hoursLabel,
+  nowHour,
+  spanHours,
+  timeLabel,
+  today,
+} from "./when.js";
 
 // --- the smallest possible DOM helper ---------------------------------------
 //
@@ -287,6 +300,39 @@ function setDraft(answers) {
   } catch { /* see queue.js — a screen that will not draw is worse */ }
 }
 
+/** A stored time, `HH:MM` 24h — `ClockTime` in `models/common.py`. */
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** Into bed and up, as this phone usually has them — what the check-in's night
+ *  starts from when nothing else has answered it. Per phone and nowhere else:
+ *  a default is a convenience of the thing you type on, not a fact about a
+ *  day, so the server never hears of it. Only the answer it produces is sent.
+ *
+ *  The cost of a default, said once here: a night that was not the usual one
+ *  and was saved without touching the wheels is filed as the usual one, and
+ *  nothing afterwards can tell the two apart. The line above the wheels says
+ *  "from your defaults" for exactly that reason. */
+const NIGHT_KEY = "dashboard.m.night";
+
+/** `MAX_IN_BED_HOURS` in `models/api.py`. A time wheel invites an am/pm slip,
+ *  and bed at 11am, up at 7am reads as twenty hours. */
+const MAX_IN_BED = 14;
+
+function nightDefaults() {
+  try {
+    const held = JSON.parse(localStorage.getItem(NIGHT_KEY) ?? "null");
+    return held && HHMM.test(held.bed) && HHMM.test(held.woke) ? held : null;
+  } catch {
+    return null;
+  }
+}
+
+function setNightDefaults(night) {
+  try {
+    localStorage.setItem(NIGHT_KEY, JSON.stringify(night));
+  } catch { /* the same shrug as `setDraft` */ }
+}
+
 /** The session being built: which prescribed block it answers, if any, then the
  *  three things every session is, then the two it may also carry. Not
  *  persisted: it is answered in one sitting on the way out of a gym, and a
@@ -295,8 +341,14 @@ function setDraft(answers) {
  *  `quality` and `note` are null and "" rather than absent, and both stay
  *  optional through the commit — see `SessionRequest`, which defaults them. A
  *  form that will not submit until you have rated the session is a form that
- *  teaches you to press 3. */
-let session = { pick: null, path: [], rpe: null, minutes: "", quality: null, note: "" };
+ *  teaches you to press 3.
+ *
+ *  `started` is the opposite case and is required: when the session proper
+ *  began, after the warm-up. It is a clock time you can read off your own
+ *  memory of walking onto the floor, not a judgement — so it cannot be answered
+ *  badly the way a rating can, and it is never pre-filled, because the only
+ *  default available is the time you are logging it, which is the end. */
+let session = { pick: null, path: [], rpe: null, started: "", minutes: "", quality: null, note: "" };
 
 /** `session.pick` for a session the plan never asked for.
  *
@@ -540,7 +592,7 @@ const rowsFor = (path, fromPanel, deletePath) => {
   return [
     ...(fromPanel ?? []).filter((row) => !going.has(row.id)),
     ...queuedFor(path),
-  ].sort((a, b) => (a.hour ?? 0) - (b.hour ?? 0));
+  ].sort((a, b) => ((a.hour ?? 0) * 60 + (a.minute ?? 0)) - ((b.hour ?? 0) * 60 + (b.minute ?? 0)));
 };
 
 /** Today's sessions as this screen understands them: what the laptop has, plus
@@ -722,13 +774,20 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
       const missing = missingSteps(steps, answers);
       const ready = missing.length === 0;
 
-      const commit = async () => {
+      const commit = async (exact = false) => {
         if (!ready) return;
         // The date comes from the hour, not from the clock. `dateForHour` says
         // why: an hour later than now is yesterday's, and stamping it with
         // today's date files it in the future and loses it off the day it
         // happened on. `send` fills in today only when a body does not say.
-        const body = { date: dateForHour(hour), hour, ...answers };
+        //
+        // `exact` is the other case: it happened just now, so the clock *is*
+        // the answer, minute and all, read at the tap rather than from the
+        // hour bar — which can be an hour stale if the app sat open across one.
+        const now = new Date();
+        const body = exact
+          ? { date: today(), hour: now.getHours(), minute: now.getMinutes(), ...answers }
+          : { date: dateForHour(hour), hour, ...answers };
         answers = {};
         opened = new Set();
         await send(path, body, label);
@@ -781,11 +840,26 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
         // that appears when you finish is a button you have to notice, and one
         // that is greyed the whole time you are answering is a progress
         // indicator you never have to read.
-        el("button.go.commit", {
-          text: ready ? `log ${label}` : `pick ${missing.length} more`,
-          disabled: !ready,
-          onclick: commit,
-        }),
+        //
+        // The second button is the minute, and it is only offered while the
+        // hour bar is on the hour it is now. "It happened exactly now" beside
+        // an hour you scrolled back to is two answers that disagree, and the
+        // row would have to pick one of them without saying so.
+        el("div.commits", null,
+          el("button.go.commit", {
+            text: ready ? `log ${label}` : `pick ${missing.length} more`,
+            disabled: !ready,
+            onclick: () => commit(false),
+          }),
+          hour === nowHour()
+            ? el("button.go.commit.exact", {
+                text: "exact time",
+                title: "log it at this minute — for something that just happened",
+                disabled: !ready,
+                onclick: () => commit(true),
+              })
+            : null,
+        ),
         entryList(rows(), describe, empty, { remove }),
       ];
     },
@@ -892,7 +966,7 @@ function amountRow(step, answers, answer) {
  * a session posts `session_id`, and a body with the wrong field name is a 422
  * for a row that is sitting right there on screen.
  */
-function entryList(rows, describe, empty, { at = (e) => clock(e.hour), byKind, remove } = {}) {
+function entryList(rows, describe, empty, { at = (e) => entryClock(e.hour, e.minute), byKind, remove } = {}) {
   if (!rows.length) return el("p.empty", { text: empty });
   // `byKind` widens the left column from a five-character stamp to a word. It
   // travels with `at`, because the two are the same decision: a list that puts
@@ -1016,24 +1090,44 @@ function checkinLog() {
         draw();
       };
 
+      // The night, in the order that has the better claim: what you have just
+      // turned the wheels to, then what the morning already saved, then this
+      // phone's defaults. Which of the three answered is kept, because a
+      // default and an answer look identical once they are in the box.
+      const defaults = nightDefaults();
+      const pick = (key) =>
+        held[key] != null ? [held[key], "draft"]
+          : saved?.[key] != null ? [saved[key], "saved"]
+            : defaults ? [defaults[key], "default"]
+              : [null, null];
+      const [bed, bedFrom] = pick("bed");
+      const [woke, wokeFrom] = pick("woke");
+      const span = bed && woke ? spanHours(bed, woke) : null;
+      const nightOk = span != null && span > 0 && span <= MAX_IN_BED;
+
       const answered = CHECKIN_ITEMS.filter(([k]) => (held[k] ?? saved?.[k]) != null);
-      const ready = answered.length === CHECKIN_ITEMS.length;
+      const ready = answered.length === CHECKIN_ITEMS.length && nightOk;
       // Whether anything on screen differs from the row in the database. This
       // is the question the panel was silent about: with a morning already
       // logged, every answer is *shown* as selected whether it came from the
       // table or from a tap ten seconds ago, and the two are not the same thing.
-      const dirty = CHECKIN_ITEMS.some(([k]) => held[k] != null && held[k] !== saved?.[k]);
+      const dirty = CHECKIN_ITEMS.some(([k]) => held[k] != null && held[k] !== saved?.[k])
+        || (nightOk && (bed !== (saved?.bed ?? null) || woke !== (saved?.woke ?? null)));
 
       const save = () => {
         if (!ready || !dirty) return;
         const body = {};
         for (const [k] of CHECKIN_ITEMS) body[k] = held[k] ?? saved[k];
+        body.bed = bed;
+        body.woke = woke;
         setDraft({});
         send("/api/readiness", body, "check-in");
       };
 
       const status = !ready
-        ? `${CHECKIN_ITEMS.length - answered.length} still to answer`
+        ? answered.length < CHECKIN_ITEMS.length
+          ? `${CHECKIN_ITEMS.length - answered.length + (nightOk ? 0 : 1)} still to answer`
+          : "when were you in bed?"
         : dirty
           ? "not saved yet"
           : "saved";
@@ -1049,6 +1143,14 @@ function checkinLog() {
         // one is how long the night was and the other is what it was like, and
         // the disagreement between them is the diagnostic.
         measure("weight", "lb", "weight"),
+        night({
+          bed,
+          woke,
+          span,
+          nightOk,
+          defaults,
+          fromDefaults: bedFrom === "default" && wokeFrom === "default",
+        }),
         ...CHECKIN_ITEMS.map(([key, name, low, high]) => {
           const shown = shownFor(key);
           return el("div.q", null,
@@ -1085,6 +1187,70 @@ function checkinLog() {
       ];
     },
   };
+}
+
+/**
+ * Into bed and out of it — the night as you lived it, not as the watch scored it.
+ *
+ * The watch knows when you fell asleep and when you woke; it cannot know when
+ * you lay down, so the half hour spent waiting for sleep is in neither of its
+ * numbers. This is that half hour's only record, and it is asked here because
+ * it is answered getting out of bed, like the rest of the morning.
+ *
+ * Two wheels and a line. The line says what this phone's defaults are and
+ * offers to make what is on screen the new ones — the one control on the
+ * check-in that writes nothing to the laptop.
+ */
+function night({ bed, woke, span, nightOk, defaults, fromDefaults }) {
+  const wheel = (key, value, label) => {
+    const box = el("input.amount", {
+      type: "time",
+      value: value ?? "",
+      "aria-label": label,
+      class: bed && woke && !nightOk ? "bad" : "",
+    });
+    // Stored on `input`, drawn on `change`: a redraw rebuilds the element, and
+    // doing it while the wheel is turning closes the wheel under the thumb.
+    box.addEventListener("input", () => setDraft({ ...draft(), [key]: box.value || null }));
+    box.addEventListener("change", () => draw());
+    return box;
+  };
+
+  const same = Boolean(defaults && defaults.bed === bed && defaults.woke === woke);
+  const hint = !bed || !woke
+    ? "into bed · up"
+    : !nightOk
+      ? "that is not a night — check am and pm"
+      : fromDefaults
+        ? `${hoursLabel(span)} · from your defaults`
+        : `${hoursLabel(span)} in bed`;
+
+  return el("div.q", null,
+    el("div.q-head", null,
+      el("span.q-name", { text: "in bed · up" }),
+      el("span.q-hint", { text: hint }),
+    ),
+    el("div.row", null, wheel("bed", bed, "into bed"), wheel("woke", woke, "up")),
+    el("div.row.night-foot", null,
+      el("span.q-hint", {
+        text: defaults
+          ? `defaults ${clockTime(defaults.bed)} · ${clockTime(defaults.woke)}`
+          : "no defaults on this phone",
+      }),
+      el("button.go.small", {
+        text: same ? "default" : "make default",
+        disabled: !nightOk || same,
+        onclick: () => {
+          setNightDefaults({ bed, woke });
+          // Pinned into the draft as well, so the check-in keeps what is on
+          // screen even if the defaults move again before it is saved.
+          setDraft({ ...draft(), bed, woke });
+          toast(`defaults ${clockTime(bed)} · ${clockTime(woke)}`);
+          draw();
+        },
+      }),
+    ),
+  );
 }
 
 /**
@@ -1262,6 +1428,21 @@ function sessionLog() {
         minutes.classList.remove("bad");
       });
 
+      // A native time wheel rather than a typed box: `type=time` on iOS is the
+      // system picker, and its value is `HH:MM` whatever the phone's 12/24h
+      // setting — exactly the form the server takes. Held on `input` without
+      // a redraw, because a redraw rebuilds this element and closes the wheel
+      // under the thumb that is turning it.
+      const started = el("input.amount", {
+        type: "time",
+        value: session.started,
+        "aria-label": "started",
+      });
+      started.addEventListener("input", () => {
+        session.started = started.value;
+        started.classList.remove("bad");
+      });
+
       // The column has been on the table since the first migration and has
       // never had a box: the laptop's card could write it and the laptop's
       // card is gone, so `note` has zero rows across every session ever
@@ -1291,10 +1472,22 @@ function sessionLog() {
         // own, so "cardio" alone is the one selection that looks answered and
         // is not. This is the only place that difference is visible.
         if (!kind || !session.rpe) return void toast("pick a kind and an RPE");
+        if (!HHMM.test(session.started)) {
+          started.classList.add("bad");
+          return void toast("when did it start?");
+        }
         if (!Number.isInteger(mins) || mins < 1 || mins > 600) {
           return void minutes.classList.add("bad");
         }
-        const body = { kind, rpe: session.rpe, minutes: mins };
+        // Dated by the start, not the clock: a session begun at 11:15pm and
+        // logged after midnight is yesterday's. See `dateForTime`.
+        const body = {
+          date: dateForTime(session.started),
+          kind,
+          rpe: session.rpe,
+          started: session.started,
+          minutes: mins,
+        };
         // Both omitted when unanswered rather than sent as null, so the body
         // this card posts on a day you say nothing extra is byte-for-byte the
         // body it has always posted. An empty note is not a note.
@@ -1309,7 +1502,7 @@ function sessionLog() {
         if (focus) body.focus = focus;
         // The one line the laptop's plan card is waiting for.
         if (block) body.plan_key = block.key;
-        session = { pick: null, path: [], rpe: null, minutes: "", quality: null, note: "" };
+        session = { pick: null, path: [], rpe: null, started: "", minutes: "", quality: null, note: "" };
         send("/api/session", body, "session");
       };
 
@@ -1488,9 +1681,15 @@ function sessionLog() {
           ),
           el("div.row", null, note),
         ),
+        // Start and length side by side, because they are one fact — the
+        // stretch of the clock this session occupied — and both count from the
+        // same moment: the end of the warm-up.
         el("div.q", null,
-          el("div.q-head", null, el("span.q-name", { text: "minutes" })),
-          el("div.row", null, minutes, el("button.go", { text: "log", onclick: commit })),
+          el("div.q-head", null,
+            el("span.q-name", { text: "started · minutes" }),
+            el("span.q-hint", { text: "after the warm-up" }),
+          ),
+          el("div.row", null, started, minutes, el("button.go", { text: "log", onclick: commit })),
         ),
         entryList(
           sessionRows(),
@@ -1504,6 +1703,7 @@ function sessionLog() {
           // typed went up, not the place the note is read. It is read in
           // February, on a laptop, next to a series.
           (e) => [
+            e.started ? clockTime(e.started) : null,
             focusLabel(e.focus),
             `rpe ${e.rpe} · ${e.minutes}m`,
             e.quality ? QUALITY_ANCHOR[e.quality] : null,
@@ -2167,7 +2367,7 @@ function homeScreen() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v17";
+const BUILD = "log-v18";
 
 /**
  * The build, along the foot of the title screen.

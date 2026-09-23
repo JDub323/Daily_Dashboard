@@ -2236,3 +2236,138 @@ def test_the_beat_is_one_of_two_words(client, syncs):
     exactly like one that was."""
     assert client.get("/api/health", params={"date": DATE, "beat": "soon"}).status_code == 422
     assert syncs == []
+
+
+# --- migration 37: the clocks -------------------------------------------------
+
+MORNING = {
+    "date": DATE,
+    "sleep_quality": 4,
+    "fatigue": 3,
+    "soreness": 2,
+    "stress": 4,
+    "motivation": 5,
+}
+
+
+def test_a_session_says_when_it_started(client):
+    panel = client.post(
+        "/api/session",
+        json={"date": DATE, "kind": "boxing", "rpe": 7, "minutes": 50, "started": "17:40"},
+    ).json()
+    assert panel["sessions_today"][0]["started"] == "17:40"
+
+
+def test_a_session_from_the_build_before_start_times_still_lands(client):
+    """The phone requires a start and this does not, on purpose: a session
+    queued by the previous build is still owed delivery, and a 422 is what the
+    queue drops."""
+    panel = client.post(
+        "/api/session", json={"date": DATE, "kind": "boxing", "rpe": 6, "minutes": 60}
+    ).json()
+    assert panel["sessions_today"][0]["started"] is None
+
+
+@pytest.mark.parametrize("bad", ["5:40", "24:00", "17:60", "5:40pm", ""])
+def test_a_start_that_is_not_a_clock_time_is_a_422(client, bad):
+    response = client.post(
+        "/api/session",
+        json={"date": DATE, "kind": "boxing", "rpe": 6, "minutes": 60, "started": bad},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("path", "body", "key"),
+    [
+        ("/api/meal", {"size": "small", "quality": 5}, "meals_today"),
+        ("/api/drink", {"amount": 1}, "drinks_today"),
+        ("/api/bathroom", {"kind": "urine", "color": "light", "volume": "medium"},
+         "bathroom_today"),
+    ],
+)
+def test_a_quick_log_can_carry_the_exact_minute(client, path, body, key):
+    panel = client.post(path, json={"date": DATE, "hour": 8, "minute": 7} | body).json()
+    assert [(e["at"], e["minute"]) for e in panel[key]] == [("08:07", 7)]
+
+
+def test_a_remembered_hour_has_no_minute_and_sorts_first_in_it(client):
+    """The minute only ever adds precision to the same hour, so an hour-only
+    row stays where it was and exact ones fall in order after it."""
+    client.post("/api/meal", json={"date": DATE, "hour": 8, "minute": 40, "size": "small",
+                                   "quality": 5})
+    client.post("/api/meal", json={"date": DATE, "hour": 8, "minute": 5, "size": "large",
+                                   "quality": 5})
+    panel = client.post(
+        "/api/meal", json={"date": DATE, "hour": 8, "size": "medium", "quality": 5}
+    ).json()
+    assert [(m["at"], m["minute"]) for m in panel["meals_today"]] == [
+        ("08:00", None), ("08:05", 5), ("08:40", 40),
+    ]
+
+
+def test_a_minute_off_the_clock_is_a_422(client):
+    response = client.post(
+        "/api/meal", json={"date": DATE, "hour": 8, "minute": 60, "size": "small", "quality": 5}
+    )
+    assert response.status_code == 422
+
+
+def test_the_check_in_keeps_the_night_and_derives_the_hours(client):
+    panel = client.post("/api/readiness", json=MORNING | {"bed": "23:40", "woke": "07:10"}).json()
+    got = panel["readiness_today"]
+    assert (got["bed"], got["woke"], got["in_bed_hours"]) == ("23:40", "07:10", 7.5)
+
+
+def test_a_night_need_not_cross_midnight(client):
+    panel = client.post("/api/readiness", json=MORNING | {"bed": "00:10", "woke": "07:40"}).json()
+    assert panel["readiness_today"]["in_bed_hours"] == 7.5
+
+
+def test_a_check_in_without_the_night_is_the_body_it_always_was(client):
+    panel = client.post("/api/readiness", json=MORNING).json()
+    got = panel["readiness_today"]
+    assert (got["bed"], got["woke"], got["in_bed_hours"]) == (None, None, None)
+
+
+def test_a_resave_without_the_night_keeps_the_night(client):
+    """A check-in queued by the old build landing after one that had the night
+    must not erase it."""
+    client.post("/api/readiness", json=MORNING | {"bed": "23:40", "woke": "07:10"})
+    panel = client.post("/api/readiness", json=MORNING | {"motivation": 2}).json()
+    got = panel["readiness_today"]
+    assert (got["motivation"], got["bed"], got["woke"]) == (2, "23:40", "07:10")
+
+
+def test_a_resave_with_a_new_night_replaces_it(client):
+    client.post("/api/readiness", json=MORNING | {"bed": "23:40", "woke": "07:10"})
+    panel = client.post("/api/readiness", json=MORNING | {"bed": "22:30", "woke": "06:00"}).json()
+    assert panel["readiness_today"]["bed"] == "22:30"
+
+
+@pytest.mark.parametrize(
+    "night",
+    [
+        {"bed": "23:40"},                      # half a night
+        {"woke": "07:10"},
+        {"bed": "07:00", "woke": "07:00"},     # no time at all
+        {"bed": "11:00", "woke": "07:00"},     # the am/pm slip: twenty hours
+        {"bed": "23:40", "woke": "7:10"},      # not how a time input writes it
+    ],
+)
+def test_a_night_nobody_had_is_a_422(client, night):
+    assert client.post("/api/readiness", json=MORNING | night).status_code == 422
+
+
+def test_the_table_refuses_half_a_night_and_a_malformed_clock(db):
+    """The request model is one guard and the table is the other, for anything
+    that opens the file without coming through the boundary."""
+    import sqlite3
+
+    for bed, woke in (("23:40", None), ("24:00", "07:00"), ("7:00", "07:00")):
+        with pytest.raises(sqlite3.IntegrityError):
+            db.conn.execute(
+                "INSERT INTO readiness (date, sleep_quality, fatigue, soreness, stress,"
+                " motivation, bed, woke) VALUES ('2026-01-01', 3, 3, 3, 3, 3, ?, ?)",
+                (bed, woke),
+            )

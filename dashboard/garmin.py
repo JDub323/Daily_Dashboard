@@ -120,7 +120,9 @@ def sleep_metrics(payload: Any) -> dict[HealthMetric, float]:
 
     Time in bed is computed from the two local timestamps rather than read from
     a field, because the field that reports it has been three different names
-    across the client's own history and the timestamps have been stable.
+    across the client's own history and the timestamps have been stable. They
+    bound the *sleep*, not the bed -- see `HealthMetric.time_in_bed` -- so the
+    real time in bed comes from the check-in instead.
     """
     dto = _dig(payload, "dailySleepDTO") or {}
     out: dict[HealthMetric, float] = {}

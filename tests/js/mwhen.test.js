@@ -53,3 +53,59 @@ describe("the day an hour belongs to", () => {
     assert.equal(dateForHour(0, now), localISO(now));
   });
 });
+
+const { dateForTime, entryClock, hhmm, hoursLabel, spanHours } = await import("../../web/m/when.js");
+
+describe("the day a session start belongs to", () => {
+  it("is today for a start already past", () => {
+    assert.equal(dateForTime("17:30", at(2026, 9, 23, 19, 5)), "2026-09-23");
+  });
+
+  it("is today for a start this very minute", () => {
+    assert.equal(dateForTime("19:05", at(2026, 9, 23, 19, 5)), "2026-09-23");
+  });
+
+  it("is yesterday for a start still ahead of the clock", () => {
+    // Began at 11:15pm, logged at 12:40am on the way home.
+    assert.equal(dateForTime("23:15", at(2026, 9, 24, 0, 40)), "2026-09-23");
+  });
+
+  it("compares minutes, not just hours", () => {
+    assert.equal(dateForTime("19:06", at(2026, 9, 23, 19, 5)), "2026-09-22");
+  });
+});
+
+describe("a night in bed", () => {
+  it("crosses midnight", () => {
+    assert.equal(spanHours("23:40", "07:10"), 7.5);
+  });
+
+  it("does not need to", () => {
+    assert.equal(spanHours("00:10", "07:40"), 7.5);
+  });
+
+  it("is zero, not a day, for the same time twice — callers refuse it", () => {
+    assert.equal(spanHours("07:00", "07:00"), 0);
+  });
+
+  it("reads as hours and minutes", () => {
+    assert.equal(hoursLabel(7.5), "7h 30m");
+    assert.equal(hoursLabel(spanHours("23:05", "06:50")), "7h 45m");
+  });
+});
+
+describe("a quick-log row's time", () => {
+  it("is the hour when the minute is unknown", () => {
+    assert.equal(entryClock(20, null), "8pm");
+    assert.equal(entryClock(20, undefined), "8pm");
+  });
+
+  it("is the minute when it was logged as it happened", () => {
+    assert.equal(entryClock(20, 7), "8:07pm");
+    assert.equal(entryClock(0, 0), "12:00am");
+  });
+
+  it("is written the way a time input writes it", () => {
+    assert.equal(hhmm(at(2026, 9, 23, 7, 5)), "07:05");
+  });
+});

@@ -2282,16 +2282,27 @@ class Repository:
         soreness: int,
         stress: int,
         motivation: int,
+        bed: str | None = None,
+        woke: str | None = None,
     ) -> d.Readiness:
+        """One morning, upserted.
+
+        A re-save without the night keeps the night already on the row rather
+        than erasing it -- `COALESCE`, and on the pair together, since the
+        table refuses half of one. What that protects is a check-in queued by
+        the build before migration 37 landing after one that had them."""
         row = self.conn.execute(
             "INSERT INTO readiness "
-            "(date, sleep_quality, fatigue, soreness, stress, motivation) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
+            "(date, sleep_quality, fatigue, soreness, stress, motivation, bed, woke) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (date) DO UPDATE SET "
             "sleep_quality = excluded.sleep_quality, fatigue = excluded.fatigue, "
             "soreness = excluded.soreness, stress = excluded.stress, "
-            "motivation = excluded.motivation RETURNING *",
-            (_iso(date), sleep_quality, fatigue, soreness, stress, motivation),
+            "motivation = excluded.motivation, "
+            "bed = CASE WHEN excluded.bed IS NULL THEN readiness.bed ELSE excluded.bed END, "
+            "woke = CASE WHEN excluded.bed IS NULL THEN readiness.woke ELSE excluded.woke END "
+            "RETURNING *",
+            (_iso(date), sleep_quality, fatigue, soreness, stress, motivation, bed, woke),
         ).fetchone()
         return d.Readiness(**dict(row))
 
@@ -2318,6 +2329,7 @@ class Repository:
         plan_key: str | None = None,
         focus: str | None = None,
         quality: int | None = None,
+        started: str | None = None,
     ) -> d.TrainingSession:
         """Append a session. Never an upsert -- two-a-days are the normal case,
         and a second session today is a second row, not a correction of the
@@ -2331,8 +2343,9 @@ class Repository:
         try:
             row = self.conn.execute(
                 "INSERT INTO training_session "
-                "(date, kind, rpe, minutes, note, garmin_activity_id, plan_key, focus, quality) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+                "(date, kind, rpe, minutes, note, garmin_activity_id, plan_key, focus, quality,"
+                " started) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
                 (
                     _iso(date),
                     SessionKind(kind).value,
@@ -2343,6 +2356,7 @@ class Repository:
                     plan_key,
                     focus,
                     quality,
+                    started,
                 ),
             ).fetchone()
         except sqlite3.IntegrityError as error:
@@ -2481,6 +2495,7 @@ class Repository:
         volume: Volume,
         solidity: Stool | None = None,
         color: UrineColor | None = None,
+        minute: int | None = None,
     ) -> d.BathroomLog:
         """Append one visit.
 
@@ -2490,8 +2505,8 @@ class Repository:
         through this method.
         """
         row = self.conn.execute(
-            "INSERT INTO bathroom_log (date, hour, kind, solidity, color, volume) "
-            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+            "INSERT INTO bathroom_log (date, hour, kind, solidity, color, volume, minute) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *",
             (
                 _iso(date),
                 hour,
@@ -2499,6 +2514,7 @@ class Repository:
                 Stool(solidity).value if solidity else None,
                 UrineColor(color).value if color else None,
                 Volume(volume).value,
+                minute,
             ),
         ).fetchone()
         return d.BathroomLog(**dict(row))
@@ -2510,7 +2526,7 @@ class Repository:
     def bathroom_on(self, date: dt.date) -> list[d.BathroomLog]:
         """One day, in time order -- which is the order the pattern is in."""
         rows = self.conn.execute(
-            "SELECT * FROM bathroom_log WHERE date = ? ORDER BY hour, id", (_iso(date),)
+            "SELECT * FROM bathroom_log WHERE date = ? ORDER BY hour, minute, id", (_iso(date),)
         ).fetchall()
         return [d.BathroomLog(**dict(r)) for r in rows]
 
@@ -2563,6 +2579,7 @@ class Repository:
         note: str | None = None,
         preset: MealPreset | None = None,
         flags: Iterable[MealFlag] = (),
+        minute: int | None = None,
     ) -> d.MealLog:
         """Append one meal.
 
@@ -2572,8 +2589,8 @@ class Repository:
         No flags writes no `meal_flag` rows at all, exactly as no tags writes no
         `drink_tag` rows: the absence is the answer, not a missing one."""
         row = self.conn.execute(
-            "INSERT INTO meal_log (date, hour, size, quality, note, preset) "
-            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+            "INSERT INTO meal_log (date, hour, size, quality, note, preset, minute) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *",
             (
                 _iso(date),
                 hour,
@@ -2581,6 +2598,7 @@ class Repository:
                 quality,
                 note or None,
                 MealPreset(preset).value if preset else None,
+                minute,
             ),
         ).fetchone()
         written = canonical_flags(flags)
@@ -2596,7 +2614,7 @@ class Repository:
 
     def meals_on(self, date: dt.date) -> list[d.MealLog]:
         rows = self.conn.execute(
-            "SELECT * FROM meal_log WHERE date = ? ORDER BY hour, id", (_iso(date),)
+            "SELECT * FROM meal_log WHERE date = ? ORDER BY hour, minute, id", (_iso(date),)
         ).fetchall()
         return self._meals(rows)
 
@@ -2642,6 +2660,7 @@ class Repository:
         tags: Iterable[DrinkTag],
         amount: float,
         name: DrinkName | None = None,
+        minute: int | None = None,
     ) -> d.DrinkLog:
         """Append one drink. `amount` is in drinks; see `DrinkLog`.
 
@@ -2652,8 +2671,9 @@ class Repository:
         the phone means.
         """
         row = self.conn.execute(
-            "INSERT INTO drink_log (date, hour, amount, name) VALUES (?, ?, ?, ?) RETURNING *",
-            (_iso(date), hour, float(amount), DrinkName(name).value if name else None),
+            "INSERT INTO drink_log (date, hour, amount, name, minute) "
+            "VALUES (?, ?, ?, ?, ?) RETURNING *",
+            (_iso(date), hour, float(amount), DrinkName(name).value if name else None, minute),
         ).fetchone()
         written = canonical_tags(tags)
         self.conn.executemany(
@@ -2672,7 +2692,7 @@ class Repository:
 
     def drinks_on(self, date: dt.date) -> list[d.DrinkLog]:
         rows = self.conn.execute(
-            "SELECT * FROM drink_log WHERE date = ? ORDER BY hour, id", (_iso(date),)
+            "SELECT * FROM drink_log WHERE date = ? ORDER BY hour, minute, id", (_iso(date),)
         ).fetchall()
         return self._drinks(rows)
 

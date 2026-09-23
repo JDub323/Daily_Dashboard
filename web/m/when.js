@@ -68,3 +68,46 @@ export const timeLabel = (d = new Date()) => {
   const h = d.getHours();
   return `${h % 12 === 0 ? 12 : h % 12}:${String(d.getMinutes()).padStart(2, "0")}${h < 12 ? "am" : "pm"}`;
 };
+
+/** `20:07` from a Date — the `HH:MM` every time field on the server takes, and
+ *  the form an `<input type=time>` both reads and writes. */
+export const hhmm = (d = new Date()) =>
+  `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+
+/** `20:07` -> `8:07pm`. What a stored time looks like on screen. */
+export const clockTime = (value) => {
+  const [h, m] = value.split(":").map(Number);
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")}${h < 12 ? "am" : "pm"}`;
+};
+
+/** A quick-log row's time: `8pm` for a remembered hour, `8:07pm` for one
+ *  logged as it happened. The minute is only ever present when it is true —
+ *  see migration 37 — so its absence is printed as the hour it always was. */
+export const entryClock = (hour, minute) =>
+  minute == null ? clock(hour) : clockTime(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`);
+
+/**
+ * The date a session that started at `HH:MM` belongs to.
+ *
+ * `dateForHour` at minute resolution, for the same reason: a session is logged
+ * after it ends, and one that began at 11:15pm and is logged at 12:40am began
+ * yesterday. A start later than the clock cannot be today's.
+ */
+export const dateForTime = (value, now = new Date()) => {
+  const day = new Date(now);
+  if (value > hhmm(now)) day.setDate(day.getDate() - 1);
+  return localISO(day);
+};
+
+/** Hours from one `HH:MM` to the next occurrence of another — a night, which
+ *  usually crosses midnight. The twin of `span_hours` in `models/common.py`. */
+export const spanHours = (start, end) => {
+  const mins = (v) => { const [h, m] = v.split(":").map(Number); return h * 60 + m; };
+  return (((mins(end) - mins(start)) % 1440) + 1440) % 1440 / 60;
+};
+
+/** `7.5` -> `7h 30m`. */
+export const hoursLabel = (hours) => {
+  const total = Math.round(hours * 60);
+  return `${Math.floor(total / 60)}h ${String(total % 60).padStart(2, "0")}m`;
+};

@@ -28,6 +28,7 @@ from .common import (
     Base,
     BathroomKind,
     ChessOutcome,
+    ClockTime,
     DrinkName,
     DrinkTag,
     EntrySource,
@@ -46,6 +47,7 @@ from .common import (
     Volume,
     canonical_flags,
     canonical_tags,
+    span_hours,
 )
 from .domain import (
     MAX_SENTENCES,
@@ -415,6 +417,10 @@ class HealthLogRequest(DateBody):
     hand, and only an importer has any business saying otherwise."""
 
 
+MAX_IN_BED_HOURS = 14
+"""The longest night in bed the check-in will take. See ."""
+
+
 class ReadinessRequest(DateBody):
     """All five at once. The panel posts the whole row on every tap, so a
     half-answered questionnaire is not a state the table can be in."""
@@ -424,6 +430,27 @@ class ReadinessRequest(DateBody):
     soreness: int = Field(ge=1, le=5)
     stress: int = Field(ge=1, le=5)
     motivation: int = Field(ge=1, le=5)
+
+    bed: ClockTime | None = None
+    woke: ClockTime | None = None
+    """Into bed and out of it. Optional here and asked for on the phone, for
+    the reason `SessionRequest.started` gives: a check-in queued by the build
+    before these existed is still owed delivery."""
+
+    @model_validator(mode="after")
+    def _a_whole_night(self) -> ReadinessRequest:
+        """Both or neither, and a night a person could have had.
+
+        Fourteen hours is the ceiling because the error it catches is the one
+        a time wheel invites: bed at 11 in the *morning* and up at 7 reads as
+        twenty hours, and a plausible-looking twenty is worse than a 422."""
+        if (self.bed is None) != (self.woke is None):
+            raise ValueError("bed and woke come together or not at all")
+        if self.bed is not None and self.woke is not None:
+            hours = span_hours(self.bed, self.woke)
+            if not 0 < hours <= MAX_IN_BED_HOURS:
+                raise ValueError(f"{self.bed} to {self.woke} is not a night in bed")
+        return self
 
 
 PlanKey = Annotated[str | None, Field(default=None, min_length=3, max_length=64)]
@@ -435,6 +462,12 @@ class SessionRequest(DateBody):
     rpe: int = Field(ge=1, le=10)
     minutes: int = Field(ge=1, le=600)
     note: str | None = Field(default=None, max_length=200)
+
+    started: ClockTime | None = None
+    """When it began, after the warm-up. Required by the phone and optional
+    here, on purpose: the queue on the phone may still hold a session posted by
+    the build before this field existed, a 4xx is what the queue drops, and a
+    session is worth more than its start time."""
 
     quality: int | None = Field(default=None, ge=1, le=5)
     """How well it went, 1-5. Optional, like `note` and for the same reason:
@@ -489,6 +522,7 @@ class BathroomRequest(DateBody):
     applies to the clock exactly as it applies to the calendar."""
 
     hour: int = Field(ge=0, le=23)
+    minute: int | None = Field(default=None, ge=0, le=59)
     kind: BathroomKind
     volume: Volume
     solidity: Stool | None = None
@@ -516,6 +550,7 @@ class BathroomRequest(DateBody):
 
 class MealRequest(DateBody):
     hour: int = Field(ge=0, le=23)
+    minute: int | None = Field(default=None, ge=0, le=59)
     size: MealSize
     quality: int = Field(ge=1, le=5)
     """1 = as processed as it gets, 5 = whole ingredients."""
@@ -546,6 +581,7 @@ class DrinkRequest(DateBody):
     and for why alcohol counts differently."""
 
     hour: int = Field(ge=0, le=23)
+    minute: int | None = Field(default=None, ge=0, le=59)
 
     tags: list[DrinkTag] = Field(default_factory=list, max_length=len(DrinkTag))
     """What was in it, and none of it is a legitimate answer: an empty list is

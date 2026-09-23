@@ -1245,3 +1245,29 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
    field — a control and the top of the list reading as one block with a line
    through it. */
 .addbox { margin-bottom: var(--s5); }
+
+/* --- the two commits ---
+   `log` and `exact time` side by side. The first keeps the width it always had
+   the lion's share of, because it is still the ordinary answer; the second is
+   the case where the entry is made as it happens, and is sized as the
+   exception it is. Both carry the same disabled state, so neither looks
+   available before the entry is complete. */
+.commits { display: flex; gap: var(--s2); margin-top: var(--s5); }
+.commits .go.commit { margin-top: 0; flex: 2; }
+.commits .go.commit.exact { flex: 1; letter-spacing: .12em; }
+
+/* --- the night ---
+   Two time wheels, then a line naming this phone's defaults with the one
+   button that changes them. A native `type=time` draws its own glyphs; the
+   box around them is the same `.amount` every typed answer uses. */
+/* Wider than the minutes box beside it on the session row: `8:45 PM` in a
+   16px face is seven characters plus the picker glyph, and at an equal third
+   of the row the meridiem is what gets clipped. On the night row both boxes
+   are time, so the weight cancels out. */
+.amount[type="time"] { text-align: center; flex: 1.5; padding: 0 var(--s2); }
+/* The clock glyph Chromium draws inside a time field. iOS draws none, and on
+   the session row it is the glyph or the meridiem -- the field itself is what
+   opens the wheel, on both. */
+.amount[type="time"]::-webkit-calendar-picker-indicator { display: none; }
+.night-foot { align-items: center; justify-content: space-between; }
+.go.small:disabled { color: var(--faint); border-color: var(--border); cursor: default; }

@@ -31,6 +31,27 @@ Rating = Annotated[int, Field(ge=100, le=4000)]
 # renderer has to remember.
 Url = HttpUrl
 
+ClockTime = Annotated[str, Field(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")]
+"""A local wall-clock time, `HH:MM`, 24h -- the browser's, never this
+process's. Exactly the form an `<input type=time>` hands back, and the form the
+CHECKs in migration 37 accept, so nothing between the phone and the table has
+to translate it."""
+
+
+def clock_minutes(value: str) -> int:
+    """`07:30` -> 450. Only ever handed a `ClockTime`, so it does not guard."""
+    hours, minutes = value.split(":")
+    return int(hours) * 60 + int(minutes)
+
+
+def span_hours(start: str, end: str) -> float:
+    """Hours from one clock time to the next occurrence of another.
+
+    Modulo a day, because a night crosses midnight more often than not: into
+    bed at 23:40 and up at 07:10 is 7.5, and so is 00:10 to 07:40. A span of
+    zero is a whole day or nothing, and callers refuse it rather than guess."""
+    return ((clock_minutes(end) - clock_minutes(start)) % 1440) / 60
+
 
 # --- enums -----------------------------------------------------------------
 
@@ -269,9 +290,12 @@ class HealthMetric(StrEnum):
     """Hours actually asleep, as the watch scores it."""
 
     time_in_bed = "time_in_bed"
-    """Hours between lights-out and getting up. Kept apart from `sleep_hours`
-    because the gap between the two *is* the signal -- nine in bed and six
-    asleep is a different problem from six of each."""
+    """The watch's sleep *window* -- detected onset to detected wake, awake
+    minutes inside it included. Misnamed: the watch cannot see you lie down,
+    so the half hour before sleep arrives is never in it. What you actually
+    spent in bed is `Readiness.bed`/`woke`, said on the check-in (migration
+    37); this series is kept under its old name because renaming a metric is a
+    table rebuild and nothing renders it."""
 
     sleep_score = "sleep_score"
     """Garmin's 0-100. Was called `sleep` before the units were pinned down."""

@@ -2206,6 +2206,71 @@ MIGRATIONS: list[tuple[int, str]] = [
             CHECK (quality IS NULL OR quality BETWEEN 1 AND 5);
         """,
     ),
+    (
+        37,
+        """
+        -- Three clocks the day was not keeping.
+        --
+        -- Every time here is `HH:MM` text, local, the browser's -- [Invariant
+        -- 1] as it applies to the hour, applied to the minute. Text rather than
+        -- minutes-past-midnight so a row read with `sqlite3` says what it
+        -- means, and the CHECK is the same round-trip trick every `date` column
+        -- uses: strftime hands back exactly its input only when the input was
+        -- already a well-formed time. The `< '24:00'` is there because SQLite
+        -- reads `24:00` as a time and gives it straight back.
+        --
+        -- 1. When a session started -- after the warm-up, which is when the
+        --    minutes beside it start counting. Nullable in the table because
+        --    every session logged before today has none, and a start time
+        --    back-filled from nothing is a fabricated one. Required by the
+        --    phone, which is the only thing that writes sessions; not by the
+        --    request model, because an entry queued on the phone by the build
+        --    before this one is still owed delivery, and a 422 is a drop.
+        ALTER TABLE training_session ADD COLUMN started TEXT
+            CHECK (started IS NULL OR (started IS strftime('%H:%M', started)
+                                       AND started < '24:00'));
+
+        -- 2. The minute, on the three quick logs, when it is known. `hour`
+        --    stays what every read groups and orders by and is untouched; the
+        --    minute is only ever *more* precision on the same row. NULL is the
+        --    ordinary answer and means what it always meant -- the hour,
+        --    remembered. A minute is written only by the phone's `exact time`
+        --    button, which takes both halves off the clock at the tap, so a
+        --    non-NULL minute is a claim that the entry was made as it
+        --    happened. A minute beside a remembered hour would be a precision
+        --    nobody had, which is the thing migration 20 refused.
+        ALTER TABLE bathroom_log ADD COLUMN minute INTEGER
+            CHECK (minute IS NULL OR minute BETWEEN 0 AND 59);
+        ALTER TABLE meal_log ADD COLUMN minute INTEGER
+            CHECK (minute IS NULL OR minute BETWEEN 0 AND 59);
+        ALTER TABLE drink_log ADD COLUMN minute INTEGER
+            CHECK (minute IS NULL OR minute BETWEEN 0 AND 59);
+
+        -- 3. Into bed and out of it, on the morning's check-in -- which dates
+        --    the night by the morning it ends, as Garmin does.
+        --
+        --    Not `health_entry.time_in_bed`, and the difference is the reason
+        --    this exists. That series is the *watch's* window, sleep onset to
+        --    wake as it detected them, so it can never see the half hour spent
+        --    lying there before sleep arrived. This is what you say: when you
+        --    lay down and when you got up. The watch's `sleep_hours` against
+        --    this is the fraction of the night in bed actually spent asleep.
+        --
+        --    Two clock times rather than one duration, because bedtime drifting
+        --    later across a camp is a thing worth seeing and a duration hides
+        --    it. The duration is derived (`Readiness.in_bed_hours`), never
+        --    stored beside its inputs. Both or neither, and a CHECK rather
+        --    than a convention: half a night is not a row anything can read.
+        --    Nullable because every morning before today was answered without
+        --    them.
+        ALTER TABLE readiness ADD COLUMN bed TEXT
+            CHECK (bed IS NULL OR (bed IS strftime('%H:%M', bed) AND bed < '24:00'));
+        ALTER TABLE readiness ADD COLUMN woke TEXT
+            CHECK ((woke IS NULL) = (bed IS NULL)
+                   AND (woke IS NULL OR (woke IS strftime('%H:%M', woke)
+                                         AND woke < '24:00')));
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)
