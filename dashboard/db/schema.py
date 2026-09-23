@@ -2271,6 +2271,63 @@ MIGRATIONS: list[tuple[int, str]] = [
                                          AND woke < '24:00')));
         """,
     ),
+    (
+        38,
+        """
+        -- The meals he eats, as data rather than as code.
+        --
+        -- Migration 33 gave the meal log eight presets written by hand, and 38
+        -- of the first 57 meals logged named none of them. The menu is a
+        -- handful of plates eaten over and over with small variations, and a
+        -- list that has to be edited to learn a variation is a list that gets
+        -- walked past for "some lunch, large, 4". So the vocabulary lives here
+        -- now and grows from what is logged: a name typed on the phone arrives
+        -- with the first meal that carries it and is inserted beside it.
+        --
+        -- What is stored is only what cannot be derived. Whether a name is on
+        -- the menu, where it sits and what it fills in are all read off
+        -- `meal_log` at request time (`dashboard/menu.py`), so there is no
+        -- status column to drift from the rows that decide it.
+        --
+        -- `slug` is what `meal_log.preset` holds, and is still not a foreign
+        -- key -- the identity rule from migration 33, and a rebuild of a table
+        -- with a year of meals in it to add one would be all cost. At most one
+        -- dot, and the dot is the tree: `chicken_rice.salsa` is a variation of
+        -- `chicken_rice`, read off the slug rather than stored beside it.
+        --
+        -- `label` is the words, and for a variation only its own part: `salsa`,
+        -- which the phone draws under its parent.
+        --
+        -- `given` is the one fact about a name that its meals cannot supply: the
+        -- day it was put on the menu without earning its place. Only the eight
+        -- below have one. They are on the menu from today, and on the same
+        -- terms as everything else from then on -- thirty days uneaten and they
+        -- go, which for three of them (never logged) is the point.
+        CREATE TABLE meal_name (
+            slug   TEXT PRIMARY KEY CHECK (length(slug) BETWEEN 2 AND 64),
+            label  TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 64),
+            given  TEXT CHECK (given IS NULL OR given IS strftime('%Y-%m-%d', given))
+        ) STRICT, WITHOUT ROWID;
+
+        INSERT INTO meal_name (slug, label, given) VALUES
+            ('chicken_broccoli_sweet_potato', 'chicken, broccoli, sweet potato',
+             '2026-09-23'),
+            ('chicken_rice', 'chicken + rice', '2026-09-23'),
+            ('scrambled_eggs', 'loaded scrambled eggs', '2026-09-23'),
+            ('eating_out', 'eating out', '2026-09-23'),
+            ('trail_mix', 'trail mix', '2026-09-23'),
+            ('protein_shake', 'protein shake', '2026-09-23'),
+            ('banana', 'banana', '2026-09-23'),
+            ('apple', 'apple', '2026-09-23');
+
+        -- Belt and braces: every slug already written has a row, whatever the
+        -- list above says. The enum made anything else impossible, but a meal
+        -- whose name has no row would print as its slug for ever.
+        INSERT OR IGNORE INTO meal_name (slug, label)
+            SELECT DISTINCT preset, replace(preset, '_', ' ')
+            FROM meal_log WHERE preset IS NOT NULL;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

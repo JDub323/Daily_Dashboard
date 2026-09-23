@@ -24,6 +24,7 @@ from typing import Annotated
 from pydantic import Field, computed_field, model_validator
 
 from .common import (
+    MEAL_LABEL_MAX,
     SESSION_FOCUS,
     Base,
     BathroomKind,
@@ -36,8 +37,8 @@ from .common import (
     InputState,
     MathOutcome,
     MealFlag,
-    MealPreset,
     MealSize,
+    MealSlug,
     Rating,
     Score,
     SessionKind,
@@ -555,12 +556,23 @@ class MealRequest(DateBody):
     quality: int = Field(ge=1, le=5)
     """1 = as processed as it gets, 5 = whole ingredients."""
 
-    preset: MealPreset | None = None
-    """Which of the usual meals this was, or None. A preset fills `size`,
-    `quality` and `flags` in on the client and then stops mattering -- it is
-    posted so the row can say what it was, not so the server can expand it.
-    Expanding it here would make a preset's meaning a thing that changes under
-    rows already written the next time the table above is edited."""
+    preset: MealSlug | None = None
+    """What this meal was, or None. A name fills `size`, `quality` and `flags`
+    in on the client and then stops mattering -- it is posted so the row can
+    say what it was, not so the server can expand it. Expanding it here would
+    make a name's meaning a thing that changes under rows already written, and
+    a learned name's fills change by design."""
+
+    label: str | None = Field(default=None, min_length=1, max_length=MEAL_LABEL_MAX)
+    """The words for `preset` -- only the last part, `salsa` and not `chicken +
+    rice · salsa`. Read only when the slug is new, which is how a name typed on
+    the phone reaches the table: it travels with the first meal that carries it,
+    through the queue, so naming a meal in a kitchen with no laptop in reach
+    costs nothing extra.
+
+    Never a reason to refuse the body. A slug the server has never seen and no
+    label is still a meal, filed under the slug spelled out -- this body may
+    have spent a day in a phone's queue, and a 422 is a drop."""
 
     flags: list[MealFlag] = Field(default_factory=list, max_length=len(MealFlag))
     """What was in it. Defaulted and canonicalised exactly as `DrinkRequest`
@@ -1603,6 +1615,56 @@ class TrainingPlan(Base):
     is no boolean beside it that could disagree with it."""
 
 
+class MealFills(Base):
+    """What tapping a name answers for you, learned from how it was logged --
+    see `menu.learned`. Every field stays editable on the phone; this is the
+    starting point, not the answer."""
+
+    size: MealSize
+    quality: int = Field(ge=1, le=5)
+    flags: list[MealFlag] = Field(default_factory=list)
+
+
+class MealName(Base):
+    """One entry on the meal menu, as `dashboard/menu.py` reads it today.
+
+    Every name ever given is sent, hidden ones included, because the phone's
+    name box searches all of them -- that search is what stops "chicken rice"
+    and "chicken + rice" becoming two meals. `live` is what decides whether it
+    is drawn in the tree."""
+
+    slug: str
+    label: str
+    """Its own words only. A variation's is `salsa`; the phone puts its
+    parent's in front where it is drawn away from the parent."""
+
+    parent: str | None = None
+    """The slug before the dot, or None for a base meal."""
+
+    live: bool = False
+    """On the menu: earned (three times inside three weeks) or given, and eaten
+    inside the last thirty days."""
+
+    rank: int = 0
+    """Position among its siblings, 0 first. Moves at most once a week -- see
+    `menu.rank_anchor` for why a menu that reshuffles daily is worse than one
+    that is slightly out of date."""
+
+    fills: MealFills | None = None
+    """None until it has been logged at least once (or its parent has)."""
+
+    hours: list[int] = Field(default_factory=lambda: [0] * 24)
+    """How many times it was eaten at each hour over the last thirty days --
+    what the phone's "likely now" row is picked from, against the hour it is
+    logging for rather than the hour it is."""
+
+    count: int = 0
+    """Times logged, ever."""
+
+    last: dt.date | None = None
+    """When it was last eaten."""
+
+
 class HealthPanel(Base):
     """The health tab's whole payload.
 
@@ -1623,6 +1685,11 @@ class HealthPanel(Base):
     and stay there -- these three tables produce four to sixteen rows a day,
     and a month of them crossing the wire on every boot to redraw one list
     would be the largest thing in the payload by some margin."""
+
+    meal_menu: list[MealName] = Field(default_factory=list)
+    """The meal log's names -- the menu the phone draws and the vocabulary its
+    name box searches. On this panel because every meal write answers with
+    this panel, so a name the phone just sent comes back already on it."""
 
     garmin: GarminStatus = Field(default_factory=GarminStatus)
 

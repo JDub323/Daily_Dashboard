@@ -75,89 +75,216 @@ export const MEAL_FLAGS = [
 ];
 
 /**
- * The meals that are the same meal every time.
+ * The meals he eats — data, not code, since migration 38.
  *
- * `[value, label, fills]` — no key, and one element longer than every other
- * row in this file. The third element is the whole point: a preset is a
- * *shortcut through the questions below it*, not a fifth question. Tapping one
- * fills size, quality and flags, all of which stay editable afterwards, so it
- * is the fast path rather than a different way of answering.
+ * This used to be eight presets written by hand, and 38 of the first 57 meals
+ * logged against them named none of the eight: the real menu is a handful of
+ * plates eaten over and over with small variations, and a list that has to be
+ * edited to learn a variation is a list that gets walked past for "some lunch,
+ * large, 4". So the laptop keeps the names (`meal_name`) and decides from the
+ * log which are on the menu, in what order, and what each fills in — see
+ * `dashboard/menu.py` for the rules. It sends every name on the health panel as
+ * `meal_menu`, and what is here is only what a surface needs to *draw* that
+ * list and to add to it.
  *
- * What it costs is that quality becomes a decision taken once rather than a
- * judgement made per meal — and that is the improvement, not the price. A
- * hand-scored 4-or-5 drifts over a camp; the same plate is now the same number
- * every time it is eaten, and a series where it is not is a series where the
- * plate actually changed.
- *
- * The four small ones carry `snack`, which is what keeps an apple from
- * counting as one of the day's three meals. That mapping lives here rather
- * than in the flag row because it is a fact about the *food* — an apple is a
- * snack whoever logs it — and the flag row stays free to disagree on the day
- * you eat four of them for lunch.
- *
- * There is no key row here and no keyboard to use one: this is the list most
- * likely to be edited, and eight arbitrary letters would be eight more things
- * to keep unique for a surface that has no keys. Presets are tapped.
+ * A name is `{slug, label, parent, live, rank, fills, hours, count, last}`.
+ * The tree is two levels and the dot in the slug is the whole of it:
+ * `chicken_rice.salsa` is a variation of `chicken_rice`, exactly as
+ * `cardio.steady.run` sits under `cardio` in the session tree.
  */
-export const MEAL_PRESETS = [
-  ["chicken_broccoli_sweet_potato", "chicken · broccoli · sweet potato",
-    { size: "large", quality: 5, flags: ["protein"] }],
-  ["chicken_rice", "chicken + rice",
-    { size: "large", quality: 5, flags: ["protein"] }],
-  ["scrambled_eggs", "loaded scrambled eggs",
-    { size: "medium", quality: 4, flags: ["protein"] }],
-  ["eating_out", "eating out",
-    { size: "large", quality: 1, flags: [] }],
-  ["trail_mix", "trail mix",
-    { size: "small", quality: 3, flags: ["protein", "snack", "salty"] }],
-  ["protein_shake", "protein shake",
-    { size: "small", quality: 4, flags: ["protein", "snack"] }],
-  ["banana", "banana", { size: "small", quality: 5, flags: ["snack"] }],
-  ["apple", "apple", { size: "small", quality: 5, flags: ["snack"] }],
-];
 
-/** What a preset fills in, or null for a value that is not one. Kept as a
- *  lookup rather than a `find` at every call site so that a preset the client
- *  does not recognise — a row written before the list was edited — reads as
- *  "no fills" instead of throwing on a property of undefined. */
-export const mealFills = (preset) =>
-  MEAL_PRESETS.find(([value]) => value === preset)?.[2] ?? null;
+/** Between a base meal and its variation, where they are printed together. */
+export const MEAL_SEP = " · ";
+
+/** How long one part of a slug may be. Two parts and a dot is 61, under the 64
+ *  the server and the table both take; the longest of the old eight is 29. */
+const SLUG_PART = 30;
+
+/** The box's limit. `MEAL_LABEL_MAX` in `common.py` is the same number. */
+export const MEAL_LABEL_MAX = 40;
 
 /**
- * Four questions now, and only two of them have to be answered.
+ * Words to one slug part: `Chicken + Rice!` → `chicken_rice`.
  *
- * `optional` is what makes the two new rows additive rather than a tax on the
- * meal that is none of them: the commit button has always been held hostage to
- * the questions with no default answer, and a preset row that did that would
- * make "some lunch, medium, 3" — the ordinary case — the one entry you cannot
- * file without inventing a category for it.
+ * Accents fold rather than vanish, so `jalapeño` is `jalapeno` and not
+ * `jalape_o`. `test_logs_contract.py` pushes a spread of awkward input through
+ * this and holds every answer to the server's `MealSlug` pattern: a slug the
+ * phone can make and the server refuses is a 422 from a kitchen, which is a
+ * lost meal.
+ */
+export const mealSlug = (text) =>
+  String(text ?? "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+/, "")
+    .slice(0, SLUG_PART)
+    .replace(/_+$/, "");
+
+/** The slug a typed name would get, under `parent` or as a base meal. Null when
+ *  the words have nothing in them a slug can hold — `!!!`, or a single letter
+ *  for a base meal, which the server's two-character floor would refuse. */
+export function newMealSlug(text, parent = null) {
+  const part = mealSlug(text);
+  if (parent) return part ? `${parent}.${part}` : null;
+  return part.length >= 2 ? part : null;
+}
+
+const humanise = (slug) => String(slug ?? "").split(".").pop().replace(/_/g, " ");
+
+/** One name off the menu, or undefined. */
+export const mealItem = (menu, slug) => (menu ?? []).find((item) => item.slug === slug);
+
+/**
+ * The words for a name, whole: `chicken + rice · salsa`.
  *
- * `fills` on the preset step is honoured by the client, which writes the whole
- * object into the draft rather than the value alone. It is expressed here
- * rather than in the client for the reason everything else in this file is:
- * the next surface that logs a meal should inherit what a preset means instead
- * of a copy of it.
+ * Falls back to the slug spelled out rather than to a blank. A meal written by
+ * a phone whose menu has never heard of the name still has to print as
+ * *something*, and `pad thai` is a worse label than the one he typed but a much
+ * better one than nothing.
+ */
+export function mealName(menu, slug) {
+  if (!slug) return null;
+  const item = mealItem(menu, slug);
+  const own = item?.label ?? humanise(slug);
+  const parent = item?.parent ?? (slug.includes(".") ? slug.split(".")[0] : null);
+  return parent ? `${mealItem(menu, parent)?.label ?? humanise(parent)}${MEAL_SEP}${own}` : own;
+}
+
+/** What tapping a name answers, or null. The laptop has already fallen back to
+ *  the parent's for a variation never eaten on its own. */
+export const mealFills = (menu, slug) => mealItem(menu, slug)?.fills ?? null;
+
+const byRank = (a, b) => (a.rank ?? 0) - (b.rank ?? 0) || a.label.localeCompare(b.label);
+
+/**
+ * The menu as it is drawn: the base meals on it, each with its variations.
+ *
+ * A base meal is drawn if it is on the menu itself *or* if any of its
+ * variations is — chicken and rice is never eaten plain any more, and the
+ * salsa one still needs somewhere to hang. Variations that are not on the menu
+ * are not drawn, so a one-off costs nothing until it is eaten again.
+ */
+export function mealTree(menu) {
+  const kids = new Map();
+  for (const item of menu ?? []) {
+    if (!item.parent || !item.live) continue;
+    if (!kids.has(item.parent)) kids.set(item.parent, []);
+    kids.get(item.parent).push(item);
+  }
+  return (menu ?? [])
+    .filter((item) => !item.parent && (item.live || kids.has(item.slug)))
+    .sort(byRank)
+    .map((item) => ({ ...item, children: (kids.get(item.slug) ?? []).sort(byRank) }));
+}
+
+/**
+ * The few names most likely to be what was just eaten, for `hour`.
+ *
+ * The adaptive half of the meal row, and deliberately a separate row from the
+ * menu: the research on adaptive menus agrees that a prediction helps only
+ * while it leaves the things you have learned the position of where they were
+ * (split menus — Sears & Shneiderman 1994; Findlater & McGrenere 2004). So this
+ * row moves with the hour and the tree below it moves once a week.
+ *
+ * `hour` is the hour being logged, not the hour it is — scroll back to 8pm and
+ * the row offers dinner. Meals within two hours count, the nearer the more,
+ * and the hour wraps so a midnight snack sits beside an 11pm one.
+ */
+export function likelyMeals(menu, hour, n = 3) {
+  const near = (hours) => {
+    let score = 0;
+    for (let d = -2; d <= 2; d++) score += (3 - Math.abs(d)) * (hours?.[(hour + d + 24) % 24] ?? 0);
+    return score;
+  };
+  return (menu ?? [])
+    .filter((item) => item.live)
+    .map((item) => [item, near(item.hours)])
+    .filter(([, score]) => score > 0)
+    .sort(([a, x], [b, y]) => y - x || byRank(a, b))
+    .slice(0, n)
+    .map(([item]) => item);
+}
+
+/**
+ * Names matching what has been typed so far, for the name box.
+ *
+ * Every word typed has to start a word of the name, in any order, so `rice
+ * sal` finds `chicken + rice · salsa`. Searches every name ever given, off the
+ * menu or not — that search is what stops `chicken rice` and `chicken + rice`
+ * becoming two meals, and a name that faded out is exactly the one you have
+ * forgotten the spelling of.
+ */
+export function mealMatches(menu, text, n = 4) {
+  const words = mealSlug(text).split("_").filter(Boolean);
+  if (!words.length) return [];
+  return (menu ?? [])
+    .filter((item) => {
+      const hay = mealSlug(mealName(menu, item.slug)).split("_");
+      return words.every((word) => hay.some((w) => w.startsWith(word)));
+    })
+    .sort((a, b) => Number(b.live) - Number(a.live) || (b.count ?? 0) - (a.count ?? 0)
+      || byRank(a, b))
+    .slice(0, n);
+}
+
+/**
+ * The name these words already are, if any — by slug, or by the words
+ * themselves once folded, so typing `loaded scrambled eggs` finds the old
+ * `scrambled_eggs` rather than minting a twin with the same label.
+ */
+export function sameMeal(menu, text, parent = null) {
+  const slug = newMealSlug(text, parent);
+  const folded = mealSlug(text);
+  return (menu ?? []).find((item) =>
+    item.slug === slug
+    || ((item.parent ?? null) === parent && mealSlug(item.label) === folded)) ?? null;
+}
+
+/**
+ * The menu with names it has not heard back about yet added to it.
+ *
+ * A name typed on the phone reaches the laptop with the first meal that carries
+ * it, so between the typing and the send it exists only here: in the queue, or
+ * in the form being filled in. Added off the menu (`live: false`) — a name
+ * earns its place on the laptop's terms, not by being typed.
+ */
+export function withNamed(menu, named) {
+  const out = [...(menu ?? [])];
+  for (const { slug, label } of named ?? []) {
+    if (!slug || out.some((item) => item.slug === slug)) continue;
+    out.push({
+      slug,
+      label: label ?? humanise(slug),
+      parent: slug.includes(".") ? slug.split(".")[0] : null,
+      live: false,
+      rank: Number.MAX_SAFE_INTEGER,
+      fills: null,
+      hours: [],
+      count: 0,
+      last: null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Four questions, and only two of them have to be answered.
+ *
+ * `optional` is what makes the name additive rather than a tax on the meal that
+ * is none of them: the commit button has always been held hostage to the
+ * questions with no default answer, and a name row that did that would make
+ * "some lunch, medium, 3" — the ordinary case — the one entry you cannot file
+ * without inventing a category for it.
+ *
+ * `menu` marks the one row that is not a row of fixed answers. Its answers are
+ * the laptop's `meal_menu`, and a client draws it as the likely-now row, the
+ * tree and the name box. The answer is still posted as `preset` — the column's
+ * name, and the field a queued body from an older build already carries.
  */
 export const MEAL_STEPS = [
-  {
-    name: "preset",
-    hint: "optional — fills the rest in",
-    optional: true,
-    fills: mealFills,
-    // Drawn behind a button rather than as eight caps in the open. This is a
-    // hint to the client about *space*, not a change to what is asked: the
-    // question, its answers and the fills are all unchanged, and a surface
-    // with room for eight caps is free to ignore it.
-    //
-    // It earns the flag because the row is the wrong shape for the screen it
-    // is on. Eight presets is three rows of a three-across grid — about a
-    // third of a phone panel — sitting above the three questions every meal
-    // has to answer, spent on a shortcut taken twice a day. Collapsed, the
-    // row is one control that either offers the shortcut or names the one you
-    // took.
-    sheet: true,
-    options: MEAL_PRESETS.map(([value, label]) => [null, value, label]),
-  },
+  { name: "preset", hint: "optional — fills the rest in", optional: true, menu: true },
   { name: "size", hint: "roughly, in calories", options: MEAL_SIZE },
   { name: "quality", hint: "1 processed · 5 whole food", options: MEAL_QUALITY },
   { name: "flags", hint: "none is an answer", multi: true, options: MEAL_FLAGS },
@@ -844,10 +971,6 @@ export const squareMeals = (meals) => (meals ?? []).filter((meal) => !meal.is_sn
 // All three fall back to the stored value rather than to a blank. A row
 // written before a table was edited still has to print as *something*, and the
 // slug is a worse label than the word but a much better one than nothing.
-
-/** The words for a meal preset. */
-export const mealPresetLabel = (value) =>
-  MEAL_PRESETS.find(([slug]) => slug === value)?.[1] ?? value ?? null;
 
 /** The words for a drink's name. Searched across the whole table rather than
  *  looked up under the row's tags, because a row read back has a name and the

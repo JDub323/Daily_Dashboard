@@ -1952,12 +1952,74 @@ def test_a_snack_says_so(client):
     assert panel["meals_today"][0]["is_snack"] is True
 
 
-def test_a_meal_preset_nobody_has_heard_of_is_a_422(client):
+def _menu(panel: dict) -> dict[str, dict]:
+    return {name["slug"]: name for name in panel["meal_menu"]}
+
+
+def test_a_meal_name_nobody_has_heard_of_joins_the_vocabulary(client):
+    """Migration 38 reversed this: an unknown name used to be a 422, which from
+    a phone's queue is a lost meal. It is now how the menu learns -- the name
+    travels with the first meal that carries it."""
+    panel = client.post(
+        "/api/meal",
+        json={"date": DATE, "hour": 12, "size": "large", "quality": 3,
+              "preset": "sushi", "label": "sushi"},
+    ).json()
+    assert panel["meals_today"][0]["preset"] == "sushi"
+    sushi = _menu(panel)["sushi"]
+    assert (sushi["label"], sushi["count"], sushi["live"]) == ("sushi", 1, False)
+    assert sushi["fills"] == {"size": "large", "quality": 3, "flags": []}
+
+
+def test_a_variation_hangs_from_the_slug_before_its_dot(client):
+    panel = client.post(
+        "/api/meal",
+        json={"date": DATE, "hour": 12, "size": "large", "quality": 4,
+              "preset": "chicken_rice.salsa", "label": "salsa"},
+    ).json()
+    salsa = _menu(panel)["chicken_rice.salsa"]
+    assert (salsa["label"], salsa["parent"]) == ("salsa", "chicken_rice")
+
+
+def test_a_name_keeps_the_words_it_arrived_with(client):
+    """First writer wins, so a second spelling cannot rename rows already
+    printed under the first."""
+    for label in ("Sushi!", "sushi rolls"):
+        panel = client.post(
+            "/api/meal",
+            json={"date": DATE, "hour": 12, "size": "large", "quality": 3,
+                  "preset": "sushi", "label": label},
+        ).json()
+    assert _menu(panel)["sushi"]["label"] == "Sushi!"
+
+
+def test_an_unlabelled_new_name_is_spelled_out_rather_than_refused(client):
+    """A body from a build before labels -- or a script -- is still a meal."""
+    panel = client.post(
+        "/api/meal",
+        json={"date": DATE, "hour": 12, "size": "large", "quality": 3, "preset": "pad_thai"},
+    ).json()
+    assert _menu(panel)["pad_thai"]["label"] == "pad thai"
+
+
+@pytest.mark.parametrize(
+    "slug", ["Sushi", "a", "sushi.rolls.spicy", "sushi_", "_sushi", "sushi roll", "x" * 65]
+)
+def test_a_slug_the_tree_cannot_hold_is_a_422(client, slug):
+    """The one refusal left, and the phone cannot trigger it: `mealSlug` in
+    logs.js is held to this pattern by test_logs_contract.py."""
     response = client.post(
         "/api/meal",
-        json={"date": DATE, "hour": 12, "size": "large", "quality": 5, "preset": "sushi"},
+        json={"date": DATE, "hour": 12, "size": "large", "quality": 5, "preset": slug},
     )
     assert response.status_code == 422
+
+
+def test_the_eight_old_presets_are_on_the_menu_from_the_start(client):
+    panel = client.get("/api/health", params={"date": DATE}).json()
+    menu = _menu(panel)
+    assert {"chicken_rice", "apple", "scrambled_eggs"} <= set(menu)
+    assert menu["chicken_rice"]["label"] == "chicken + rice"
 
 
 def test_a_drink_can_say_which_drink_it_was(client):

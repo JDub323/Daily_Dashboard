@@ -6,7 +6,7 @@ there is instead is this file, which reads the JavaScript with Node and asserts
 that every list in it matches its counterpart.
 
 It earns its keep because of *how* a drift here fails. Nothing throws. The
-phone offers a preset the request model has never heard of, the tap looks
+phone offers a value the request model has never heard of, the tap looks
 exactly like every other tap, the entry goes into the queue -- and the queue is
 a record with no second copy of anything in it, so the write comes back a 422
 from a kitchen, at which point the meal is either re-entered by hand or lost.
@@ -28,14 +28,16 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from pydantic import TypeAdapter
 
 from dashboard.models import api
 from dashboard.models.common import (
+    MEAL_LABEL_MAX,
     SESSION_FOCUS,
     DrinkName,
     DrinkTag,
     MealFlag,
-    MealPreset,
+    MealSlug,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -56,10 +58,18 @@ const walk = (nodes, path, kind) => {
 };
 walk(m.SESSION_TREE, [], null);
 
+// Whatever a thumb might type into the meal name box.
+const typed = [
+  "chicken + rice", "Chicken & Rice!!", "jalapeño poppers", "  pad   thai  ",
+  "w/ salsa", "x", "xy", "7 layer dip", "!!!", "", "___", "crème brûlée",
+  "a".repeat(80), "word ".repeat(20), "ONE-TWO_three", "ümlaut über", "日本", "émoji 🍕 pizza",
+];
+
 console.log(JSON.stringify({
   tags: m.DRINK_TAGS.map(([, value]) => value),
   names: [...m.DRINK_NAMES.values()].flat().map(([value]) => value),
-  presets: m.MEAL_PRESETS.map(([value]) => value),
+  slugs: typed.flatMap((t) => [m.newMealSlug(t), m.newMealSlug(t, "chicken_rice")]),
+  labelMax: m.MEAL_LABEL_MAX,
   flags: m.MEAL_FLAGS.map(([, value]) => value),
   focus: Object.fromEntries(leaves),
   combinations: [...m.DRINK_NAMES.entries()].map(([key, names]) => [key, names.length]),
@@ -111,8 +121,20 @@ def test_no_combination_offers_more_than_three_names(tables: dict) -> None:
     assert not too_many
 
 
-def test_every_meal_preset_exists(tables: dict) -> None:
-    assert sorted(tables["presets"]) == sorted(preset.value for preset in MealPreset)
+def test_every_meal_slug_the_phone_can_make_is_one_the_server_takes(tables: dict) -> None:
+    """The meal vocabulary is not a list any more (migration 38) -- the phone
+    makes a slug from whatever was typed, so what is held in agreement is the
+    *rule*. Null is the phone declining to make one, which it shows by
+    disabling `save`; anything else it can post has to validate."""
+    adapter = TypeAdapter(MealSlug)
+    made = [slug for slug in tables["slugs"] if slug is not None]
+    assert len(made) > len(tables["slugs"]) // 2
+    for slug in made:
+        adapter.validate_python(slug)
+
+
+def test_the_name_box_stops_where_the_request_model_does(tables: dict) -> None:
+    assert tables["labelMax"] == MEAL_LABEL_MAX
 
 
 def test_the_meal_flags_are_the_same_four(tables: dict) -> None:

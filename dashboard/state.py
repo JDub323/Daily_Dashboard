@@ -23,6 +23,7 @@ from . import (
     garmin,
     health,
     investigate,
+    menu,
     scoring,
     spelling,
     trainplan,
@@ -853,6 +854,7 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
         bathroom_today=repo.bathroom_on(today),
         meals_today=repo.meals_on(today),
         drinks_today=repo.drinks_on(today),
+        meal_menu=menu.meal_menu(repo.meal_names(), repo.named_meals(today), today),
         loads=sorted(loads.items()),
         derived=api.HealthDerived(
             acwr=health.acwr(sessions, today),

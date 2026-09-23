@@ -34,7 +34,6 @@ from ..models.common import (
     MathOutcome,
     MathStatus,
     MealFlag,
-    MealPreset,
     MealSize,
     PaperStatus,
     ProblemKind,
@@ -2577,17 +2576,22 @@ class Repository:
         size: MealSize,
         quality: int,
         note: str | None = None,
-        preset: MealPreset | None = None,
+        preset: str | None = None,
         flags: Iterable[MealFlag] = (),
         minute: int | None = None,
+        label: str | None = None,
     ) -> d.MealLog:
         """Append one meal.
 
         `preset` and `flags` are keyword-defaulted and sit after `note` so that
         every call written before they existed still means what it meant.
 
-        No flags writes no `meal_flag` rows at all, exactly as no tags writes no
-        `drink_tag` rows: the absence is the answer, not a missing one."""
+        A `preset` the menu has never seen is added to it here, in the same
+        transaction as the meal -- see `_name_meal`. No flags writes no
+        `meal_flag` rows at all, exactly as no tags writes no `drink_tag` rows:
+        the absence is the answer, not a missing one."""
+        if preset:
+            self._name_meal(preset, label)
         row = self.conn.execute(
             "INSERT INTO meal_log (date, hour, size, quality, note, preset, minute) "
             "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *",
@@ -2597,7 +2601,7 @@ class Repository:
                 MealSize(size).value,
                 quality,
                 note or None,
-                MealPreset(preset).value if preset else None,
+                preset or None,
                 minute,
             ),
         ).fetchone()
@@ -2607,6 +2611,48 @@ class Repository:
             [(row["id"], flag.value) for flag in written],
         )
         return d.MealLog(**dict(row), flags=written)
+
+    def _name_meal(self, slug: str, label: str | None) -> None:
+        """Make sure `slug`, and its parent if it has one, is on `meal_name`.
+
+        First writer wins: a slug already there keeps the words it came with,
+        so a second phone spelling it differently cannot rename it under rows
+        already printed. A missing label -- a body from before labels, or one a
+        script wrote -- is the slug spelled out, because the meal is the thing
+        worth keeping and the words can be fixed with one UPDATE.
+
+        The parent is only ever missing when something other than the phone
+        wrote the body (the phone names variations from a parent it is showing),
+        but a variation whose parent has no row would be a branch with nothing
+        to hang from."""
+        parent, dot, _ = slug.partition(".")
+        if dot:
+            self._name_meal(parent, None)
+        words = label or slug.rpartition(".")[2].replace("_", " ")
+        self.conn.execute(
+            "INSERT OR IGNORE INTO meal_name (slug, label) VALUES (?, ?)", (slug, words)
+        )
+
+    def meal_names(self) -> list[tuple[str, str, dt.date | None]]:
+        """Every name ever given, as `(slug, label, given)` -- hidden ones too,
+        because the phone's name box searches all of them."""
+        return [
+            (r["slug"], r["label"], dt.date.fromisoformat(r["given"]) if r["given"] else None)
+            for r in self.conn.execute("SELECT slug, label, given FROM meal_name ORDER BY slug")
+        ]
+
+    def named_meals(self, before: dt.date) -> list[d.MealLog]:
+        """Every meal that says what it was, oldest first, up to `before`.
+
+        Whole history rather than a window, because whether a name ever earned
+        its place is a question about all of it. It is only the rows with a
+        name -- a few a day -- and nothing else in the panel reads this."""
+        rows = self.conn.execute(
+            "SELECT * FROM meal_log WHERE preset IS NOT NULL AND date <= ? "
+            "ORDER BY date, hour, minute, id",
+            (_iso(before),),
+        ).fetchall()
+        return self._meals(rows)
 
     def delete_meal(self, entry_id: int) -> bool:
         cur = self.conn.execute("DELETE FROM meal_log WHERE id = ?", (entry_id,))

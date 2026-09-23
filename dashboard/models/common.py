@@ -501,7 +501,7 @@ SESSION_FOCUS: Mapping[str, SessionKind] = MappingProxyType(
 `kind` answers "how much of X did I do" and is what `daily_load` and the camp
 plan are written against; it is unchanged and stays the only thing scored.
 This is the level below it -- what the session actually *was* -- and it is
-identity in exactly the sense `DrinkName` and `MealPreset` are: grouped by,
+identity in exactly the sense `DrinkName` and `MealSlug` are: grouped by,
 never summed.
 
 **The mapping is the invariant, not the list.** A leaf determines its kind, so
@@ -744,35 +744,37 @@ class MealSize(StrEnum):
     large = "large"
 
 
-class MealPreset(StrEnum):
-    """What the meal was, for the meals that are the same meal every time.
+MealSlug = Annotated[
+    str,
+    Field(
+        min_length=2,
+        max_length=64,
+        pattern=r"^[a-z0-9]+(_[a-z0-9]+)*(\.[a-z0-9]+(_[a-z0-9]+)*)?$",
+    ),
+]
+"""What the meal was -- the identity half of the meal log, and the counterpart
+of `DrinkName` (read that docstring for why identity and composition are kept
+apart). Nothing scores one; `diet_quality` reads `quality` and the energy
+balance reads `size`, both of which a name merely *fills in*.
 
-    The identity half of the meal log, and the exact counterpart of
-    `DrinkName` -- read that docstring for why identity and composition are
-    kept apart. Nothing scores a preset; `diet_quality` reads `quality` and the
-    energy balance reads `size`, both of which a preset merely *fills in*.
+A slug rather than an enum since migration 38. It was an enum of eight meals
+written by hand, and 38 of the first 57 meals logged against it named none of
+them: the real menu is a handful of plates with small variations, and a list
+that has to be edited to learn a variation is a list that stops being used. So
+the vocabulary is the `meal_name` table now, and it grows from what is logged
+-- see `dashboard/menu.py` for how a name earns its place and loses it.
 
-    That filling-in is the whole point. A preset is a shortcut through the two
-    questions below it and the flags beside them, and every field it writes
-    stays editable afterwards, so this is the fast path rather than a
-    different way of answering. The cost is that a preset makes its quality
-    score a decision taken once rather than a judgement made per meal -- which
-    is an improvement: the same plate is now the same number every time, and
-    the drift that a hand-scored 4-or-5 accumulates over a camp is gone.
+At most one dot, and the dot is the tree: `chicken_rice.salsa` is a variation
+of `chicken_rice`, exactly as `cardio.steady.run` is a leaf under `cardio`. The
+parent is read off the slug rather than stored beside it, so the two cannot
+disagree. The phone makes these (`mealSlug` in `logs.js`), and
+`test_logs_contract.py` holds it to this pattern -- a slug the phone can make
+and the server refuses is a 422 from a kitchen, which is a lost meal."""
 
-    Not a CHECK on the table, for the reason `DrinkName` gives and more so:
-    this is the list most likely to be edited, because it is a list of what he
-    actually eats.
-    """
-
-    chicken_broccoli_sweet_potato = "chicken_broccoli_sweet_potato"
-    chicken_rice = "chicken_rice"
-    scrambled_eggs = "scrambled_eggs"
-    eating_out = "eating_out"
-    trail_mix = "trail_mix"
-    protein_shake = "protein_shake"
-    banana = "banana"
-    apple = "apple"
+MEAL_LABEL_MAX = 40
+"""How long a typed meal name may be. The phone's box stops at the same
+number; the table allows a little more so a label is never the thing a write
+fails on."""
 
 
 class MealFlag(StrEnum):

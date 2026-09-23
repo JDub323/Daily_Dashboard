@@ -23,8 +23,8 @@ from .common import (
     HealthMetric,
     MathStatus,
     MealFlag,
-    MealPreset,
     MealSize,
+    MealSlug,
     PaperStatus,
     ProblemKind,
     Provenance,
@@ -825,14 +825,14 @@ class MealLog(Base):
     size: MealSize
     quality: int = Field(ge=1, le=5)
 
-    preset: MealPreset | None = None
-    """What it was, where it was one of the things it usually is -- the
-    identity half, and None is the ordinary answer.
+    preset: MealSlug | None = None
+    """What it was -- the identity half, a `meal_name` slug, and None is the
+    ordinary answer ("some meal").
 
-    A preset does not *mean* anything the two fields above it do not already
-    say; it filled them in. Its value is that "chicken, broccoli, sweet
-    potato" is now one tap and one number rather than a judgement made afresh
-    each time, so the same plate scores the same every time it is eaten."""
+    A name does not *mean* anything the two fields above it do not already
+    say; it filled them in. Its value is that the same plate is one tap and
+    the same numbers every time it is eaten, and that the menu can learn from
+    how often it is."""
 
     flags: list[MealFlag] = Field(default_factory=list)
     """What was in it, as a set. Empty is a real answer, exactly as an empty

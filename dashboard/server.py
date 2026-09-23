@@ -2275,6 +2275,7 @@ def _register(app: FastAPI) -> None:
             preset=body.preset,
             flags=body.flags,
             minute=body.minute,
+            label=body.label,
         )
         return state.health_panel(cfg, repo, body.date)
 

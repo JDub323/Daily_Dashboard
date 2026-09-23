@@ -52,9 +52,10 @@
 // HTTP client along with them.
 import {
   applicableSteps, BATHROOM_STEPS, CHECKIN_ITEMS, drinkNameLabel, DRINK_STEPS,
-  focusLabel, focusLevels, forcedPath, mealPresetLabel, MEAL_STEPS, missingSteps,
-  openBlocks, parseAmount, prunedDraft, prunedTree, QUALITY_ANCHOR, RPE_ANCHOR,
-  sessionFocus, SESSION_TREE, sessionKind, stepOptions, toShown, toStored,
+  focusLabel, focusLevels, forcedPath, likelyMeals, MEAL_LABEL_MAX, MEAL_STEPS, mealFills,
+  mealItem, mealMatches, mealName, mealTree, missingSteps, newMealSlug, openBlocks, parseAmount, prunedDraft, prunedTree, QUALITY_ANCHOR, RPE_ANCHOR,
+  sameMeal, sessionFocus, SESSION_TREE, sessionKind, stepOptions, toShown, toStored,
+  withNamed,
 } from "../app/logs.js";
 // What today asks for, and it is the desktop's own list rather than a second
 // opinion about it — see the head of `day.js`. Pure over a `DashboardState`,
@@ -82,7 +83,8 @@ import {
 // and none of the store, the panel harness or the nav ring.
 import { initSplash, paintSplash } from "../app/splash.js";
 import {
-  forget, forgetDay, recall, recallDay, remember, rememberDay, stillTrue,
+  forget, forgetDay, recall, recallDay, recallMenu, remember, rememberDay, rememberMenu,
+  stillTrue,
 } from "./held.js";
 import { enqueue, flush, isDay, isPanel, onQueueChange, pending, pendingOn } from "./queue.js";
 import {
@@ -159,7 +161,40 @@ function adopt(fresh) {
   panelDay = today();
   heard = new Date().toISOString();
   remember(fresh);
+  // The menu rides on the panel but outlives it: see its slot in `held.js`.
+  // Taken only when the panel carries one, so a panel from a laptop still
+  // running the build before menus cannot empty the list.
+  if (Array.isArray(fresh?.meal_menu)) {
+    menu = fresh.meal_menu;
+    rememberMenu(menu);
+  }
 }
+
+/**
+ * The meal menu the laptop last sent — `logs.js` says what one is — kept
+ * across days and across the laptop being asleep, because breakfast is when it
+ * is wanted and the laptop has usually not been heard from since last night.
+ */
+let menu = recallMenu();
+
+/**
+ * Names typed into the form on screen that no meal has carried yet. Emptied on
+ * commit, when the name moves into the queue with its meal and `mealMenu`
+ * finds it there instead.
+ */
+let named = [];
+
+/**
+ * The menu as this phone knows it: the laptop's, plus every name still on its
+ * way to the laptop — in the queue, or in the form. A name typed an hour ago
+ * in a kitchen with no signal is a name the box should already find.
+ */
+const mealMenu = () => withNamed(menu, [
+  ...pending()
+    .filter((entry) => entry.path === "/api/meal" && entry.body?.preset)
+    .map((entry) => ({ slug: entry.body.preset, label: entry.body.label })),
+  ...named,
+]);
 
 /** Which day `panel` describes. `recall` will not hand back another day's, so
  *  this can only ever become stale by the app being left open across midnight —
@@ -647,7 +682,7 @@ const optsClass = (labels) => {
  * keyboard and a wizard that asks one question per screen is three taps and two
  * animations to say "a large clean meal".
  */
-function stepRow(step, draftValues, answer, sheet = null) {
+function stepRow(step, draftValues, answer) {
   // A `multi` step holds an array and a plain one holds a value. The two are
   // told apart by the step rather than by what is in the draft, because the
   // empty array — no tags, a glass of water — is a real answer and an
@@ -683,60 +718,204 @@ function stepRow(step, draftValues, answer, sheet = null) {
         class: isOn(value) ? "on" : "",
         "aria-pressed": isOn(value),
         text: label,
-        onclick: () => {
-          press(value);
-          // A row behind a button closes on the answer. It is a detour off the
-          // form and the tap that ends it is the tap that says so — leaving it
-          // open would put the four questions it just filled back below the
-          // fold, which is the thing being fixed.
-          if (sheet) sheet.close();
-        },
+        onclick: () => press(value),
       }),
     ),
   );
 
-  // The ordinary row: every answer on screen, all the time. Nine rows out of
-  // ten, and the default for the reason the head of this file gives — a
-  // question you have to open is a question you have to notice.
-  if (!sheet) {
-    return el("div.q", null,
-      el("div.q-head", null,
-        el("span.q-name", { text: step.name }),
-        step.hint ? el("span.q-hint", { text: step.hint }) : null,
-      ),
-      caps,
-    );
-  }
-
-  // The row behind a button. One question earns this and it is the meal
-  // presets: eight caps in a three-across grid is three rows and about a third
-  // of the panel, spent on a shortcut you take perhaps twice a day, sitting
-  // *above* the three questions every meal has to answer. So it collapses to
-  // one control, which either offers the shortcut or says which one you took.
-  //
-  // The label carries the state rather than a caption beside it — a button
-  // reading "chicken + rice" is the answer and the way to change it, and the
-  // row underneath is gone until you ask for it.
-  const chosen = options.find(([, value]) => isOn(value));
-  return el("div.q.q-sheet", null,
+  // Every answer on screen, all the time, for the reason the head of this file
+  // gives — a question you have to open is a question you have to notice. The
+  // one row that is not like this is the meal's name, and `menuRow` is why.
+  return el("div.q", null,
     el("div.q-head", null,
       el("span.q-name", { text: step.name }),
-      step.hint && !chosen ? el("span.q-hint", { text: step.hint }) : null,
+      step.hint ? el("span.q-hint", { text: step.hint }) : null,
     ),
-    el("button.opt.sheet-open", {
-      class: chosen ? "on" : "",
-      "aria-expanded": sheet.open,
-      text: chosen ? chosen[2] : `use ${step.name}`,
-      onclick: sheet.toggle,
-    }),
-    sheet.open ? caps : null,
+    caps,
   );
 }
 
-/** A step's `fills`, by name. A step without one is every step but the meal
- *  log's presets, so the lookup is written to return undefined rather than to
- *  be asked only where it applies. */
-const fillsFor = (steps, name) => steps.find((step) => step.name === name)?.fills;
+/**
+ * What the meal was: a few likely caps, the menu behind one button and a name
+ * box behind another.
+ *
+ * Laid out on what the research on adaptive menus agrees on, for someone who
+ * eats the same few things over and over:
+ *
+ *   - **Split the part that adapts from the part you learn.** The top row is
+ *     `likelyMeals` for the hour on the bar and changes all day. The tree
+ *     under `menu` holds its order for a week (`dashboard/menu.py`) so a thumb
+ *     can learn where things are (Sears & Shneiderman's split menus; Findlater
+ *     & McGrenere 2004).
+ *   - **Broad and shallow.** Two levels at most, a base meal and its
+ *     variations, because every level is a tap and a read (Kiger 1984; Larson
+ *     & Czerwinski 1998). The usual meal is two taps: its cap, then `log`.
+ *   - **Recognise, don't recall.** The box searches every name ever given as
+ *     you type, so a variation gets named once and found after that, and
+ *     `chicken rice` cannot fork from `chicken + rice`.
+ *
+ * Naming while a meal is picked makes the new name a variation of it — `salsa`
+ * under chicken + rice — which is the whole of how the tree grows. The chip
+ * beside the box says so and takes it off.
+ *
+ * The box is built once per draw and updated in place while typing. A redraw
+ * per keystroke would rebuild the `<input>` under the thumb and drop the
+ * keyboard after every letter.
+ */
+function menuRow(step, draft, answer, picker) {
+  const all = mealMenu();
+  const chosen = draft[step.name] ?? null;
+  const redraw = () => draw();
+
+  const pick = (slug, { toggle = true } = {}) => {
+    picker.view = null;
+    picker.branch = null;
+    picker.typed = "";
+    // Tapping the name that is already on takes it off, as on every optional
+    // row — the only way to say "some other meal" once one is picked.
+    answer(step.name, toggle && slug === chosen ? null : slug);
+  };
+  const cap = (item, text = mealName(all, item.slug)) =>
+    el("button.opt", {
+      class: item.slug === chosen ? "on" : "",
+      "aria-pressed": item.slug === chosen,
+      text,
+      onclick: () => pick(item.slug),
+    });
+  const grid = (caps) => el(optsClass(caps.map((c) => c.textContent)), null, ...caps);
+
+  const likely = likelyMeals(all, hour);
+  // A picked name that is not among the likely ones gets its own line rather
+  // than bumping one of them: the likely row must not move because you tapped.
+  const offRow = chosen && !likely.some((item) => item.slug === chosen);
+
+  const opener = (view, text) =>
+    el("button.opt.menu-open", {
+      class: picker.view === view ? "open" : "",
+      "aria-expanded": picker.view === view,
+      text,
+      onclick: () => {
+        picker.view = picker.view === view ? null : view;
+        picker.branch = null;
+        picker.under = true;
+        redraw();
+        // In the tap's own call stack, which is what iOS asks before it will
+        // raise a keyboard for a field that was not the thing touched.
+        if (picker.view === "name") document.querySelector(".name-box")?.focus();
+      },
+    });
+
+  return el("div.q.q-menu", null,
+    el("div.q-head", null,
+      el("span.q-name", { text: "what" }),
+      !chosen ? el("span.q-hint", { text: step.hint }) : null,
+    ),
+    likely.length ? grid(likely.map((item) => cap(item))) : null,
+    offRow
+      ? el("button.opt.on.menu-chosen", {
+          "aria-pressed": true,
+          text: mealName(all, chosen),
+          title: "tap to clear",
+          onclick: () => pick(chosen),
+        })
+      : null,
+    el("div.opts.opts-2.menu-tools", null,
+      opener("menu", picker.view === "menu" ? "menu ▴" : "menu ▾"),
+      opener("name", chosen ? "name a variation" : "name it"),
+    ),
+    picker.view === "menu" ? menuTree(all, chosen, cap, grid, picker, redraw) : null,
+    picker.view === "name" ? nameBox(all, chosen, cap, grid, picker, pick, redraw) : null,
+  );
+}
+
+/** The tree, one level at a time: the base meals, or one of them opened. */
+function menuTree(all, chosen, cap, grid, picker, redraw) {
+  const tree = mealTree(all);
+  if (!tree.length) {
+    return el("p.menu-note", {
+      text: "nothing on the menu yet — name what you ate, and three times in three weeks puts it here",
+    });
+  }
+  const open = picker.branch ? tree.find((root) => root.slug === picker.branch) : null;
+  if (open) {
+    return el("div.menu-level", null,
+      el("button.menu-crumb", {
+        text: `‹ ${open.label}`,
+        onclick: () => { picker.branch = null; redraw(); },
+      }),
+      grid([cap(open, "plain"), ...open.children.map((child) => cap(child, child.label))]),
+    );
+  }
+  return el("div.menu-level", null,
+    grid(tree.map((root) => (root.children.length
+      // A base meal with variations opens rather than answering: the variation
+      // is the likelier answer, and "plain" is the first cap inside.
+      ? el("button.opt.branch", {
+          class: chosen === root.slug || chosen?.startsWith(`${root.slug}.`) ? "on" : "",
+          text: `${root.label} ▸`,
+          onclick: () => { picker.branch = root.slug; redraw(); },
+        })
+      : cap(root, root.label)))),
+  );
+}
+
+/** Type a name: matches as you go, and `save` for one nobody has used yet. */
+function nameBox(all, chosen, cap, grid, picker, pick, redraw) {
+  // Hang the new name under the base meal of whatever is picked — a variation
+  // of a variation is a sibling, because the tree is two levels deep.
+  const base = chosen ? (mealItem(all, chosen)?.parent ?? chosen) : null;
+  const parent = base && picker.under ? base : null;
+
+  const box = el("input.amount.name-box", {
+    type: "text",
+    value: picker.typed ?? "",
+    maxlength: MEAL_LABEL_MAX,
+    placeholder: parent ? "what was different?" : "what was it?",
+    autocomplete: "off",
+    autocapitalize: "none",
+    enterkeyhint: "done",
+    "aria-label": "meal name",
+  });
+  const hits = el("div.menu-hits");
+  const save = el("button.go.small", { text: "save" });
+
+  const refresh = () => {
+    picker.typed = box.value;
+    const found = mealMatches(all, box.value);
+    hits.replaceChildren(found.length ? grid(found.map((item) => cap(item))) : "");
+    save.disabled = !newMealSlug(box.value, parent);
+    box.classList.remove("bad");
+  };
+  const commitName = () => {
+    const typed = box.value.trim();
+    // Already a name — by slug or by its words — is that name, not a twin.
+    const same = sameMeal(all, typed, parent);
+    if (same) return pick(same.slug, { toggle: false });
+    const slug = newMealSlug(typed, parent);
+    if (!slug) return void box.classList.add("bad");
+    named = [...named.filter((n) => n.slug !== slug), { slug, label: typed }];
+    pick(slug, { toggle: false });
+  };
+  box.addEventListener("input", refresh);
+  box.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") commitName();
+  });
+  save.addEventListener("click", commitName);
+  refresh();
+
+  return el("div.menu-level", null,
+    base
+      ? el("button.opt.menu-under", {
+          class: parent ? "on" : "",
+          "aria-pressed": Boolean(parent),
+          text: parent ? `a variation of ${mealName(all, base)} ×` : `make it a variation of ${mealName(all, base)}`,
+          onclick: () => { picker.under = !picker.under; redraw(); },
+        })
+      : null,
+    el("div.row", null, box, save),
+    hits,
+  );
+}
 
 /**
  * A quick log — meals, drinks, in and out.
@@ -747,16 +926,14 @@ const fillsFor = (steps, name) => steps.find((step) => step.name === name)?.fill
  * rather than reimplemented, so there is one answer to whether a urine entry
  * is asked for a solidity and it is not this file's.
  */
-function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
+function quickLog({ id, label, steps, path, describe, empty, rows, remove, enrich }) {
   let answers = {};
-  /** Which collapsed rows are showing their answers. A set rather than a
-   *  boolean because nothing says only one step per log may be a sheet — the
-   *  drink log's names are the obvious next one — and a second boolean here
-   *  would be the point at which this became a thing to get wrong.
-   *
-   *  Cleared on commit along with the answers: the next meal starts from the
-   *  same screen the last one did. */
-  let opened = new Set();
+  /** Where the meal's name row is: which of its two buttons is open, which base
+   *  meal the tree is opened at, what is in the name box, and whether a new
+   *  name hangs under the picked meal. Cleared on commit along with the
+   *  answers: the next meal starts from the same screen the last one did. */
+  const fresh = () => ({ view: null, branch: null, typed: "", under: true });
+  let picker = fresh();
 
   return {
     id,
@@ -788,24 +965,11 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
         const body = exact
           ? { date: today(), hour: now.getHours(), minute: now.getMinutes(), ...answers }
           : { date: dateForHour(hour), hour, ...answers };
+        enrich?.(body);
         answers = {};
-        opened = new Set();
+        picker = fresh();
         await send(path, body, label);
       };
-
-      /** The open/closed state of one collapsed row, or null for a row that
-       *  is not collapsed at all. */
-      const sheetFor = (step) => (step.sheet
-        ? {
-            open: opened.has(step.name),
-            toggle: () => {
-              if (opened.has(step.name)) opened.delete(step.name);
-              else opened.add(step.name);
-              draw();
-            },
-            close: () => { opened.delete(step.name); draw(); },
-          }
-        : null);
 
       // Answering only ever changes the selection. It used to *post* the moment
       // the last question was filled, which made the fastest possible entry —
@@ -814,13 +978,15 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
       // was to notice the row appear. A wrong tap is now free, and the write is
       // a deliberate second thing.
       const answer = (name, value) => {
-        // A preset answers four questions with one tap, and `fills` on the step
-        // is where the table says which. Written *under* the tap rather than
-        // over it, so the fills land and the preset itself stays what was
-        // pressed. Un-picking a preset clears the preset and leaves what it
-        // filled in, which is the less surprising of the two: nothing you can
-        // see disappears, and an edit you made after tapping it survives.
-        const filled = value == null ? {} : (fillsFor(steps, name)?.(value) ?? {});
+        // A meal's name answers four questions with one tap, and what it fills
+        // in is what the laptop learned from the meals it was logged as.
+        // Written *under* the tap rather than over it, so the fills land and
+        // the name itself stays what was pressed. Un-picking a name clears the
+        // name and leaves what it filled in, which is the less surprising of
+        // the two: nothing you can see disappears, and an edit you made after
+        // tapping it survives.
+        const step = steps.find((one) => one.name === name);
+        const filled = value == null || !step?.menu ? {} : (mealFills(mealMenu(), value) ?? {});
         answers = { ...answers, ...filled, [name]: value };
         // Whatever that answer just invalidated, gone before the redraw. A
         // branch can strip a question that was already answered, and a row
@@ -833,9 +999,9 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove }) {
 
       return [
         ...asked.map((step) =>
-          step.field
-            ? amountRow(step, answers, answer)
-            : stepRow(step, answers, answer, sheetFor(step))),
+          step.field ? amountRow(step, answers, answer)
+            : step.menu ? menuRow(step, answers, answer, picker)
+            : stepRow(step, answers, answer)),
         // Disabled rather than hidden while the entry is incomplete: a button
         // that appears when you finish is a button you have to notice, and one
         // that is greyed the whole time you are answering is a progress
@@ -1016,14 +1182,24 @@ const LOGS = [
     path: "/api/meal",
     empty: "nothing eaten yet today",
     rows: () => rowsFor("/api/meal", panel?.meals_today, "/api/meal/delete"),
-    // The preset stands in for size and quality rather than joining them: it
-    // is what filled them, so printing all three spends half the row saying
+    // The name stands in for size and quality rather than joining them: it is
+    // what filled them, so printing all three spends half the row saying
     // "large, 5" under a line that already says chicken and sweet potato.
     // Flags are appended because nothing above them implies them.
     describe: (e) => [
-      e.preset ? mealPresetLabel(e.preset) : `${e.size} · quality ${e.quality}`,
+      e.preset ? mealName(mealMenu(), e.preset) : `${e.size} · quality ${e.quality}`,
       ...(e.flags ?? []),
     ].join(" · "),
+    // The name's words travel with the meal, which is how a name typed here
+    // reaches the laptop's table — see `MealRequest.label`. Sent for old names
+    // too: the laptop keeps the first words it heard, so it costs nothing, and
+    // a name the laptop somehow lost comes back with its label rather than as
+    // its slug spelled out. Once it is in the queue, `mealMenu` finds it there,
+    // so the form's own list of new names can be let go.
+    enrich: (body) => {
+      if (body.preset) body.label = mealItem(mealMenu(), body.preset)?.label;
+      named = [];
+    },
     remove: { path: "/api/meal/delete", field: "entry_id" },
   }),
   quickLog({
@@ -2367,7 +2543,7 @@ function homeScreen() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v18";
+const BUILD = "log-v19";
 
 /**
  * The build, along the foot of the title screen.

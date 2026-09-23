@@ -6,7 +6,7 @@
 //
 // Everything below shares a failure mode, which is why it is worth a separate
 // file. None of it throws. A tag combination that misses its name row draws
-// a perfectly good screen with one row fewer; a preset that fills the wrong
+// a perfectly good screen with one row fewer; a name that fills the wrong
 // quality writes a plausible number; a path that keeps a stale leaf posts a
 // body the server accepts. You would find each of them by noticing, weeks
 // later, that a series looks wrong — and by then the rows are written and
@@ -22,11 +22,18 @@ import {
   drinkNames,
   focusLabel,
   focusLevels,
+  likelyMeals,
   mealFills,
+  mealMatches,
+  mealName,
+  mealSlug,
+  mealTree,
   MEAL_STEPS as MEALS,
   missingSteps,
+  newMealSlug,
   prunedDraft,
   prunedTree,
+  sameMeal,
   sessionFocus,
   sessionKind,
   SESSION_TREE,
@@ -81,31 +88,93 @@ describe("the drink name row", () => {
   });
 });
 
-describe("meal presets", () => {
-  it("fill the two questions and the flags below them", () => {
-    assert.deepEqual(mealFills("chicken_broccoli_sweet_potato"), {
-      size: "large",
-      quality: 5,
-      flags: ["protein"],
-    });
+// A menu as the laptop sends it (`HealthPanel.meal_menu`), cut down to what
+// the phone reads. `hours` is thirty days of meals by hour.
+const at = (hour, n = 1) => Object.assign(Array(24).fill(0), { [hour]: n });
+const MENU = [
+  { slug: "chicken_rice", label: "chicken + rice", parent: null, live: true, rank: 0,
+    fills: { size: "large", quality: 5, flags: ["protein"] }, hours: at(12, 4), count: 9 },
+  { slug: "chicken_rice.salsa", label: "salsa", parent: "chicken_rice", live: true, rank: 0,
+    fills: { size: "large", quality: 4, flags: ["protein"] }, hours: at(19, 3), count: 3 },
+  { slug: "chicken_rice.eggs", label: "eggs", parent: "chicken_rice", live: false, rank: 1,
+    fills: null, hours: at(12), count: 1 },
+  { slug: "scrambled_eggs", label: "loaded scrambled eggs", parent: null, live: true, rank: 1,
+    fills: { size: "medium", quality: 4, flags: ["protein"] }, hours: at(9, 5), count: 12 },
+  { slug: "apple", label: "apple", parent: null, live: false, rank: 2,
+    fills: { size: "small", quality: 5, flags: ["snack"] }, hours: at(15, 2), count: 2 },
+  { slug: "trail_mix", label: "trail mix", parent: null, live: true, rank: 3,
+    fills: null, hours: at(21), count: 3 },
+];
+
+describe("the meal menu", () => {
+  it("prints a variation under its parent's words", () => {
+    assert.equal(mealName(MENU, "chicken_rice.salsa"), "chicken + rice · salsa");
+    assert.equal(mealName(MENU, "scrambled_eggs"), "loaded scrambled eggs");
   });
 
-  it("mark the small ones as snacks", () => {
-    // The mapping the required-meals count turns on. An apple is a snack
-    // whoever logs it, so it is a fact about the food and belongs on the
-    // preset rather than being left to be remembered on the flag row.
-    for (const preset of ["apple", "banana", "trail_mix", "protein_shake"]) {
-      assert.ok(mealFills(preset).flags.includes("snack"), preset);
-    }
-    for (const preset of ["chicken_rice", "scrambled_eggs", "eating_out"]) {
-      assert.ok(!mealFills(preset).flags.includes("snack"), preset);
-    }
+  it("prints a name it has never heard of as the slug spelled out", () => {
+    // A row from a phone whose menu is older than the meal. Something, not
+    // nothing — and not a throw.
+    assert.equal(mealName(MENU, "pad_thai"), "pad thai");
+    assert.equal(mealName(MENU, "pad_thai.tofu"), "pad thai · tofu");
+    assert.equal(mealName(MENU, null), null);
   });
 
-  it("fills nothing for a preset the client does not know", () => {
-    // A row written before the table was edited. `null`, not a throw — the
-    // whole point of the lookup being a lookup.
-    assert.equal(mealFills("sushi"), null);
+  it("fills what the laptop learned, and nothing for a name it does not know", () => {
+    assert.deepEqual(mealFills(MENU, "chicken_rice").flags, ["protein"]);
+    assert.equal(mealFills(MENU, "sushi"), null);
+  });
+
+  it("draws only what is on the menu, in the laptop's order", () => {
+    const tree = mealTree(MENU);
+    assert.deepEqual(tree.map((root) => root.slug), ["chicken_rice", "scrambled_eggs", "trail_mix"]);
+    // The one-off eggs variation is not drawn until it earns its place.
+    assert.deepEqual(tree[0].children.map((kid) => kid.slug), ["chicken_rice.salsa"]);
+  });
+
+  it("draws a base meal that is off the menu when a variation is on it", () => {
+    const menu = MENU.map((item) => (item.slug === "chicken_rice" ? { ...item, live: false } : item));
+    assert.ok(mealTree(menu).some((root) => root.slug === "chicken_rice"));
+  });
+
+  it("offers what is usually eaten around the hour being logged", () => {
+    assert.deepEqual(likelyMeals(MENU, 9).map((item) => item.slug), ["scrambled_eggs"]);
+    assert.deepEqual(likelyMeals(MENU, 20).map((item) => item.slug),
+      ["chicken_rice.salsa", "trail_mix"]);
+    // Off-menu names are never offered, however often they were eaten then.
+    assert.ok(!likelyMeals(MENU, 15).some((item) => item.slug === "apple"));
+  });
+
+  it("wraps the hour, so eleven at night sits beside one in the morning", () => {
+    const late = [{ ...MENU[5], hours: at(23, 2) }];
+    assert.equal(likelyMeals(late, 1).length, 1);
+  });
+
+  it("finds a name by any word of it, off the menu or not", () => {
+    assert.deepEqual(mealMatches(MENU, "rice sal").map((item) => item.slug),
+      ["chicken_rice.salsa"]);
+    assert.ok(mealMatches(MENU, "app").some((item) => item.slug === "apple"));
+    assert.deepEqual(mealMatches(MENU, "  "), []);
+  });
+
+  it("knows a name it already has by its words, not only its slug", () => {
+    // The twin this exists to stop: typing the label of an old preset whose
+    // slug is not the label's.
+    assert.equal(sameMeal(MENU, "Loaded Scrambled Eggs")?.slug, "scrambled_eggs");
+    assert.equal(sameMeal(MENU, "chicken rice")?.slug, "chicken_rice");
+    assert.equal(sameMeal(MENU, "salsa", "chicken_rice")?.slug, "chicken_rice.salsa");
+    assert.equal(sameMeal(MENU, "salsa"), null);
+  });
+
+  it("makes slugs the server takes", () => {
+    assert.equal(mealSlug("Chicken + Rice!"), "chicken_rice");
+    assert.equal(mealSlug("jalapeño poppers"), "jalapeno_poppers");
+    assert.equal(newMealSlug("w/ salsa", "chicken_rice"), "chicken_rice.w_salsa");
+    // A base meal needs two characters; a variation needs one.
+    assert.equal(newMealSlug("x"), null);
+    assert.equal(newMealSlug("x", "chicken_rice"), "chicken_rice.x");
+    assert.equal(newMealSlug("!!!"), null);
+    assert.ok(mealSlug("a".repeat(80)).length <= 30);
   });
 
   it("never holds up the commit button", () => {

@@ -322,29 +322,55 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
    wide, flat-sided, evenly weighted — so the numeric rows get them at size. */
 .opt.num { font-size: var(--t-lede); letter-spacing: .04em; }
 
-/* --- a question behind a button --------------------------------------------
-   One row in the app is collapsed and it is the meal presets: eight caps in a
-   three-across grid is three rows and a third of the panel, spent on a
-   shortcut, sitting above the three questions every meal has to answer. See
-   `sheet: true` in `logs.js` for the flag and `stepRow` for the two states.
+/* --- what the meal was ------------------------------------------------------
+   The one row that is not a row of fixed answers: the likely caps, then two
+   buttons that open the menu and the name box, then whichever is open. See
+   `menuRow` in app.js for why it is laid out this way.
 
-   The control is a key-cap the full width of the panel rather than a new kind
-   of thing — it is still "press this to answer the question", and it lights in
-   the tab's hue when it holds an answer exactly as the caps below it do. What
-   is different is only that its label is the answer: `use preset` when there
-   is none, the preset's own name when there is. */
-.opt.sheet-open {
-  width: 100%;
-  min-height: 44px;
-  text-align: center;
-}
-/* The caps, once it is open. A hairline back to the button above so the grid
-   reads as belonging to it rather than as the next question. */
-.q-sheet .opts, .q-sheet .opts-2 {
-  margin-top: var(--s2);
+   The rows inside it stack with a small gap rather than the question gap —
+   they are one answer, and a question-sized gap would read as three. */
+.q-menu > * + * { margin-top: var(--s2); }
+
+/* A picked name that is not one of the likely ones, on its own line. */
+.opt.menu-chosen { width: 100%; }
+
+/* The two openers are quieter than an answer: they do not answer anything.
+   Dim label, and a hairline under them while open rather than the answer's
+   lit bottom edge, so an open menu never reads as a picked meal. */
+.opt.menu-open { min-height: 40px; color: var(--dim); }
+.opt.menu-open.open { color: var(--fg); box-shadow: inset 0 -1px 0 var(--tab); }
+
+/* Whatever is open, hung off the openers by a hairline so it reads as
+   belonging to them rather than as the next question. */
+.menu-level {
   padding-top: var(--s3);
   background: linear-gradient(90deg, var(--border) 0 38%, transparent) top / 100% 1px no-repeat;
 }
+.menu-level > * + * { margin-top: var(--s2); }
+.menu-level .row { margin-top: 0; }
+
+/* The way back out of an opened base meal. Text, not a cap: it is navigation,
+   and a cap here would be one more thing that looks like an answer. */
+.menu-crumb {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--tab-text);
+  background: none;
+  border: 0;
+  min-height: 36px;
+  padding: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+/* "A variation of chicken + rice ×" — the one thing on the name box that
+   changes what `save` does, so it is a cap the width of the panel. */
+.opt.menu-under { width: 100%; min-height: 40px; text-transform: none; letter-spacing: .04em; }
+
+.menu-note { margin: 0; font-size: var(--t-meta); color: var(--faint); line-height: 1.5; }
 
 /* --- a typed answer -------------------------------------------------------
    A field is the inverse of a key-cap: sunk, not raised. Same logic, opposite

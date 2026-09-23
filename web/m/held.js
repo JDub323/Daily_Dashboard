@@ -154,6 +154,43 @@ export function forgetDay() {
   } catch { /* as above */ }
 }
 
+// --- a third slot, with no rule about days at all ----------------------------
+//
+// The meal menu is not about a day. It is the list of what he eats, and the
+// morning it is needed most — breakfast, laptop asleep since last night — is
+// exactly the morning the health panel above has been thrown away. So it is
+// kept apart, taken off every panel that carries one, and kept until a newer
+// one replaces it. A week-old menu is a slightly stale menu; no menu is a meal
+// log with nothing to tap.
+
+const MENU_KEY = "dashboard.m.menu";
+
+/** Every entry an object with a slug and a label — enough to draw a cap and to
+ *  post it. Anything else is thrown away rather than drawn. */
+const isMenu = (menu) =>
+  Array.isArray(menu)
+  && menu.every((item) => item && typeof item.slug === "string" && typeof item.label === "string");
+
+/** Keep the laptop's last `meal_menu`. A no-op on a failed write, as above. */
+export function rememberMenu(menu) {
+  if (!isMenu(menu)) return false;
+  try {
+    localStorage.setItem(MENU_KEY, JSON.stringify(menu));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The last menu heard, however old, or an empty one. */
+export function recallMenu() {
+  try {
+    const held = JSON.parse(localStorage.getItem(MENU_KEY) ?? "null");
+    if (isMenu(held)) return held;
+  } catch { /* unreadable is the same as absent */ }
+  return [];
+}
+
 /**
  * What is left of a cached day once the day has turned over.
  *
