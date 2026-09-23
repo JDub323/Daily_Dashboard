@@ -22,12 +22,13 @@
 // there is no keyboard until you ask for one and asking for one covers half
 // the screen.
 //
-// So the ladder is unrolled. Every question a log asks is on screen at once as
-// a row of buttons big enough to hit without looking, you answer them in any
-// order, and the entry commits when the last one is filled. Same questions,
-// same legal answers, same request bodies — those still come from
-// `app/logs.js`, which is where the *contract* lives rather than where the
-// other client lived.
+// So the ladder was unrolled: every question a log asked was on screen at once
+// as a row of buttons big enough to hit without looking. It has since been
+// rolled partway back up — three questions open at a time, each answered one
+// shrunk to a line — because "every question at once" was a check-in that had
+// to be scrolled at 6am. See `ladderRows`. Same questions, same legal answers,
+// same request bodies — those still come from `app/logs.js`, which is where
+// the *contract* lives rather than where the other client lived.
 //
 // --- the theme --------------------------------------------------------------
 //
@@ -673,14 +674,231 @@ const optsClass = (labels) => {
   return measured.some((n) => n > FITS_IN_A_THIRD) ? "div.opts.opts-2" : "div.opts";
 };
 
+// --- the ladder ----------------------------------------------------------------
+
+/**
+ * Three questions open at a time, and every answered one shrunk to a line.
+ *
+ * He asked for this on 2026-09-23 — "I hate scrolling" — and it reverses what
+ * `stepRow` used to say: every question on screen, all the time. That rule was
+ * right about *noticing* (a question behind a button is a question you forget)
+ * and wrong about the price, which was a check-in you scrolled through. The
+ * ladder keeps what the rule was for: nothing waits behind a button you have
+ * to know to press, only behind the question before it. The rail says how many
+ * are left, every answered line is a tap back to its question, and the ‹ on
+ * the top open question walks back one.
+ *
+ * Picked from a preview of six motions (the "ladder motions" artifact): the
+ * CRT, three open, answered rows shrinking to a line rather than vanishing.
+ * The session log is not on it — scrolling is fine there, his words.
+ *
+ * State is almost all derived. A row is done when it has an answer, or was
+ * *passed* (skipped, or a multi-pick closed with `done ›`), and has not been
+ * reopened. Open is every reopened row plus the earliest rows not done, three
+ * in all; the rest wait. So a draft restored from storage, or a morning
+ * already saved, lands in the right shape with no ladder state at all — the
+ * two sets kept here are only the facts no answer records.
+ */
+const LADDER_OPEN = 3;
+
+/** How long a row's motion lasts. The longest keyframe below is the shut. */
+const LADDER_MS = 560;
+
+const ladders = new Map();
+const ladderOf = (id) => {
+  if (!ladders.has(id)) ladders.set(id, { passed: new Set(), reopened: new Set(), seen: new Map() });
+  return ladders.get(id);
+};
+
+/** A row answered or moved past. It closes, even if it had been reopened.
+ *  Called *before* the draw the answer causes, so that draw is the one that
+ *  shrinks it. */
+function settle(id, name, { pass = false } = {}) {
+  const lad = ladderOf(id);
+  lad.reopened.delete(name);
+  if (pass) lad.passed.add(name);
+}
+
+/** Back to a row — done or still waiting. Re-added so the set's order is the
+ *  order of reopening, and the oldest lets go once more are open than fit. */
+function reopenRow(id, name) {
+  const lad = ladderOf(id);
+  lad.reopened.delete(name);
+  lad.reopened.add(name);
+  while (lad.reopened.size > LADDER_OPEN) lad.reopened.delete(lad.reopened.values().next().value);
+  draw();
+}
+
+/** The entry went: the next one starts from the top. */
+function resetLadder(id) {
+  const lad = ladderOf(id);
+  lad.passed.clear();
+  lad.reopened.clear();
+}
+
+/** Which ladder the last draw drew, and which this one is drawing. A row only
+ *  moves when the same ladder was on screen the draw before: opening a tab or
+ *  coming back from home draws it standing still. */
+let ladderWas = null;
+let ladderNow = null;
+
+const stillMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/**
+ * A log's questions as a ladder: the rail, then each row as a question, a line
+ * or nothing.
+ *
+ * `rows` are `{ name, label, complete, full, mini, meter?, closer?, skip? }`.
+ * `full()` draws the question and `mini()` the words on its line; `meter` is
+ * `[n, of]` for a scale, drawn as bars beside the digit; `closer` is the cap
+ * under a question no single tap finishes (a multi-pick, the night's wheels);
+ * `skip` is text in the head of one that may be left blank. `focus` names the
+ * one row that gets the screen to itself — the meal's name while its menu or
+ * box is open, which is the only thing on these screens tall enough to need it.
+ *
+ * **Why keyframes, and why `--t`.** `draw()` rebuilds the whole view on every
+ * change, so there is no element that persists from one state to the next for
+ * a transition to run on. Each draw compares what a row is now against what it
+ * was the draw before and, if it changed, draws it mid-motion: a keyframe runs
+ * on an element's first frame, and a draw that lands while it is still running
+ * redraws it with a negative delay of however long it has been going, so a tap
+ * during a motion carries on from where it was rather than starting it again.
+ *
+ * The shut draws the question it is shutting as well as the line it becomes,
+ * `inert`, because the CRT line has to be *of something*; it is gone by the
+ * next draw.
+ */
+function ladderRows(id, rows, { focus = null } = {}) {
+  const lad = ladderOf(id);
+  const moving = ladderWas === id && !stillMotion();
+  ladderNow = id;
+  const now = Date.now();
+
+  const done = (row) => !lad.reopened.has(row.name) && (row.complete || lad.passed.has(row.name));
+  const waiting = rows.filter((row) => !done(row));
+  const forced = waiting.filter((row) => lad.reopened.has(row.name));
+  const open = new Set([
+    ...forced,
+    ...waiting.filter((row) => !lad.reopened.has(row.name)).slice(0, Math.max(0, LADDER_OPEN - forced.length)),
+  ].map((row) => row.name));
+
+  const stateOf = (row) => (open.has(row.name) ? "open" : done(row) ? "done" : "waiting");
+  const firstOpen = rows.find((row) => open.has(row.name));
+  // The ‹ goes to the last answered row above the top open one.
+  const behind = firstOpen
+    ? [...rows.slice(0, rows.indexOf(firstOpen))].reverse().find((row) => done(row))
+    : null;
+
+  const full = (row, live) => {
+    const node = row.full();
+    if (!live) return node;
+    const head = node.querySelector(".q-head");
+    if (row === firstOpen && behind) {
+      head?.prepend(el("button.lad-back", {
+        text: "‹",
+        "aria-label": `back to ${behind.label}`,
+        onclick: () => reopenRow(id, behind.name),
+      }));
+    }
+    if (row.skip) {
+      head?.append(el("button.lad-skip", {
+        text: row.skip,
+        onclick: () => { settle(id, row.name, { pass: true }); draw(); },
+      }));
+    }
+    if (row.closer) {
+      node.append(el("button.opt.lad-next", {
+        text: row.closer.text,
+        disabled: row.closer.disabled,
+        onclick: () => { settle(id, row.name, { pass: true }); draw(); },
+      }));
+    }
+    return node;
+  };
+
+  const mini = (row) => {
+    const text = row.mini();
+    return el("button.lad-mini", {
+      "aria-label": `${row.label}: ${text} — tap to change`,
+      onclick: () => reopenRow(id, row.name),
+    },
+      el("span.lad-n", { text: row.label }),
+      el("span.lad-lead"),
+      row.meter
+        ? el("span.lad-meter", null, ...Array.from({ length: row.meter[1] }, (_, i) =>
+            el("i", { class: i < row.meter[0] ? "lit" : "" })))
+        : null,
+      el("span.lad-v", { text }),
+    );
+  };
+
+  // `--t` is how far into its motion a row already is, as a negative delay.
+  const wrap = (node, motion, at, inert = false) =>
+    el("div.lad", { class: motion, style: `--t:${at - now}ms`, inert },
+      el("div.lad-clip", null, el("div.lad-body", null, node)));
+
+  const drawn = [];
+  const seen = new Map();
+  for (const row of rows) {
+    const hidden = Boolean(focus && row.name !== focus);
+    const state = stateOf(row);
+    const shape = hidden ? "none" : state === "open" ? "full" : state === "done" ? "mini" : "none";
+    const before = lad.seen.get(row.name) ?? { shape: "none", hidden: false, at: 0, move: null };
+
+    // A change starts a motion; no change carries on any motion still running.
+    // Folding away for the menu, or back after it, is a plain fold: the CRT is
+    // for a question being answered, not for one stepping aside.
+    let { at, move } = before;
+    if (!moving) move = null;
+    else if (before.shape !== shape) {
+      move = { from: before.shape, kind: before.hidden !== hidden ? "fold" : "crt" };
+      at = now;
+    }
+    if (move && now - at >= LADDER_MS) move = null;
+    seen.set(row.name, { shape, hidden, at, move });
+
+    if (move?.from === "full" && shape !== "full") drawn.push(wrap(full(row, false), `${move.kind}-out`, at, true));
+    if (move?.from === "mini" && shape === "none") drawn.push(wrap(mini(row), "fold-out", at, true));
+    if (shape === "full") drawn.push(move ? wrap(full(row, true), `${move.kind}-in`, at) : full(row, true));
+    if (shape === "mini") {
+      drawn.push(move && move.from !== "mini"
+        ? wrap(mini(row), move.kind === "crt" ? "mini-in" : "fold-in", at)
+        : mini(row));
+    }
+  }
+  lad.seen = seen;
+
+  const rail = el("div.lad-rail", null,
+    ...rows.map((row) => {
+      const state = stateOf(row);
+      return el("button.lad-pip", {
+        class: state,
+        "aria-label": `${row.label} — ${state}`,
+        onclick: state === "open" ? null : () => reopenRow(id, row.name),
+      });
+    }));
+
+  return [rail, ...drawn];
+}
+
+/** The digits of a scale answered on a line: `[n, of]`, or null for a row that
+ *  is not one. A scale is recognised as `optsClass` recognises it. */
+function meterOf(step, draftValues) {
+  const options = stepOptions(step, draftValues);
+  if (!options.length || !options.every(([, , label]) => /^\d+$/.test(String(label)))) return null;
+  const at = options.findIndex(([, value]) => value === draftValues[step.name]);
+  return at < 0 ? null : [at + 1, options.length];
+}
+
 /**
  * A row of answer buttons for one step of a quick log.
  *
- * The unrolled ladder: every question visible, answered in any order, and the
- * entry posts when the last one is filled. On the desktop the equivalent is
- * three keystrokes and this would be a waste of a card; here there is no
- * keyboard and a wizard that asks one question per screen is three taps and two
- * animations to say "a large clean meal".
+ * Every answer in the row visible, answered in any order, and the entry posts
+ * on a separate press. On the desktop the equivalent is three keystrokes and
+ * this would be a waste of a card; here there is no keyboard and a wizard that
+ * asks one question per screen is three taps and two animations to say "a
+ * large clean meal" — which is why the ladder opens three of these at once
+ * rather than one.
  */
 function stepRow(step, draftValues, answer) {
   // A `multi` step holds an array and a plain one holds a value. The two are
@@ -723,9 +941,8 @@ function stepRow(step, draftValues, answer) {
     ),
   );
 
-  // Every answer on screen, all the time, for the reason the head of this file
-  // gives — a question you have to open is a question you have to notice. The
-  // one row that is not like this is the meal's name, and `menuRow` is why.
+  // Every answer in the row on screen while the row is open. The one row that
+  // is not like this is the meal's name, and `menuRow` is why.
   return el("div.q", null,
     el("div.q-head", null,
       el("span.q-name", { text: step.name }),
@@ -810,8 +1027,11 @@ function menuRow(step, draft, answer, picker) {
       el("span.q-name", { text: "what" }),
       !chosen ? el("span.q-hint", { text: step.hint }) : null,
     ),
-    likely.length ? grid(likely.map((item) => cap(item))) : null,
-    offRow
+    // Off while the menu or the box is open, which is also when the ladder
+    // gives this row the screen (`focus` in `quickLog`): opening either one is
+    // saying the likely three were not it, and the menu holds them anyway.
+    likely.length && !picker.view ? grid(likely.map((item) => cap(item))) : null,
+    offRow && !picker.view
       ? el("button.opt.on.menu-chosen", {
           "aria-pressed": true,
           text: mealName(all, chosen),
@@ -968,6 +1188,7 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove, enric
         enrich?.(body);
         answers = {};
         picker = fresh();
+        resetLadder(id);
         await send(path, body, label);
       };
 
@@ -994,14 +1215,49 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove, enric
         // while keeping the question — see `prunedDraft`, which is where both
         // rules live and why neither is written out here.
         answers = prunedDraft(steps, answers);
+        // A value closes its row; a tag toggled on a multi-pick does not —
+        // that row closes on its own `done ›`. Un-picking an optional answer
+        // (a null) leaves the row open, since you are still choosing. What a
+        // name filled in closes too, the flags included: they were answered,
+        // just not by a tap on their own row.
+        if (value != null && !step?.multi) settle(id, name);
+        for (const key of Object.keys(filled)) settle(id, key, { pass: true });
         draw();
       };
 
+      // The words on an answered row's line.
+      const said = (step) => {
+        const value = answers[step.name];
+        if (step.menu) return value ? mealName(mealMenu(), value) : "unnamed";
+        if (step.field) {
+          const what = AMOUNTS.find(([n]) => n === value)?.[1];
+          return what ? `${say(value)} · ${what}` : `${say(value)} ${step.field.unit}`;
+        }
+        const options = stepOptions(step, answers);
+        const labelOf = (v) => options.find(([, one]) => one === v)?.[2] ?? String(v);
+        if (step.multi) return value?.length ? value.map(labelOf).join(" · ") : "none";
+        return value == null ? "none" : labelOf(value);
+      };
+
+      // The meal's name gets the screen to itself while its menu or box is
+      // open: nine base meals two across is taller than the rest of the log.
+      const focus = picker.view ? MEAL_STEPS.find((step) => step.menu)?.name : null;
+
+      const ladder = asked.map((step) => ({
+        name: step.name,
+        label: step.menu ? "what" : step.name,
+        complete: !step.multi && answers[step.name] != null,
+        full: () => step.field ? amountRow(step, answers, answer)
+          : step.menu ? menuRow(step, answers, answer, picker)
+          : stepRow(step, answers, answer),
+        mini: () => said(step),
+        meter: meterOf(step, answers),
+        closer: step.multi ? { text: answers[step.name]?.length ? "done ›" : "none ›" } : null,
+        skip: step.optional && !step.multi ? (answers[step.name] != null ? "keep ›" : "skip ›") : null,
+      }));
+
       return [
-        ...asked.map((step) =>
-          step.field ? amountRow(step, answers, answer)
-            : step.menu ? menuRow(step, answers, answer, picker)
-            : stepRow(step, answers, answer)),
+        ...ladderRows(id, ladder, { focus }),
         // Disabled rather than hidden while the entry is incomplete: a button
         // that appears when you finish is a button you have to notice, and one
         // that is greyed the whole time you are answering is a progress
@@ -1026,7 +1282,8 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove, enric
               })
             : null,
         ),
-        entryList(rows(), describe, empty, { remove }),
+        // Today's list goes with the rest while the name has the screen.
+        focus ? null : entryList(rows(), describe, empty, { remove }),
       ];
     },
   };
@@ -1263,6 +1520,7 @@ function checkinLog() {
       // about question three without writing again.
       const answer = (key, shown) => {
         setDraft({ ...held, [key]: toStored(key, shown) });
+        settle("checkin", key);
         draw();
       };
 
@@ -1297,6 +1555,7 @@ function checkinLog() {
         body.bed = bed;
         body.woke = woke;
         setDraft({});
+        resetLadder("checkin");
         send("/api/readiness", body, "check-in");
       };
 
@@ -1308,7 +1567,9 @@ function checkinLog() {
           ? "not saved yet"
           : "saved";
 
-      return [
+      const weight = measured("weight").value;
+
+      const ladder = [
         // Weight and nothing else. The hours-slept box was here beside it and
         // is gone: the watch measures that better at 6am than anyone types it,
         // and a box you fill in from a guess produces a series indistinguishable
@@ -1318,38 +1579,75 @@ function checkinLog() {
         // `sleep_quality` is still asked below, and that is not a duplicate:
         // one is how long the night was and the other is what it was like, and
         // the disagreement between them is the diagnostic.
-        measure("weight", "lb", "weight"),
-        night({
-          bed,
-          woke,
-          span,
-          nightOk,
-          defaults,
-          fromDefaults: bedFrom === "default" && wokeFrom === "default",
-        }),
-        ...CHECKIN_ITEMS.map(([key, name, low, high]) => {
-          const shown = shownFor(key);
-          return el("div.q", null,
-            el("div.q-head", null,
-              el("span.q-name", { text: name }),
-              el("span.q-hint", { text: `1 ${low} · 5 ${high}` }),
-            ),
-            // Through `optsClass` like every other row in the app, rather
-            // than naming a grid here. These are five one-character labels, so
-            // it answers "five across" — and it answers it for the meal log's
-            // quality row and the session log's RPE by the same measurement,
-            // which is the point of asking rather than telling.
-            el(optsClass([1, 2, 3, 4, 5]), null,
-              ...[1, 2, 3, 4, 5].map((n) =>
-                el("button.opt.num", {
-                  class: shown === n ? "on" : "",
-                  "aria-pressed": shown === n,
-                  text: String(n),
-                  onclick: () => answer(key, n),
-                })),
-            ),
-          );
-        }),
+        //
+        // Skippable, because the check-in does not wait on it — a morning
+        // away from the scale must not hold one of the three open slots all
+        // day. `keep ›` once there is a reading, so closing a reopened row is
+        // not a second write of the same number.
+        {
+          name: "weight",
+          label: "weight",
+          complete: weight != null,
+          full: () => measure("weight", "lb", "weight", { after: () => settle("checkin", "weight") }),
+          mini: () => `${weight} lb`,
+          skip: weight != null ? "keep ›" : "skip ›",
+        },
+        // Done by itself only when nothing on it was touched this morning — a
+        // saved night, or both wheels from this phone's defaults, which is the
+        // ordinary morning and should cost nothing. Turned by hand, it waits
+        // for `done ›`: the wheels are two answers, and closing on the first
+        // would shut the row under the second.
+        {
+          name: "night",
+          label: "in bed",
+          complete: nightOk && bedFrom !== "draft" && wokeFrom !== "draft",
+          full: () => night({
+            bed,
+            woke,
+            span,
+            nightOk,
+            defaults,
+            fromDefaults: bedFrom === "default" && wokeFrom === "default",
+          }),
+          mini: () => nightOk ? `${clockTime(bed)} – ${clockTime(woke)} · ${hoursLabel(span)}` : "not set",
+          closer: { text: "done ›", disabled: !nightOk },
+        },
+        ...CHECKIN_ITEMS.map(([key, name, low, high]) => ({
+          name: key,
+          label: name,
+          complete: shownFor(key) != null,
+          full: () => scale(key, name, low, high),
+          mini: () => String(shownFor(key)),
+          meter: shownFor(key) ? [shownFor(key), 5] : null,
+        })),
+      ];
+
+      function scale(key, name, low, high) {
+        const shown = shownFor(key);
+        return el("div.q", null,
+          el("div.q-head", null,
+            el("span.q-name", { text: name }),
+            el("span.q-hint", { text: `1 ${low} · 5 ${high}` }),
+          ),
+          // Through `optsClass` like every other row in the app, rather
+          // than naming a grid here. These are five one-character labels, so
+          // it answers "five across" — and it answers it for the meal log's
+          // quality row and the session log's RPE by the same measurement,
+          // which is the point of asking rather than telling.
+          el(optsClass([1, 2, 3, 4, 5]), null,
+            ...[1, 2, 3, 4, 5].map((n) =>
+              el("button.opt.num", {
+                class: shown === n ? "on" : "",
+                "aria-pressed": shown === n,
+                text: String(n),
+                onclick: () => answer(key, n),
+              })),
+          ),
+        );
+      }
+
+      return [
+        ...ladderRows("checkin", ladder),
         // The whole row goes at once — the request model wants all five,
         // because a `score` summed over three of them is a number that means
         // nothing. So this is one button rather than five, and it says which of
@@ -1444,11 +1742,18 @@ function night({ bed, woke, span, nightOk, defaults, fromDefaults }) {
  * input: a `type=number` on iOS is a text keyboard with a spinner nobody can
  * hit, and `inputmode` gets the keypad without the spinner.
  */
-function measure(metric, unit, name) {
+function measured(metric) {
   const series = panel?.series?.find((s) => s.metric === metric);
   const last = series?.points?.[series.points.length - 1];
   const logged = last && last[0] === today() ? last[1] : null;
   const queued = pendingOn().find((e) => e.path === "/api/health" && e.body.metric === metric);
+  return { logged, queued, value: queued?.body.value ?? logged ?? null };
+}
+
+/** `after` runs before the write's own draw, which is how the check-in's
+ *  ladder closes the row in the same frame the reading lands. */
+function measure(metric, unit, name, { after } = {}) {
+  const { logged, queued } = measured(metric);
 
   const box = el("input.amount", {
     type: "text",
@@ -1460,6 +1765,7 @@ function measure(metric, unit, name) {
   const commit = () => {
     const value = Number(String(box.value).trim());
     if (!Number.isFinite(value) || value <= 0) return void box.classList.add("bad");
+    after?.();
     send("/api/health", { metric, value }, name);
   };
   box.addEventListener("input", () => box.classList.remove("bad"));
@@ -2543,7 +2849,7 @@ function homeScreen() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v19";
+const BUILD = "log-v20";
 
 /**
  * The build, along the foot of the title screen.
@@ -2742,6 +3048,10 @@ function dayHeardLine() {
 }
 
 function draw() {
+  // Before anything can return: a draw of home or the day screen has to count
+  // as "not the ladder", or coming back to a log would replay its motions.
+  ladderWas = ladderNow;
+  ladderNow = null;
   const shell = $("#shell");
   shell.dataset.root = root;
   // The header, which belongs to no root. It used to be written by `drawHour`,

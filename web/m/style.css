@@ -1297,3 +1297,142 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 .amount[type="time"]::-webkit-calendar-picker-indicator { display: none; }
 .night-foot { align-items: center; justify-content: space-between; }
 .go.small:disabled { color: var(--faint); border-color: var(--border); cursor: default; }
+
+/* --- the ladder -------------------------------------------------------------
+   Three questions open, each answered one a line, and the CRT between them.
+   See `ladderRows` in app.js for the state, and for why every motion here is a
+   keyframe rather than a transition: the view is rebuilt on every draw, so
+   nothing on it lives long enough to transition. `--t` is how far into its
+   motion a row already was when this draw caught it, as a negative delay. */
+
+/* The rail. One pip per question: filled once answered, outlined while open,
+   a ghost while it waits. Each one is a way back to its question. */
+.lad-rail { display: flex; gap: var(--s1); margin: calc(-1 * var(--s1)) 0 var(--s3); }
+.lad-pip {
+  flex: 1; height: 20px; padding: 0; border: 0; background: none; position: relative;
+  cursor: pointer; touch-action: manipulation;
+}
+.lad-pip::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 8px; height: 4px;
+  background: rgba(223,230,242,.12);
+}
+.lad-pip.open { cursor: default; }
+.lad-pip.open::before {
+  background: color-mix(in srgb, var(--tab) 25%, transparent);
+  box-shadow: inset 0 0 0 1px var(--tab);
+}
+.lad-pip.done::before { background: var(--tab); }
+
+/* An answered question, as a line. A button, because it is the way back to the
+   question; edged in the tab's hue down the left, the way a lit cap is along
+   its foot. The label takes the section heading's 82%, which is the mix
+   already measured at 4.5:1 or better for 10px display type on this plate. */
+.lad-mini {
+  display: flex; align-items: center; gap: var(--s2);
+  width: 100%; min-height: 36px; margin-bottom: var(--s2); padding: 0 var(--s3);
+  border: 0; border-left: 2px solid var(--tab); border-radius: 0;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--tab) 12%, transparent),
+    color-mix(in srgb, var(--tab) 3%, transparent));
+  color: var(--fg); text-align: left; cursor: pointer; touch-action: manipulation;
+}
+.lad-n {
+  font-family: var(--font-display); font-weight: 700; font-size: 9px;
+  letter-spacing: .2em; text-transform: uppercase; white-space: nowrap;
+  color: color-mix(in srgb, var(--tab-text) 82%, transparent);
+}
+.lad-lead {
+  flex: 1; min-width: var(--s3); height: 1px;
+  background: repeating-linear-gradient(90deg,
+    color-mix(in srgb, var(--tab) 35%, transparent) 0 2px, transparent 2px 5px);
+}
+.lad-v {
+  font-family: var(--font-display); font-weight: 700; font-size: 12px;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--tab-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 62%;
+}
+/* A scale's answer as a level as well as a digit: the shape of it is half the
+   meaning, which is the same argument `.opts-5` makes for the caps. */
+.lad-meter { display: flex; gap: 2px; }
+.lad-meter i { width: 5px; height: 11px; background: color-mix(in srgb, var(--tab) 18%, transparent); }
+.lad-meter i.lit { background: var(--tab); }
+
+/* The ‹ back to the last answered question. A cap, square, at the head of the
+   top open question and only there — the one place "back" is unambiguous. */
+.lad-back {
+  flex: none; width: 34px; height: 26px; margin: -6px 0; padding: 0;
+  font-family: var(--font-display); font-weight: 700; font-size: 15px; line-height: 1;
+  color: var(--tab-text); border-radius: 0;
+  border: 1px solid color-mix(in srgb, var(--tab) 45%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tab) 14%, transparent), transparent);
+  cursor: pointer; touch-action: manipulation;
+}
+/* Past a question that may be left blank. Text, like the menu's crumb: it is
+   navigation, and a cap here would be one more thing that looks like an
+   answer. Pushed to the right edge of the head. */
+.lad-skip {
+  margin: -8px 0 -8px auto; min-height: 32px; padding: 0 0 0 var(--s3);
+  font-family: var(--font-display); font-weight: 700; font-size: 10px;
+  letter-spacing: .16em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--tab-text) 82%, transparent);
+  background: none; border: 0; cursor: pointer; touch-action: manipulation;
+}
+/* Under a question no single tap finishes. Quieter than an answer. */
+.opt.lad-next { display: block; width: 100%; min-height: 40px; margin-top: var(--s2); color: var(--dim); }
+.opt.lad-next:disabled { color: var(--faint); cursor: default; transform: none; }
+
+/* The motions. The grid's one row goes 0fr <-> 1fr for the height, so nothing
+   is measured, and the clip is what hides the row while it is short. */
+.lad { display: grid; grid-template-rows: 1fr; }
+.lad-clip { min-height: 0; overflow: hidden; }
+/* The question's own gap, inside the clip so it shuts with the question. */
+.lad-body > .q, .lad-body > .q:last-child { margin-bottom: var(--s5); }
+
+/* Opening: the space arrives fast, and the question switches on from a line
+   in the tab's hue — the title screen's CRT, once per question. */
+.lad.crt-in { animation: lad-open 160ms cubic-bezier(.2,.8,.2,1) var(--t, 0ms) both; }
+.lad.crt-in .lad-body {
+  transform-origin: 50% 50%;
+  animation: lad-crt-on 460ms cubic-bezier(.2,.7,.2,1) var(--t, 0ms) both;
+}
+/* Answered: the question collapses to the line and blinks out, then its space
+   shuts while the line it became flickers on beneath. */
+.lad.crt-out { animation: lad-shut 500ms cubic-bezier(.2,.8,.2,1) var(--t, 0ms) both; }
+.lad.crt-out .lad-body {
+  transform-origin: 50% 50%;
+  animation: lad-crt-off 340ms cubic-bezier(.6,0,.4,1) var(--t, 0ms) both;
+}
+.lad.mini-in { animation: lad-late 520ms cubic-bezier(.2,.8,.2,1) var(--t, 0ms) both; }
+.lad.mini-in .lad-body { animation: lad-flicker 260ms steps(1) calc(var(--t, 0ms) + 280ms) both; }
+/* Stepping aside for the meal's menu, and back after it: a plain fold. The
+   CRT means "answered", and nothing here was. */
+.lad.fold-in { animation: lad-open 260ms cubic-bezier(.2,.8,.2,1) var(--t, 0ms) both; }
+.lad.fold-in .lad-body { animation: lad-fade 260ms ease-out var(--t, 0ms) both; }
+.lad.fold-out { animation: lad-close 260ms cubic-bezier(.2,.8,.2,1) var(--t, 0ms) both; }
+.lad.fold-out .lad-body { animation: lad-fade 200ms ease-in var(--t, 0ms) reverse both; }
+
+@keyframes lad-open  { from { grid-template-rows: 0fr; } to { grid-template-rows: 1fr; } }
+@keyframes lad-close { from { grid-template-rows: 1fr; } to { grid-template-rows: 0fr; } }
+@keyframes lad-shut  { 0%, 60% { grid-template-rows: 1fr; } 100% { grid-template-rows: 0fr; } }
+@keyframes lad-late  { 0%, 54% { grid-template-rows: 0fr; } 100% { grid-template-rows: 1fr; } }
+@keyframes lad-fade  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes lad-flicker { 0% { opacity: 0; } 25% { opacity: 1; } 45% { opacity: .35; } 60%, 100% { opacity: 1; } }
+@keyframes lad-crt-on {
+  0%   { transform: scale(0, .03); background: var(--tab-text); box-shadow: 0 0 16px 2px var(--tab); }
+  35%  { transform: scale(1, .03); background: var(--tab-text); box-shadow: 0 0 16px 2px var(--tab); filter: brightness(1.6); }
+  60%  { background: transparent; box-shadow: none; filter: brightness(1.3); }
+  100% { transform: scale(1, 1); background: transparent; filter: none; }
+}
+@keyframes lad-crt-off {
+  0%   { transform: scale(1, 1); opacity: 1; }
+  45%  { transform: scale(1, .03); background: var(--tab-text); box-shadow: 0 0 16px 2px var(--tab); filter: brightness(1.8); }
+  80%  { transform: scale(.02, .03); background: var(--tab-text); box-shadow: 0 0 10px 1px var(--tab); opacity: 1; }
+  100% { transform: scale(0, 0); opacity: 0; }
+}
+
+/* app.js draws no motion at all under this setting; this is the floor under
+   that, so a shutting copy can never be left standing. */
+@media (prefers-reduced-motion: reduce) {
+  .lad, .lad-body { animation: none !important; }
+  .lad[inert] { display: none; }
+}
