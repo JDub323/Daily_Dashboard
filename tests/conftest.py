@@ -47,6 +47,8 @@ def settings(tmp_path) -> Settings:
                     # wants a profile writes it here -- pointing at the real
                     # path let a test create interests.md in the project root.
                     "interests": str(tmp_path / "interests.md"),
+                    # Written by every test that posts a tally.
+                    "usage": str(tmp_path / "usage.json"),
                 }
             ),
             "server": cfg.server.model_copy(update={"log_file": None, "open_browser": False}),

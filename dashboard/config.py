@@ -104,6 +104,14 @@ class PathSettings(Base):
     rather than as an error. See `dashboard/trainplan.py`.
     """
 
+    usage: str = "usage.json"
+    """How often each phone screen is opened, per day -- `{date: {screen: n}}`.
+
+    Written by `POST /api/usage` and by nothing else, and read by whoever is
+    deciding what earns a place in the phone's bar. A file rather than a table
+    because it is a statistic about the app, not a fact about a day: nothing
+    in the dashboard reads it back. See `dashboard/usage.py`."""
+
     positions: str = "positions.csv"
     """The brokerage positions export. Gitignored, and the one file here whose
     absence is the normal case -- a fresh clone has none and the panel says so.

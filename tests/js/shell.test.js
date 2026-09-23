@@ -123,7 +123,7 @@ describe("the phone's offline shell", () => {
     // `paintSplash` — which is the dashboard's own module and writes the fight
     // date into the same element on its way past.
     const app = read(path.join(M, "app.js"));
-    const boot = app.indexOf("initSplash();");
+    const boot = app.search(/^initSplash\(.*\);$/m);
     assert.ok(boot > 0, "app.js no longer calls initSplash()");
     assert.match(
       app.slice(boot, boot + 200),

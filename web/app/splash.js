@@ -45,11 +45,20 @@ const ARM_MS = 1400;
 /** Must match the `#splash` opacity transition in style.css. */
 const FADE_MS = 420;
 
+/**
+ * How this device wants the screen run — see `initSplash`, which is the only
+ * thing that sets it. The defaults are the dashboard's, and the dashboard
+ * passes nothing.
+ */
+let mode = { returns: true, armMs: ARM_MS, liftMs: null };
+
 const dismissListeners = new Set();
 
 let open = false;
 let armed = false;
 let hideTimer = null;
+/** The self-dismissal, when this device has one. */
+let liftTimer = null;
 /** Set while the screen is up, so the reason reaches the dismiss handlers. */
 let reason = "boot";
 /** What had the focus when the screen went up, to hand it back on the way out. */
@@ -138,14 +147,29 @@ export function showSplash(why = "wake") {
   $("#shell").setAttribute("aria-hidden", "true");
   splash.focus({ preventScroll: true });
 
-  setTimeout(() => {
+  // Armed on the spot when there is no wait, rather than on a zero timer: a
+  // tap in the first frame is exactly the tap the phone's mode exists for.
+  if (mode.armMs > 0) {
+    setTimeout(() => {
+      armed = true;
+    }, mode.armMs);
+  } else {
     armed = true;
-  }, ARM_MS);
+  }
+
+  clearTimeout(liftTimer);
+  if (mode.liftMs != null) {
+    liftTimer = setTimeout(() => {
+      armed = true;
+      dismiss();
+    }, mode.liftMs);
+  }
 }
 
 function dismiss() {
   if (!open || !armed) return;
   open = false;
+  clearTimeout(liftTimer);
 
   const splash = $("#splash");
   document.body.classList.remove("booting", "splash-up");
@@ -242,7 +266,28 @@ function watchForReturn() {
   }
 }
 
-export function initSplash() {
+/**
+ * Build the screen, bind its ways out, and raise it.
+ *
+ * With no argument this is the dashboard's title screen: it waits `ARM_MS`
+ * before it can be dismissed, stays until it is, and comes back on sleep, idle
+ * and the day turning. The phone passes the other three answers, and each one
+ * is about a thing the laptop has and the phone does not:
+ *
+ *   returns: false  the phone never raises it again after boot. On the laptop
+ *                   it covers panels refilling after a wake; the phone draws
+ *                   from its own storage in a frame, so there is nothing to
+ *                   cover. And iOS freezes a backgrounded app's timers, so
+ *                   the sleep detector read every return to the app after
+ *                   90s as a wake — the title screen before nearly every log.
+ *   armMs: 0        a tap works from the first frame. The laptop's wait is
+ *                   there so a key meant for the dashboard does not skip a
+ *                   screen unread; on a phone the only tap is one meant for
+ *                   this screen, and ignoring it read as the app hanging.
+ *   liftMs          goes by itself, so a cold open costs no tap at all.
+ */
+export function initSplash({ returns = true, armMs = ARM_MS, liftMs = null } = {}) {
+  mode = { returns, armMs, liftMs };
   const splash = $("#splash");
 
   // The starfield is one element per layer carrying N box-shadows. Cheaper to
@@ -295,7 +340,7 @@ export function initSplash() {
 
   sayHowToDismiss(splash);
 
-  watchForReturn();
+  if (returns) watchForReturn();
   showSplash("boot");
 }
 

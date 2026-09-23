@@ -64,6 +64,7 @@ from . import (
     todo,
     trainplan,
     tricks,
+    usage,
     webauthn,
 )
 from .config import Settings, load_env, settings
@@ -2320,6 +2321,11 @@ def _register(app: FastAPI) -> None:
         garmin.record_manual(wrote)
         log.info("garmin sync (manual) wrote %d row(s) through %s", wrote, body.date)
         return state.health_panel(cfg, repo, body.date)
+
+    @app.post("/api/usage")
+    def usage_add(cfg: Cfg, body: api.UsageRequest) -> api.UsageReply:
+        """The phone's screen-open counts. See `dashboard/usage.py`."""
+        return api.UsageReply(usage_days=usage.merge(cfg.path("usage"), body.days))
 
     @app.post("/api/daylog")
     def daylog(repo: Repo, body: api.DayLogRequest) -> dict[str, bool]:

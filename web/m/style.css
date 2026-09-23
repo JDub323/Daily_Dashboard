@@ -87,6 +87,30 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   color: var(--faint);
   white-space: nowrap;
 }
+/* The date is a button: the check-in leaves the bar once it is done, and this
+   is the way back to it. Two lines, the date and what the day is waiting on,
+   right-aligned under each other. The padding is the tap target — two lines of
+   9px type are a target you aim at — pulled back out of the layout by the
+   negative margin so the header does not grow. */
+#topbar button.sub {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  padding: var(--s2) 0 var(--s2) var(--s4);
+  margin: calc(-1 * var(--s2)) 0;
+  line-height: 1.2;
+  text-align: right;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+#topbar button.sub:active .day-date { color: var(--accent); }
+/* Tighter than the date so the longest line — `CHECK-IN ✓ · 3/6 · 2 DUE` —
+   fits beside the wordmark on a 375px screen. Same colour: the 9px type is
+   already at the floor of what --faint may carry. */
+.day-state { letter-spacing: .1em; }
 
 /* --- the hour -------------------------------------------------------------
    A key-cap like every other button, but gold rather than cyan: what it says
@@ -759,6 +783,19 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 .tab[data-log="todo"]     { color: var(--off-todo); }
 .tab[data-log="owed"]     { color: var(--off-owed); }
 .tab[data-log="agenda"]    { color: var(--off-agenda); }
+/* Meal and drink in one cap, so the cap wears both: the label runs from one
+   unlit hue into the other. Each end is a measured `--off-*`, so every glyph
+   between them clears the same floor. `.tab.on` below resets the clip with its
+   own `background`, and the lit cap is the hue of whichever ladder is up. */
+.tab[data-log="eat"] {
+  background: linear-gradient(90deg, var(--off-meals) 30%, var(--off-drinks) 70%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* Said outright rather than left to the shorthand, since WebKit has treated
+   the prefixed clip as its own property. */
+.tab.on[data-log="eat"] { -webkit-background-clip: border-box; background-clip: border-box; }
 
 .tab.on {
   color: color-mix(in srgb, var(--tab-text) 88%, #fff);
@@ -773,15 +810,65 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   box-shadow: inset 0 3px 0 var(--tab), inset 0 -1px 0 rgba(255,255,255,.10);
 }
 
-/* The way out, and the one cap in the bar that is not a tab.
-   Neutral by construction: it belongs to no log, it is in the same place in
-   both roots, and the rule down its right-hand side is what says the caps
-   after it are a different kind of thing. */
-.tab.home {
-  color: var(--faint);
-  border-right: 1px solid var(--border-soft);
+/* Where the logs stop and the day's two lists start. They are different kinds
+   of screen — ones you file into and ones you read and tick — and the rule is
+   the whole of how the bar says so. */
+.tab.day-first { border-left: 1px solid var(--border-soft); }
+
+/* --- the eat tab's switch -------------------------------------------------
+   Meal or drink, as two caps across the top of the tab. Each wears its own hue
+   lit or not, which is the bar's rule one level down: the switch you have not
+   pressed must already look like a different screen. */
+.intake {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s2);
+  margin-bottom: var(--s4);
 }
-.tab.home:active { color: var(--accent); }
+.intake-cap {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  min-height: 44px;
+  border: 1px solid var(--border-soft);
+  border-radius: 0;
+  background: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.intake-cap[data-log="meals"]  { color: var(--off-meals);  border-color: color-mix(in srgb, var(--hue-meals) 30%, transparent); }
+.intake-cap[data-log="drinks"] { color: var(--off-drinks); border-color: color-mix(in srgb, var(--hue-drinks) 30%, transparent); }
+.intake-cap.on {
+  color: var(--tab-text);
+  border-color: color-mix(in srgb, var(--tab) 62%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--tab) 22%, transparent),
+    color-mix(in srgb, var(--tab) 5%, transparent)
+  );
+  box-shadow: inset 0 -2px 0 var(--tab), inset 0 1px 0 rgba(255,255,255,.10);
+}
+/* Why the drink ladder is up when you did not ask for it. */
+.offer {
+  margin: 0 0 var(--s3);
+  font-size: var(--t-meta);
+  color: var(--tab-text);
+}
+
+/* The eat tab's list holds both logs; the clock column says which each row is. */
+.entry[data-log="meals"] .entry-at  { color: var(--off-meals); }
+.entry[data-log="drinks"] .entry-at { color: var(--off-drinks); }
+
+/* --- the title screen, faster ---------------------------------------------
+   The dashboard's entrance runs 2.4s and waits for Enter. Here it lifts itself
+   at `SPLASH_MS` (1.5s, app.js), so the parts of it worth reading arrive
+   sooner: the save-file line with the build stamp first, then the wordmark,
+   then the camp line. `#splash` for the specificity over splash.css. */
+#splash.sp-run .sp-logo { animation-duration: 800ms; }
+#splash.sp-run .sp-bar  { animation-delay: 150ms; animation-duration: 350ms; }
+#splash.sp-run .sp-sub  { animation-delay: 450ms; animation-duration: 400ms; }
 
 /* --- the plate, in the tab's colour ---------------------------------------- */
 
@@ -843,88 +930,6 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 .go.commit:not(:disabled) {
   border-color: color-mix(in srgb, var(--tab) 45%, transparent);
   color: var(--tab-text);
-}
-
-/* --- the entrance ----------------------------------------------------------
-   Two cards, and the whole screen. No plate under them: `#view` drops `.panel`
-   on this root, because a card inside a card is a box inside a box, and these
-   two *are* the plates here — same square corners, same lit top edge, same
-   diagonal brackets, at the size of a thing you hit without aiming.
-
-   Each one carries a stripe of the hues its half of the app owns. That is the
-   legend the tab bar is, shown a level up: five green-to-ember on the log card
-   and three orchid-to-steel on the day card, so the bar you land in is already
-   familiar when you get there. */
-
-#view.home {
-  display: grid;
-  gap: var(--s4);
-  margin: var(--s4);
-  padding: 0;
-}
-
-.root-card {
-  display: grid;
-  gap: var(--s2);
-  justify-items: start;
-  text-align: left;
-  position: relative;
-  padding: var(--s5) var(--s4);
-  border: 1px solid rgba(92,207,230,.18);
-  border-radius: 0;
-  background:
-    linear-gradient(180deg, rgba(223,230,242,.05), transparent 45%),
-    var(--panel);
-  box-shadow: inset 0 1px 0 rgba(223,230,242,.10);
-  cursor: pointer;
-  touch-action: manipulation;
-}
-.root-card::before, .root-card::after {
-  content: ""; position: absolute; width: var(--bracket); height: var(--bracket);
-  pointer-events: none; border: 0 solid rgba(92,207,230,.34);
-}
-.root-card::before { top: -1px; left: -1px; border-top-width: 2px; border-left-width: 2px; }
-.root-card::after { bottom: -1px; right: -1px; border-bottom-width: 2px; border-right-width: 2px; }
-.root-card:active {
-  box-shadow: inset 0 -1px 0 rgba(223,230,242,.14), inset 0 2px 6px rgba(0,0,0,.55);
-  transform: translateY(1px);
-}
-
-.rc-name {
-  font-family: var(--font-display);
-  font-weight: 900;
-  font-size: var(--t-head);
-  letter-spacing: .16em;
-  text-transform: uppercase;
-  color: var(--fg);
-}
-
-/* The hues this half owns, as a rule under its name. Eight pixels tall and the
-   full width of the card, which is enough to be recognised and not enough to be
-   a decoration. */
-.rc-hues { display: flex; width: 100%; height: 6px; gap: 2px; }
-.rc-hues i { flex: 1; }
-.rc-hues i[data-log="meals"]    { background: var(--hue-meals); }
-.rc-hues i[data-log="drinks"]   { background: var(--hue-drinks); }
-.rc-hues i[data-log="bathroom"] { background: var(--hue-bathroom); }
-.rc-hues i[data-log="checkin"]  { background: var(--hue-checkin); }
-.rc-hues i[data-log="session"]  { background: var(--hue-session); }
-.rc-hues i[data-log="todo"]     { background: var(--hue-todo); }
-.rc-hues i[data-log="owed"]     { background: var(--hue-owed); }
-.rc-hues i[data-log="agenda"]   { background: var(--hue-agenda); }
-
-.rc-what { font-size: var(--t-meta); color: var(--faint); }
-
-/* What this half is waiting on. Gold, because on this screen that is exactly
-   what it means -- something is owed and nothing has been written down about
-   it yet. The one place in the app where gold is used for a count. */
-.rc-state {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 10px;
-  letter-spacing: .16em;
-  text-transform: uppercase;
-  color: var(--gold-text);
 }
 
 /* --- the day's lists --------------------------------------------------------
@@ -1229,22 +1234,21 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
    it does under the logs: it qualifies every empty list above it. */
 .empty.cold { color: var(--gold-text); opacity: .85; }
 
-/* --- the bar, at six cells -------------------------------------------------
-   `home` is a fixed 44px and the tabs share what is left, which on a 375px
-   screen is 66px each -- wider than the five-across bar this replaced, because
-   the sixth cell is a good deal narrower than a sixth. `grid-auto-columns` rather than
-   `repeat()`, since the number of tabs is 5 on one root and 3 on the other and
-   `repeat()` cannot be told a count by a custom property. */
+/* --- the bar, one row for the whole app ---------------------------------
+   Every cap an equal share: five across once the check-in is done, six in the
+   morning before it is. At six a 375px screen gives each 62.5px, which clears
+   the 61.8px `CHECK-IN` needs at .10em (see `.tab`). `grid-auto-columns`
+   rather than `repeat()`, since the count changes during the day and
+   `repeat()` cannot be told one by a custom property. */
 .tabs {
-  grid-template-columns: 44px;
+  grid-template-columns: none;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
 }
 
 /* The hour belongs to a log, so it is drawn only on one. The send button beside
    it is not: the queue is everything still owed by the whole app, and the day
-   screen writes into it too, so the one control that drains it is present on
-   every root including the entrance. */
+   tabs write into it too, so the one control that drains it is on every tab. */
 #shell:not([data-root="log"]) .hour { display: none; }
 #shell:not([data-root="log"]) #hourbar { justify-content: flex-end; }
 
@@ -1264,7 +1268,6 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 /* Been and gone. Not hidden: what has already happened is half of what makes a
    schedule readable, because it is how you know where in the day you are. */
 .ag-event.past { opacity: .45; }
-.rc-state.quiet { color: var(--faint); }
 
 /* The box above the list, and the gap under it. The `.row` it wears gives it a
    top margin and nothing below, so the first day heading sat 8px under a text

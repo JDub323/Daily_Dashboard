@@ -4,6 +4,7 @@
 # personal data (changes constantly; back up separately if you care)
 state.json
 metrics.jsonl
+usage.json
 
 # pre-migration snapshots of the above — irreplaceable, never committed
 backups/

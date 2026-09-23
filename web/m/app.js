@@ -88,6 +88,7 @@ import {
   stillTrue,
 } from "./held.js";
 import { enqueue, flush, isDay, isPanel, onQueueChange, pending, pendingOn } from "./queue.js";
+import { count, tallies } from "./tally.js";
 import {
   clock,
   clockTime,
@@ -284,27 +285,41 @@ const left = () => stillTrue(day, today());
 const dayStale = () => left().stale;
 
 /**
- * Which of the two halves of the app is open, or the screen that chooses.
+ * Whether this morning's check-in is in: on the laptop, or queued to go.
  *
- * `home` | `log` | `day`. The app opens on `home` every time rather than where
- * it was left, which costs a tap on the way to a meal and is worth it twice
- * over: the entrance is the only screen that can say what *both* halves are
- * waiting on — how much is queued, how much of the day is done, how much is due
- * — and a screen you always pass through is a screen you actually read. Landing
- * back where you were would also mean the day screen quietly becoming the app
- * for anyone who opened it once.
+ * The check-in is a once-a-day screen — answered 26 mornings of the first 28 —
+ * and after that it was a cap in the bar nobody pressed and, worse, the tab
+ * every open landed on. So this decides whether it has a cap at all, and
+ * whether the app opens on it.
  */
-let root = "home";
+function checkedIn() {
+  return panel?.readiness_today != null
+    || pendingOn().some((entry) => entry.path === "/api/readiness");
+}
 
-/** Which log is open. The first cap in the bar, which is the morning's: the
- *  bar reads left to right through a day — check in, eat, drink, the
- *  bathroom, train — and a lit tab that is not the leftmost one is the bar
- *  and the screen disagreeing about where you are. */
-let tab = "checkin";
+/**
+ * Which tab is open. One bar for the whole app since 2026-09-23: the log and
+ * the day used to be two roots behind an entrance screen, and every open cost
+ * a tap on the entrance before the tap on a log. With meal and drink folded
+ * into `eat` and the check-in gone once it is done, both halves fit one bar —
+ * see `TABS`.
+ *
+ * Opens on the check-in until it is done, and on `eat` after, which is where
+ * well over half of a day's taps go.
+ */
+let tab = checkedIn() ? "eat" : "checkin";
 
-/** Which of the day's two is open. Kept apart from `tab` so switching roots
- *  twice comes back to where you were in each. */
-let dayTab = "todo";
+/** Which of `eat`'s two ladders is up. */
+let intake = "meals";
+
+/** Set when a meal has just gone in and the screen turned to drinks on its
+ *  own, so the drink ladder can say why it is there. Cleared by anything else. */
+let offered = false;
+
+/** The day the tab was last chosen on. Coming back to the app on a new day
+ *  goes back to the check-in if it is owed — see the `visibilitychange`
+ *  handler. */
+let openedOn = today();
 
 /** The hour every entry is filed against. One control for all five logs: the
  *  case it exists for — noticing at three that lunch never got logged — is one
@@ -421,6 +436,7 @@ function send(path, body, label) {
   // like a tap that did not register.
   if (!entry) toast(`could not save that ${label} — the phone’s storage is full`);
   draw();
+  return entry;
 }
 
 /**
@@ -496,7 +512,7 @@ async function load() {
  */
 const DAY_MS = 9000;
 
-/** In flight, so a second visit to the day root does not start a second one. */
+/** In flight, so a second visit to the day's tabs does not start a second one. */
 let loadingDay = false;
 
 async function loadDay() {
@@ -582,6 +598,11 @@ async function sendNow() {
     // if there is a day on screen to correct, so draining a pocketful of meals
     // does not also fetch a calendar.
     if (sent && day) await loadDay();
+    // And which screens were opened, on the only trip to the laptop this app
+    // takes. After everything else and only if something went, so it is never
+    // what a meal waits behind and never a request to a laptop that just
+    // failed to answer.
+    if (sent) await sendTally();
 
     // Counted, not subtracted. `pending()` before minus `pending()` after is
     // wrong the moment a meal is logged during the flush — which is exactly
@@ -596,6 +617,29 @@ async function sendNow() {
     sending = false;
     draw();
   }
+}
+
+/**
+ * The screen-open counts, to the laptop. See the head of `tally.js`.
+ *
+ * Silent either way, and not queued: the tally is not a write anyone made, a
+ * failure loses nothing (the counts stay here and go next time), and the
+ * laptop keeps the larger of what it had and what it is sent, so sending the
+ * same four weeks again is free. A laptop still running a build without the
+ * route answers 404, which is the same nothing — and so, unlike every write in
+ * the queue, the reply is not read at all: nothing here changes on delivery.
+ */
+async function sendTally() {
+  const days = tallies();
+  if (!Object.keys(days).length) return;
+  try {
+    await fetch("/api/usage", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ days }),
+      signal: AbortSignal.timeout(REACH_MS),
+    });
+  } catch { /* next send */ }
 }
 
 // --- what is logged today ------------------------------------------------------
@@ -623,12 +667,16 @@ const queuedFor = (path) =>
 const deletedBy = (path) =>
   new Set(pending().filter((e) => e.path === path).map((e) => e.body?.entry_id ?? e.body?.session_id));
 
+/** Earliest first, by the hour and the minute where there is one. */
+const byClock = (a, b) =>
+  ((a.hour ?? 0) * 60 + (a.minute ?? 0)) - ((b.hour ?? 0) * 60 + (b.minute ?? 0));
+
 const rowsFor = (path, fromPanel, deletePath) => {
   const going = deletePath ? deletedBy(deletePath) : new Set();
   return [
     ...(fromPanel ?? []).filter((row) => !going.has(row.id)),
     ...queuedFor(path),
-  ].sort((a, b) => ((a.hour ?? 0) * 60 + (a.minute ?? 0)) - ((b.hour ?? 0) * 60 + (b.minute ?? 0)));
+  ].sort(byClock);
 };
 
 /** Today's sessions as this screen understands them: what the laptop has, plus
@@ -1146,7 +1194,7 @@ function nameBox(all, chosen, cap, grid, picker, pick, redraw) {
  * rather than reimplemented, so there is one answer to whether a urine entry
  * is asked for a solidity and it is not this file's.
  */
-function quickLog({ id, label, steps, path, describe, empty, rows, remove, enrich }) {
+function quickLog({ id, label, steps, path, describe, empty, rows, remove, enrich, list, logged }) {
   let answers = {};
   /** Where the meal's name row is: which of its two buttons is open, which base
    *  meal the tree is opened at, what is in the name box, and whether a new
@@ -1189,6 +1237,9 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove, enric
         answers = {};
         picker = fresh();
         resetLadder(id);
+        // Before the send, because the send is what draws: whatever this
+        // changes about the screen lands in the same frame as the entry.
+        logged?.();
         await send(path, body, label);
       };
 
@@ -1283,7 +1334,8 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove, enric
             : null,
         ),
         // Today's list goes with the rest while the name has the screen.
-        focus ? null : entryList(rows(), describe, empty, { remove }),
+        // `list` is the eat tab's, which draws meals and drinks as one.
+        focus ? null : list ? list() : entryList(rows(), describe, empty, { remove }),
       ];
     },
   };
@@ -1387,7 +1439,10 @@ function amountRow(step, answers, answer) {
  * `remove` is a descriptor rather than a lookup by tab, because the four
  * deletable logs do not agree on either half of it: three post `entry_id` and
  * a session posts `session_id`, and a body with the wrong field name is a 422
- * for a row that is sitting right there on screen.
+ * for a row that is sitting right there on screen. It can also be a function
+ * of the row, for the eat tab's list, where a meal and a drink sit side by side
+ * and are deleted down different paths. A row carrying `log` wears that log's
+ * hue on its clock, which is how the two are told apart in that list.
  */
 function entryList(rows, describe, empty, { at = (e) => entryClock(e.hour, e.minute), byKind, remove } = {}) {
   if (!rows.length) return el("p.empty", { text: empty });
@@ -1396,7 +1451,7 @@ function entryList(rows, describe, empty, { at = (e) => entryClock(e.hour, e.min
   // something other than a clock in that column needs the room for it.
   return el(byKind ? "ul.entries.by-kind" : "ul.entries", null,
     ...rows.map((entry) =>
-      el("li.entry", { class: entry.queued ? "queued" : "" },
+      el("li.entry", { class: entry.queued ? "queued" : "", "data-log": entry.log },
         el("span.entry-at", { text: at(entry) }),
         el("span.entry-what", { text: describe(entry) }),
         // A queued entry has no id on the far side yet, so there is nothing to
@@ -1409,7 +1464,10 @@ function entryList(rows, describe, empty, { at = (e) => entryClock(e.hour, e.min
           : el("button.del", {
               text: "×",
               "aria-label": "delete this entry",
-              onclick: () => send(remove.path, { [remove.field]: entry.id }, "delete"),
+              onclick: () => {
+                const how = typeof remove === "function" ? remove(entry) : remove;
+                send(how.path, { [how.field]: entry.id }, "delete");
+              },
             }),
       ),
     ),
@@ -1420,24 +1478,17 @@ function entryList(rows, describe, empty, { at = (e) => entryClock(e.hour, e.min
 const say = (amount) => String(Math.round(amount * 100) / 100);
 
 /**
- * The five, in the order the bar draws them — which is the order of a day.
+ * Meals and drinks, as the eat tab holds them: two ladders, one list.
  *
- * Check in, eat, drink, the bathroom, train. It was meal-first, on the honest
- * argument that meals are logged more often than anything else and the
- * commonest thing should be nearest the thumb. What that missed is that the
- * bar is read as well as pressed: the caps are the app's only map of itself,
- * and a map whose order means nothing is one you re-read every time. The
- * morning is at the left, the evening is at the right, and where you are in
- * the day tells you where in the bar to reach.
+ * They were two tabs until 2026-09-23. They are logged together — 77% of the
+ * meals in September had a drink within an hour of them — and the list under
+ * either one was half of the answer to "what have I had today". So the tab is
+ * one, with a switch at the top for which ladder is up, and the list under it
+ * is both logs in time order, each row's clock in its own log's hue.
  */
-const LOGS = [
-  checkinLog(),
-  quickLog({
-    id: "meals",
+const INTAKE = {
+  meals: {
     label: "meal",
-    steps: MEAL_STEPS,
-    path: "/api/meal",
-    empty: "nothing eaten yet today",
     rows: () => rowsFor("/api/meal", panel?.meals_today, "/api/meal/delete"),
     // The name stands in for size and quality rather than joining them: it is
     // what filled them, so printing all three spends half the row saying
@@ -1447,24 +1498,10 @@ const LOGS = [
       e.preset ? mealName(mealMenu(), e.preset) : `${e.size} · quality ${e.quality}`,
       ...(e.flags ?? []),
     ].join(" · "),
-    // The name's words travel with the meal, which is how a name typed here
-    // reaches the laptop's table — see `MealRequest.label`. Sent for old names
-    // too: the laptop keeps the first words it heard, so it costs nothing, and
-    // a name the laptop somehow lost comes back with its label rather than as
-    // its slug spelled out. Once it is in the queue, `mealMenu` finds it there,
-    // so the form's own list of new names can be let go.
-    enrich: (body) => {
-      if (body.preset) body.label = mealItem(mealMenu(), body.preset)?.label;
-      named = [];
-    },
     remove: { path: "/api/meal/delete", field: "entry_id" },
-  }),
-  quickLog({
-    id: "drinks",
+  },
+  drinks: {
     label: "drink",
-    steps: DRINK_STEPS,
-    path: "/api/drink",
-    empty: "nothing drunk yet today",
     rows: () => rowsFor("/api/drink", panel?.drinks_today, "/api/drink/delete"),
     // "water" is written out rather than left blank, because a row reading
     // just `· 1` looks like a row that lost something. It is the one label on
@@ -1474,19 +1511,100 @@ const LOGS = [
       `${e.name ? drinkNameLabel(e.name) : e.tags?.length ? e.tags.join(" + ") : "water"}`
       + ` · ${say(e.amount)}`,
     remove: { path: "/api/drink/delete", field: "entry_id" },
-  }),
-  quickLog({
-    id: "bathroom",
-    label: "visit",
-    steps: BATHROOM_STEPS,
-    path: "/api/bathroom",
-    empty: "nothing logged yet today",
-    rows: () => rowsFor("/api/bathroom", panel?.bathroom_today, "/api/bathroom/delete"),
-    describe: (e) => `${e.kind} · ${e.solidity ?? e.color} · ${e.volume}`,
-    remove: { path: "/api/bathroom/delete", field: "entry_id" },
-  }),
-  sessionLog(),
-];
+  },
+};
+
+/** Today's meals and drinks as one list, earliest first. */
+function intakeList() {
+  const rows = Object.entries(INTAKE)
+    .flatMap(([log, one]) => one.rows().map((entry) => ({ ...entry, log })))
+    .sort(byClock);
+  return entryList(rows, (e) => INTAKE[e.log].describe(e), "nothing eaten or drunk yet today", {
+    remove: (e) => INTAKE[e.log].remove,
+  });
+}
+
+const MEALS = quickLog({
+  id: "meals",
+  steps: MEAL_STEPS,
+  path: "/api/meal",
+  ...INTAKE.meals,
+  list: intakeList,
+  // The name's words travel with the meal, which is how a name typed here
+  // reaches the laptop's table — see `MealRequest.label`. Sent for old names
+  // too: the laptop keeps the first words it heard, so it costs nothing, and
+  // a name the laptop somehow lost comes back with its label rather than as
+  // its slug spelled out. Once it is in the queue, `mealMenu` finds it there,
+  // so the form's own list of new names can be let go.
+  enrich: (body) => {
+    if (body.preset) body.label = mealItem(mealMenu(), body.preset)?.label;
+    named = [];
+  },
+  // A meal usually comes with a drink, so the drink ladder is what is up
+  // next. Leaving without one costs nothing — nothing is half-filled.
+  logged: () => {
+    intake = "drinks";
+    offered = true;
+  },
+});
+
+const DRINKS = quickLog({
+  id: "drinks",
+  steps: DRINK_STEPS,
+  path: "/api/drink",
+  ...INTAKE.drinks,
+  list: intakeList,
+  logged: () => {
+    offered = false;
+  },
+});
+
+const BATHROOM = quickLog({
+  id: "bathroom",
+  label: "visit",
+  steps: BATHROOM_STEPS,
+  path: "/api/bathroom",
+  empty: "nothing logged yet today",
+  rows: () => rowsFor("/api/bathroom", panel?.bathroom_today, "/api/bathroom/delete"),
+  describe: (e) => `${e.kind} · ${e.solidity ?? e.color} · ${e.volume}`,
+  remove: { path: "/api/bathroom/delete", field: "entry_id" },
+});
+
+const CHECKIN = checkinLog();
+const SESSION = sessionLog();
+
+/**
+ * The eat tab: which ladder, then that ladder, then both logs' list.
+ *
+ * The switch is two caps, each in its own log's hue lit or not — the rule
+ * the bar follows, one level down — and the whole screen wears the hue of
+ * the one that is up, so turning it is visibly turning the screen.
+ */
+function eatScreen() {
+  const log = intake === "drinks" ? DRINKS : MEALS;
+  return [
+    el("div.intake", { role: "group", "aria-label": "meal or drink" },
+      ...Object.entries(INTAKE).map(([id, one]) =>
+        el("button.intake-cap", {
+          "data-log": id,
+          class: intake === id ? "on" : "",
+          "aria-pressed": intake === id,
+          text: one.label,
+          onclick: () => {
+            if (intake === id) return;
+            intake = id;
+            offered = false;
+            count(`eat.${id}`);
+            draw();
+          },
+        })),
+    ),
+    offered && intake === "drinks"
+      ? el("p.offer", { text: "meal logged — anything to drink with it?" })
+      : null,
+    ...log.render(),
+  ];
+}
 
 /**
  * The morning check-in.
@@ -1556,7 +1674,14 @@ function checkinLog() {
         body.woke = woke;
         setDraft({});
         resetLadder("checkin");
-        send("/api/readiness", body, "check-in");
+        // Done for the day, so off the bar — and off the screen with it,
+        // onto the tab the rest of the day is spent on. The date in the
+        // header is the way back for a correction, and the toast says so
+        // once rather than a caption saying it every morning.
+        const first = !checkedIn();
+        if (first) tab = "eat";
+        const entry = send("/api/readiness", body, "check-in");
+        if (entry && first) toast("check-in saved — tap the date to change it");
       };
 
       const status = !ready
@@ -2739,7 +2864,7 @@ function agendaScreen() {
   ];
 }
 
-/** A heading and its rows. The day root's only layout. */
+/** A heading and its rows. The day tabs' only layout. */
 function section(name, rows, kind = "") {
   return el("div.q", null,
     el("div.q-head", null, el("div.q-name", { class: kind, text: name })),
@@ -2752,86 +2877,108 @@ const notRead = (what) =>
   el("p.empty.cold", { text: `${what} has not been read from the laptop yet` });
 
 /**
- * The day's tabs. Two of the three.
+ * The bar: every tab in the app, in the order it draws them.
  *
- * **`owed` is parked, not deleted.** `owedScreen` above is whole, its rules
+ * One bar since 2026-09-23. There were two roots — the five logs and the day's
+ * two lists — behind an entrance screen with a card for each, and every open
+ * of the app went title screen, entrance, log, then the tab you wanted: the
+ * check-in, every time, whatever the hour. Two things made one bar possible:
+ * meal and drink are one tab (`eat`, see `INTAKE`), and the check-in leaves
+ * the bar once it is done (`shown`). That leaves five caps, which is what the
+ * log root's bar already held, and one fewer tap on every open.
+ *
+ * The order is the order of a day — check in, eat, the bathroom, train — then
+ * the day's two lists after a rule, because they are a different kind of
+ * screen: one you read and tick rather than one you file into. The bar is read
+ * as well as pressed; a map whose order means nothing is one you re-read every
+ * time.
+ *
+ * What the entrance said moved rather than went: the queue count was already
+ * on the send button, and what the day is waiting on is in the header under
+ * the date — see `drawHeader`.
+ *
+ * **`owed` is parked, not deleted.** `owedScreen` is whole, its rules
  * (`stillTrue().owed`, the mark rather than a box, the read-only footnote) are
- * intact, its hue and its `.owed` styles are still in `style.css`, and putting
- * the row back below is the entire cost of reinstating it. It came off the bar
- * because what it reports is already on the entrance in one line — `3 of 5
- * done · 2 due · 6 open` — and a whole screen that restates a line you have
- * just walked past is a tab you open once to check it still works.
- *
- * So this is the note for whoever comes back to it: the screen exists, and if
- * the answer is that it should stay gone, the things to remove are
- * `owedScreen`, the `--hue-owed` triple, the `.owed` rules and the `owed` cap
- * in the entrance's hue rail.
+ * intact, its hue and its `.owed` styles are still in `style.css`, and a row
+ * below with `day: true` is the entire cost of reinstating it. It came off the
+ * bar because what it reports is a line — `3/5 done · 2 due` — now in the
+ * header, and a whole screen that restates a line is a tab you open once to
+ * check it still works.
  */
-const DAYS = [
-  { id: "todo", label: "todo", render: todoScreen },
-  { id: "agenda", label: "agenda", render: agendaScreen },
+const TABS = [
+  {
+    id: "checkin",
+    label: "check-in",
+    render: () => CHECKIN.render(),
+    // Kept while it is the tab on screen, so reopening it from the date to
+    // fix an answer puts a lit cap under it; leaving it is what lets it go.
+    shown: () => !checkedIn() || tab === "checkin",
+  },
+  { id: "eat", label: "eat", render: eatScreen },
+  { id: "bathroom", label: "visit", render: () => BATHROOM.render() },
+  { id: "session", label: "session", render: () => SESSION.render() },
+  { id: "todo", label: "todo", render: todoScreen, day: true },
+  { id: "agenda", label: "agenda", render: agendaScreen, day: true },
 ];
 
-// --- the entrance -------------------------------------------------------------
+const onDayTab = (id) => Boolean(TABS.find((one) => one.id === id)?.day);
 
 /**
- * The screen the app opens on, and the only place the two halves are visible at
- * once.
+ * Open a tab, from the bar or from the header.
  *
- * Two cards, and each one says what it is waiting on rather than merely naming
- * itself: a chooser whose options are two words is a chooser you read once and
- * then tap from memory, and this one is passed through several times a day. The
- * numbers are the reason it earns the tap it costs.
- *
- * Drawn entirely from what is already on the phone. Nothing here waits on the
- * laptop, and a card whose number cannot be known says so instead of showing a
- * zero — "0 of 5 done" and "nobody has asked" are different mornings.
+ * Counted, for `tally.js`. And the day's panel is fetched on the way *into*
+ * the day's two tabs rather than on every tap between them, which is what the
+ * old day root's card did: it is the heavy request, and moving from the todo
+ * list to the agenda is not a reason to ask gcalcli again.
  */
-function homeScreen() {
-  const waiting = pending().length;
+function openTab(id) {
+  if (id === tab) return;
+  const from = tab;
+  tab = id;
+  count(id);
+  if (onDayTab(id) && !onDayTab(from)) loadDay();
+  draw();
+}
+
+/**
+ * What the day is waiting on, as one line under the date.
+ *
+ * The entrance's day card, moved: the required tasks done of the day's five,
+ * the todos due today, and the check-in's tick once it is in — which is also
+ * what says the date is a button. Nothing here waits on the laptop; a part
+ * that cannot be known is left out rather than printed as a zero.
+ */
+function dayState() {
   const stale = dayStale();
-  const list = day && !stale ? dayTasks(day.state) : null;
-  const core = list ? required(list) : null;
-  const open = day ? todoRows().filter((i) => !i.done).length : null;
-  const dueToday = day
+  const core = day && !stale ? required(dayTasks(day.state)) : null;
+  const due = day
     ? todoRows().filter((i) => !i.done && i.due_date && i.due_date <= today()).length
-    : null;
-
-  // `quiet` when there is nothing outstanding, because the state line is gold
-  // and on this screen gold means something is owed. "Nothing waiting" in the
-  // colour that means "deal with this" is the one sentence here that must not
-  // be shouted.
-  const card = (id, name, what, hues, state, quiet) =>
-    el("button.root-card", {
-      "data-card": id,
-      onclick: () => { root = id; draw(); if (id === "day") loadDay(); },
-    },
-      el("span.rc-name", { text: name }),
-      el("span.rc-hues", { "aria-hidden": true },
-        ...hues.map((h) => el("i", { "data-log": h }))),
-      el("span.rc-what", { text: what }),
-      el("span.rc-state", { class: quiet ? "quiet" : "", text: state }),
-    );
-
-  const dayState = !day
-    ? "not read yet"
-    : [
-        core ? `${core.filter((t) => t.done).length} of ${core.length} done` : "yesterday's copy",
-        dueToday ? `${dueToday} due` : null,
-        open ? `${open} open` : null,
-      ].filter(Boolean).join(" · ");
-
+    : 0;
   return [
-    card("log", "log", "check-in · meal · drink · visit · session",
-      ["checkin", "meals", "drinks", "bathroom", "session"],
-      waiting ? `${waiting} waiting to send` : "nothing waiting", !waiting),
-    card("day", "day", "todo · agenda",
-      ["todo", "agenda"],
-      dayState,
-      // Quiet only when the day is both read and finished. "Not read yet" is
-      // itself a thing to do something about.
-      Boolean(core) && core.every((t) => t.done) && !open),
-  ];
+    checkedIn() ? "check-in ✓" : null,
+    // No "done" after it: with the check-in's tick and a due count beside it,
+    // the word is what pushed the line past a 375px screen's edge.
+    core ? `${core.filter((t) => t.done).length}/${core.length}` : null,
+    due ? `${due} due` : null,
+  ].filter(Boolean).join(" · ");
+}
+
+/**
+ * The header's right-hand side: the date, what the day is waiting on, and the
+ * way back to the check-in.
+ *
+ * A button because the check-in has no cap once it is done, and a morning
+ * answer tapped wrong still needs a way back. The date is where the day is
+ * named, so it is where the day's own questionnaire is reopened.
+ */
+function drawHeader() {
+  const node = $("#day");
+  const state = dayState();
+  node.replaceChildren(
+    el("span.day-date", { text: dayLabel() }),
+    state ? el("span.day-state", { text: state }) : null,
+  );
+  node.onclick = () => openTab("checkin");
 }
 
 /**
@@ -2849,7 +2996,11 @@ function homeScreen() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v20";
+const BUILD = "log-v21";
+
+/** How long the title screen stays when nothing lifts it: the wordmark has
+ *  landed by 800ms on this screen and the build stamp by 500ms. */
+const SPLASH_MS = 1500;
 
 /**
  * The build, along the foot of the title screen.
@@ -2949,46 +3100,37 @@ function drawNet() {
 }
 
 /**
- * The bar, and the way out of whichever root you are in.
+ * The bar. See `TABS` for what is in it and why it is one bar.
  *
- * The `home` cap is first and is narrower than the tabs beside it, which is the
- * whole of how it says it is a different kind of control — that plus the rule
- * down its right-hand side and the fact that it wears no hue. It is in the bar
- * rather than in the header because it is a switch you make several times a day
- * and the bar is where a thumb already is; a header button on a 375px screen is
- * the far corner from the hand holding it.
+ * The first of the day's two caps carries a rule down its left-hand side,
+ * which is the whole of how the bar says the caps after it are a different
+ * kind of screen.
  */
 function drawTabs() {
   const shell = $("#shell");
   const bar = $("#tabs");
-  const [tabs, current] = root === "day" ? [DAYS, dayTab] : [LOGS, tab];
   // The hue for the whole screen, set once at the top. Every rule that uses it
   // reads `--tab` off this element -- see the foot of `style.css` for why the
   // attribute is here rather than on the bar itself: most of the colour is
   // carried by the answer caps, which are three elements away from the tab
-  // that decides it.
-  shell.dataset.tab = current;
+  // that decides it. The eat tab wears the hue of whichever ladder is up.
+  shell.dataset.tab = tab === "eat" ? intake : tab;
+  const shown = TABS.filter((one) => !one.shown || one.shown());
   bar.replaceChildren(
-    el("button.tab.home", {
-      text: "home",
-      "aria-label": "back to the home screen",
-      onclick: () => { root = "home"; draw(); },
-    }),
-    ...tabs.map((one) =>
+    ...shown.map((one, i) =>
       el("button.tab", {
-        class: one.id === current ? "on" : "",
+        class: [
+          one.id === tab ? "on" : "",
+          one.day && !shown[i - 1]?.day ? "day-first" : "",
+        ].join(" "),
         // Which hue this *cap* wears, which is not the same question as which
         // hue the screen wears. Every cap is coloured, lit or not -- see the
         // foot of `style.css` -- so each one has to name its own log rather
         // than reading the one `#shell` has selected.
         "data-log": one.id,
-        "aria-current": one.id === current,
+        "aria-current": one.id === tab,
         text: one.label,
-        onclick: () => {
-          if (root === "day") dayTab = one.id;
-          else tab = one.id;
-          draw();
-        },
+        onclick: () => openTab(one.id),
       })),
   );
 }
@@ -3048,37 +3190,21 @@ function dayHeardLine() {
 }
 
 function draw() {
-  // Before anything can return: a draw of home or the day screen has to count
-  // as "not the ladder", or coming back to a log would replay its motions.
+  // Before anything can return: a draw of the day's tabs has to count as "not
+  // the ladder", or coming back to a log would replay its motions.
   ladderWas = ladderNow;
   ladderNow = null;
-  const shell = $("#shell");
-  shell.dataset.root = root;
-  // The header, which belongs to no root. It used to be written by `drawHour`,
-  // which is now only called on the log — so the entrance and the day screen
-  // opened under a bare dash where the date goes.
-  $("#day").textContent = dayLabel();
+  const screen = TABS.find((one) => one.id === tab) ?? TABS[1];
+  // `root` survives as an attribute only: the stylesheet hides the hour on
+  // the day's tabs, where there is nothing to file against it.
+  $("#shell").dataset.root = screen.day ? "day" : "log";
+  drawHeader();
   drawNet();
+  drawTabs();
   const view = $("#view");
   view.replaceChildren();
 
-  // The entrance. No tabs to draw, no plate under it, and no hour — the hour is
-  // a property of a log and there is no log open.
-  if (root === "home") {
-    shell.dataset.tab = "";
-    $("#tabs").replaceChildren();
-    view.classList.remove("panel");
-    view.classList.add("home");
-    for (const node of homeScreen()) if (node) view.append(node);
-    return;
-  }
-
-  view.classList.remove("home");
-  view.classList.add("panel");
-  drawTabs();
-
-  if (root === "day") {
-    const screen = DAYS.find((d) => d.id === dayTab) ?? DAYS[0];
+  if (screen.day) {
     for (const node of [screen.render()].flat()) if (node) view.append(node);
     const line = dayHeardLine();
     if (line) view.append(line);
@@ -3086,10 +3212,9 @@ function draw() {
   }
 
   drawHour();
-  const log = LOGS.find((l) => l.id === tab) ?? LOGS[0];
   const strip = hourStrip();
   if (strip) view.append(strip);
-  for (const node of [log.render()].flat()) if (node) view.append(node);
+  for (const node of [screen.render()].flat()) if (node) view.append(node);
   view.append(heardLine());
 }
 
@@ -3212,6 +3337,15 @@ document.addEventListener("visibilitychange", () => {
     dayHeard = null;
     forgetDay();
   }
+  // The first look at the app on a new day is the morning's, and the morning
+  // starts with the check-in if it is still owed — the same rule a cold open
+  // follows, for the phone that was only ever put down overnight.
+  if (openedOn !== today()) {
+    openedOn = today();
+    if (!checkedIn()) tab = "checkin";
+  }
+  count("open");
+  count(tab);
   draw();
 });
 
@@ -3252,12 +3386,22 @@ if ("serviceWorker" in navigator) {
   toast("no offline copy — open this over https to install it");
 }
 
-// The title screen goes up first and comes down on a tap, exactly as it does
-// on the dashboard — `initSplash` builds the starfield, binds the dismissal and
-// raises it. Everything below carries on behind it: the shell is hidden rather
-// than absent, so the first log is already drawn when the curtain lifts.
-initSplash();
+// The title screen goes up first — `initSplash` builds the starfield, binds the
+// dismissal and raises it. Everything below carries on behind it: the shell is
+// hidden rather than absent, so the first log is already drawn when the
+// curtain lifts.
+//
+// Run the phone's way rather than the dashboard's, since 2026-09-23 when he
+// said it "sometimes feels like it takes forever": a tap lifts it from the
+// first frame, it lifts by itself after `SPLASH_MS` if nothing does, and it
+// is never raised again after boot. See `initSplash` for why each of the
+// dashboard's three answers was wrong here. Its opening animation is also played
+// faster on this screen — see `#splash` in `style.css` — so the build stamp
+// along the foot has arrived well before the curtain goes.
+initSplash({ returns: false, armMs: 0, liftMs: SPLASH_MS });
 paintBuild();
+count("open");
+count(tab);
 
 // Drawn from the queue and the remembered panel, immediately, with no network
 // in the way. That is the cold-start contract: whatever the laptop knows *now*
@@ -3268,9 +3412,9 @@ draw();
 
 // The title screen, with the laptop off, out of the same remembered panel. The
 // call after `load` below is the live one and runs a second time; this is the
-// copy, and the duplicate is worth it because the splash is the screen that is
-// up for the whole four seconds a failing `load` takes. FILE 01 · DAY 172
-// either way. `paintBuild` goes back after it for the reason spelled out below.
+// copy, and it is now the one usually seen — the title screen is up for
+// `SPLASH_MS`, and even a live `load` rarely lands inside that. FILE 01 · DAY
+// 172 either way. `paintBuild` goes back after it for the reason spelled out below.
 if (panel?.plan) {
   paintSplash(panel.plan);
   paintBuild();
@@ -3280,8 +3424,16 @@ if (panel?.plan) {
 // worth doing unasked in a way that sending is not: `GET /api/health` is
 // idempotent, it is what fills in the rows logged from the laptop, and it is
 // bounded by `REACH_MS`, so the cost of it failing is four seconds of nothing
-// happening in the background while the title screen is still up.
+// happening in the background.
+const landedOn = tab;
 load().then((reached) => {
+  // Opened on the check-in because this phone did not know it was done — a
+  // cleared phone, or one that has not heard the laptop since it was sent —
+  // and the laptop has just said it is. Moved on only if no answer has been
+  // started, since that is someone correcting the morning.
+  if (tab === "checkin" && landedOn === "checkin" && checkedIn() && !Object.keys(draft()).length) {
+    tab = "eat";
+  }
   draw();
   // FILE 01 · DAY 172 across the top of the bar. `HealthPanel` already
   // carries the plan, so the phone's title screen says the same thing the

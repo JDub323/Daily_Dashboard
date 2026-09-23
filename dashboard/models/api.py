@@ -647,6 +647,33 @@ class LogDeleteRequest(DateBody):
     entry_id: int
 
 
+UsageScreen = Annotated[str, Field(pattern=r"^[a-z][a-z._-]{0,31}$")]
+"""A phone screen's name as `web/m/tally.js` counts it: `eat`, `eat.drinks`."""
+
+
+class UsageRequest(Base):
+    """The phone's screen-open counts, as many days as it still holds.
+
+    Counts rather than events, so a resend is harmless -- `usage.merge` keeps
+    the larger of the two. The bounds are the fat-finger guard: the phone keeps
+    four weeks, and there are about ten screens."""
+
+    days: dict[dt.date, dict[UsageScreen, Annotated[int, Field(ge=0, le=100_000)]]] = Field(
+        max_length=62
+    )
+
+    @model_validator(mode="after")
+    def _few_screens(self) -> UsageRequest:
+        if any(len(screens) > 40 for screens in self.days.values()):
+            raise ValueError("more screens in one day than the phone has")
+        return self
+
+
+class UsageReply(Base):
+    usage_days: int
+    """How many days the laptop now holds counts for."""
+
+
 class GarminSyncRequest(DateBody):
     """A sync the user asked for, as against the one that runs itself.
 

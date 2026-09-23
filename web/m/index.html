@@ -57,7 +57,9 @@
        wordmark through the same `#topbar h1` rule the desktop uses. -->
   <header id="topbar">
     <h1>sharpness</h1>
-    <div class="sub" id="day">—</div>
+    <!-- A button: the check-in leaves the bar once it is done, and this is
+         the way back to it. `drawHeader` fills it. -->
+    <button class="sub" id="day" aria-label="today — opens the check-in">—</button>
   </header>
 
   <!-- The hour every entry is filed against, and the only control here that is
