@@ -24,6 +24,7 @@ from typing import Annotated
 from pydantic import Field, computed_field, model_validator
 
 from .common import (
+    FEEL_NOTE_MAX,
     MEAL_LABEL_MAX,
     SESSION_FOCUS,
     Base,
@@ -35,6 +36,7 @@ from .common import (
     EntrySource,
     HealthMetric,
     InputState,
+    Low,
     MathOutcome,
     MealFlag,
     MealSize,
@@ -43,9 +45,12 @@ from .common import (
     Score,
     SessionKind,
     Stool,
+    Symptom,
+    Tired,
     UrineColor,
     Url,
     Volume,
+    canonical_feel,
     canonical_flags,
     canonical_tags,
     span_hours,
@@ -56,6 +61,7 @@ from .domain import (
     BathroomLog,
     DayCompletion,
     DrinkLog,
+    FeelLog,
     Investigation,
     InvestigationDay,
     MathProblem,
@@ -645,6 +651,82 @@ class LogDeleteRequest(DateBody):
     browser can supply."""
 
     entry_id: int
+
+
+Grade = Annotated[int, Field(ge=1, le=3)]
+"""A symptom's severity: 1 mild, 2 moderate, 3 severe. Jackson's 0 is the
+symptom not being in the body at all."""
+
+
+class FeelRequest(DateBody):
+    """How you feel right now. See migration 39 and `FeelLog`."""
+
+    hour: int = Field(ge=0, le=23)
+    minute: int | None = Field(default=None, ge=0, le=59)
+    energy: int = Field(ge=1, le=5)
+    """1 empty, 5 charged."""
+    mood: int = Field(ge=1, le=5)
+    """1 awful, 5 great."""
+
+    tired: list[Tired] = Field(default_factory=list, max_length=len(Tired))
+    low: list[Low] = Field(default_factory=list, max_length=len(Low))
+    symptoms: dict[Symptom, Grade] = Field(default_factory=dict)
+
+    note: str | None = Field(default=None, max_length=FEEL_NOTE_MAX)
+    """The `other` box. Blank is the same as absent."""
+
+    prompted: bool = False
+
+    @model_validator(mode="after")
+    def _kinds_follow_their_scale(self) -> FeelRequest:
+        """A kind of tired needs a tired answer, and a kind of low a low one.
+
+        Refused rather than dropped, which is the arrangement `SessionRequest`
+        has with `focus`: the phone prunes these as the scale moves (`when` on
+        the step, and `prunedDraft`), so a body that disagrees is a client bug,
+        and a bug the server quietly repairs is one nobody ever finds.
+        """
+        if self.tired and self.energy > 2:
+            raise ValueError("a kind of tired needs energy at 2 or under")
+        if self.low and self.mood > 2:
+            raise ValueError("a kind of low needs mood at 2 or under")
+        self.tired = canonical_feel(self.tired, Tired)
+        self.low = canonical_feel(self.low, Low)
+        self.symptoms = {s: self.symptoms[s] for s in Symptom if s in self.symptoms}
+        self.note = self.note or None
+        return self
+
+
+class PushKeys(Base):
+    p256dh: str = Field(min_length=10, max_length=256)
+    auth: str = Field(min_length=4, max_length=64)
+
+
+class PushSubscribeRequest(Base):
+    """`PushSubscription.toJSON()`, exactly as a browser hands it over, so the
+    phone posts what it was given and nothing it had to assemble."""
+
+    endpoint: str = Field(min_length=10, max_length=2048, pattern=r"^https://")
+    expirationTime: int | None = None
+    keys: PushKeys
+
+
+class PushTestRequest(Base):
+    """A ping now, to see that they arrive. Carries nothing."""
+
+
+class PushStatus(Base):
+    """What the laptop can do about pings, said to the phone.
+
+    `public_key` is the application server key a subscription is made against,
+    or None when pings cannot be sent at all -- `reason` says why, because the
+    fix (install `pywebpush`, switch `[feel].pings` on) is on the laptop."""
+
+    public_key: str | None = None
+    reason: str | None = None
+    subscriptions: int = 0
+    sent: int = 0
+    """For a test ping: how many phones it reached."""
 
 
 UsageScreen = Annotated[str, Field(pattern=r"^[a-z][a-z._-]{0,31}$")]
@@ -1692,6 +1774,81 @@ class MealName(Base):
     """When it was last eaten."""
 
 
+class FeelPing(Base):
+    """One of the day's pings, and what became of it.
+
+    `state` is read off the feel log rather than stored: `answered` when a feel
+    was logged inside the window (before the ping or after it), `sent` while it
+    is out and waiting, `missed` once the window closed with nothing in it --
+    which is never the same as fine -- and `waiting` before its minute.
+    """
+
+    slot: int
+    name: str
+    start: ClockTime
+    end: ClockTime
+    state: str
+    sent: ClockTime | None = None
+
+
+class FeelSignal(Base):
+    """One thing measured in the hours before a feeling, against your normal.
+
+    `dev` is how far from normal, on one scale for every signal: 0 is normal, 1
+    is worth a look, 2 and up is far. What one unit means is each signal's own
+    business and lives in `dashboard/feel.py`; what matters is that the list can
+    be sorted by it. `tone` is how it is drawn: `hi`, `mid`, `lo`, or `check` --
+    gold, the app's word for "this may be the log and not you".
+    """
+
+    key: str
+    label: str
+    value: str
+    normal: str | None = None
+    tag: str
+    dev: float
+    tone: str
+    note: str | None = None
+
+
+class FeelCount(Base):
+    """Once a word has enough flags: how often one signal was off before it,
+    against how often it was off before every other feel."""
+
+    key: str
+    flagged: int
+    of: int
+    otherwise: int
+    of_other: int
+
+
+class FeelLookback(Base):
+    """What came before the day's latest flagged feel."""
+
+    entry: FeelLog
+    signals: list[FeelSignal] = Field(default_factory=list)
+    suspects: dict[str, list[str]] = Field(default_factory=dict)
+    """For each word on the entry, which signals are its suspects, by key.
+    `other` has none chosen ahead of time and is ranked on everything."""
+    flags: dict[str, int] = Field(default_factory=dict)
+    """How many times each of the entry's words has been flagged, all told."""
+    counts: dict[str, list[FeelCount]] = Field(default_factory=dict)
+    """Only for words with enough flags behind them -- see `feel.MIN_FLAGS`."""
+
+
+class FeelPanel(Base):
+    """Everything the feel log adds to the health panel, beside its rows."""
+
+    pings: list[FeelPing] = Field(default_factory=list)
+    """Empty when `[feel].pings` is off -- which also takes the ping tasks off
+    the day's list, since a point you cannot be asked for is not on offer."""
+    flag: str | None = None
+    """The flag line. None is "everything looks normal"."""
+    landing: str | None = None
+    """How the week's load is landing, in one line under the load zone."""
+    lookback: FeelLookback | None = None
+
+
 class HealthPanel(Base):
     """The health tab's whole payload.
 
@@ -1712,6 +1869,12 @@ class HealthPanel(Base):
     and stay there -- these three tables produce four to sixteen rows a day,
     and a month of them crossing the wire on every boot to redraw one list
     would be the largest thing in the payload by some margin."""
+
+    feel_today: list[FeelLog] = Field(default_factory=list)
+    """Today's feel rows, for the phone's list -- the same shape as the three
+    above it, so the phone draws it the same way."""
+
+    feel: FeelPanel = Field(default_factory=FeelPanel)
 
     meal_menu: list[MealName] = Field(default_factory=list)
     """The meal log's names -- the menu the phone draws and the vocabulary its

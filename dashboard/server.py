@@ -50,6 +50,7 @@ from . import (
     calclass,
     content,
     feeds,
+    feel,
     garmin,
     interests,
     investigate,
@@ -150,6 +151,10 @@ async def lifespan(app: FastAPI):
         threading.Thread(
             target=_warm_calendar_model, args=(app,), name="calendar-fit", daemon=True
         ).start()
+    # The feel pings. The one thread here that runs on the laptop's clock rather
+    # than on a request -- see the head of `dashboard/feel.py` for why that is
+    # the one place the server may ask what time it is.
+    pings = feel.start(cfg, app.state.db) if cfg.feel.pings else None
     log.info("dashboard ready on http://%s:%s", cfg.server.host, cfg.server.port)
     if cfg.portfolio.enabled:
         # Logged because the failure it prevents is silent and confusing: at
@@ -160,6 +165,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if pings is not None:
+            pings.set()
         app.state.db.close()
 
 
@@ -2300,6 +2307,62 @@ def _register(app: FastAPI) -> None:
         if not repo.delete_drink(body.entry_id):
             raise LookupError(f"no drink {body.entry_id}")
         return state.health_panel(cfg, repo, body.date)
+
+    @app.post("/api/feel")
+    def feel_add(cfg: Cfg, repo: Repo, body: api.FeelRequest) -> api.HealthPanel:
+        """How you feel. The kinds are already held to their scales by the
+        request model; see `FeelRequest`."""
+        repo.add_feel(
+            body.date,
+            body.hour,
+            body.energy,
+            body.mood,
+            minute=body.minute,
+            tired=body.tired,
+            low=body.low,
+            symptoms=body.symptoms,
+            note=body.note,
+            prompted=body.prompted,
+        )
+        return state.health_panel(cfg, repo, body.date)
+
+    @app.post("/api/feel/delete")
+    def feel_delete(cfg: Cfg, repo: Repo, body: api.LogDeleteRequest) -> api.HealthPanel:
+        if not repo.delete_feel(body.entry_id):
+            raise LookupError(f"no feel {body.entry_id}")
+        return state.health_panel(cfg, repo, body.date)
+
+    @app.get("/api/push/key")
+    def push_key(cfg: Cfg, repo: Repo) -> api.PushStatus:
+        """What a phone subscribes against, or why it cannot. Makes the
+        signing key on first ask."""
+        return feel.status(cfg, repo)
+
+    @app.post("/api/push/subscribe")
+    def push_subscribe(
+        cfg: Cfg, repo: Repo, body: api.PushSubscribeRequest, request: Request, date: Today
+    ) -> api.PushStatus:
+        """A phone saying yes to pings. Direct rather than queued on the phone:
+        it is set up once, at the laptop's elbow, and it has to say at the time
+        whether it worked.
+
+        The page's own origin is kept as the contact claim the push service asks
+        for -- see `feel.send_all`."""
+        repo.add_push_subscription(
+            body.endpoint, body.keys.p256dh, body.keys.auth, request.headers.get("origin"), date
+        )
+        return feel.status(cfg, repo)
+
+    @app.post("/api/push/test")
+    def push_test(cfg: Cfg, repo: Repo, body: api.PushTestRequest) -> api.PushStatus:
+        """A ping now, to see that one arrives."""
+        reached = feel.send_all(cfg, repo, {
+            "title": "pings are on",
+            "body": "this is what one looks like — tap it to open the feel log",
+            "tag": "feel-test",
+            "url": "./?ping=test",
+        })
+        return feel.status(cfg, repo).model_copy(update={"sent": reached})
 
     @app.post("/api/garmin/sync")
     def garmin_sync(cfg: Cfg, repo: Repo, body: api.GarminSyncRequest) -> api.HealthPanel:

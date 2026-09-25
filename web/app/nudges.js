@@ -125,6 +125,22 @@ const RULES = [
     every: 2,
     check: ({ tasks }) => (isDone(tasks, "checkin") ? null : "the morning check-in is not done"),
   },
+  {
+    // The feel pings, at the desk. The laptop pushed one to the phone at a
+    // minute it drew this morning; if you are here rather than there, this is
+    // the same question, and it settles the moment a feel lands — logged on the
+    // phone and brought over by the pulse. No hour of its own: whether a ping
+    // is out is the server's to say (`FeelPing.state`), and it only ever says
+    // so inside a window.
+    id: "feel-ping",
+    panel: "health",
+    after: 0,
+    every: 1,
+    check: () => {
+      const out = (store.state.health?.feel?.pings ?? []).find((ping) => ping.state === "sent");
+      return out ? `how do you feel? — the ${out.name} ping is waiting on the phone` : null;
+    },
+  },
   // The three meals, each named and each on its own clock.
   //
   // One rule counting "meals so far against meals expected by now" was the

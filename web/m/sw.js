@@ -34,7 +34,7 @@
 // classic worker cannot import a module — and `shell.test.js` fails when the
 // two disagree.
 
-const VERSION = "log-v21";
+const VERSION = "log-v22";
 
 /** How long a *cold* request gets before the shell falls back to itself.
  *  Only ever spent on a file that is not in the cache, which after the first
@@ -188,7 +188,10 @@ self.addEventListener("fetch", (event) => {
 
   event.respondWith(
     (async () => {
-      const hit = await caches.match(request);
+      // A navigation matches the shell whatever its query says: the only
+      // query one carries is a ping's (`?ping=`, see the handlers below), and
+      // the shell it wants is the same shell.
+      const hit = await caches.match(request, { ignoreSearch: request.mode === "navigate" });
       if (hit) {
         // The refresh has to outlive the response it is not blocking. Without
         // this the worker is eligible for termination the moment the cached
@@ -225,4 +228,44 @@ self.addEventListener("fetch", (event) => {
       }
     })(),
   );
+});
+
+// --- the feel pings ------------------------------------------------------------
+//
+// Twice a day the laptop pushes "how do you feel?" here (see `dashboard/feel.py`).
+// A push must always show something — a browser that receives one and draws
+// nothing takes the subscription away — so a body that will not parse is still
+// a notification, with the words it would have had.
+
+self.addEventListener("push", (event) => {
+  let body = {};
+  try {
+    body = event.data ? event.data.json() : {};
+  } catch { /* shown with the defaults below */ }
+  event.waitUntil(self.registration.showNotification(body.title ?? "how do you feel?", {
+    body: body.body ?? "energy and mood, two taps",
+    // One at a time per ping: a late resend replaces the first rather than
+    // stacking beside it.
+    tag: body.tag ?? "feel",
+    icon: "icon.svg",
+    data: { url: body.url ?? "./?ping=" },
+  }));
+});
+
+// Tapping it opens the app on the feel tab. An app already open is brought
+// forward and told which ping — opening a second window would be a second copy
+// of the queue — and only when none is open is one opened at the ping's address.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = new URL(event.notification.data?.url ?? "./", self.registration.scope);
+  const ping = url.searchParams.get("ping") ?? "";
+  event.waitUntil((async () => {
+    const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of open) {
+      if (!("focus" in client)) continue;
+      client.postMessage({ ping });
+      return client.focus();
+    }
+    return self.clients.openWindow(url.href);
+  })());
 });

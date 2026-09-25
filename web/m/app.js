@@ -53,6 +53,7 @@
 // HTTP client along with them.
 import {
   applicableSteps, BATHROOM_STEPS, CHECKIN_ITEMS, drinkNameLabel, DRINK_STEPS,
+  FEEL_NOTE_MAX, FEEL_STEPS, feelWords, SEVERITY,
   focusLabel, focusLevels, forcedPath, likelyMeals, MEAL_LABEL_MAX, MEAL_STEPS, mealFills,
   mealItem, mealMatches, mealName, mealTree, missingSteps, newMealSlug, openBlocks, parseAmount, prunedDraft, prunedTree, QUALITY_ANCHOR, RPE_ANCHOR,
   sameMeal, sessionFocus, SESSION_TREE, sessionKind, stepOptions, toShown, toStored,
@@ -298,6 +299,29 @@ function checkedIn() {
 }
 
 /**
+ * The ping this open is answering, if it came from one: `{ at, ping }`, where
+ * `ping` is `date.slot` off the notification's link (see `feel.message`).
+ *
+ * Read once, off the address the notification opened, and the address is then
+ * put back — a reload must not answer the same ping twice. A ping that arrives
+ * while the app is already open comes in as a message from the service worker
+ * instead (see the listener at the foot). Either way the next feel logged is
+ * marked `prompted`, which is the difference between the baseline and the
+ * event, and it lapses after `PING_FRESH_MS`: a feel logged an afternoon later
+ * was not an answer to it.
+ */
+const PING_FRESH_MS = 2 * 3600_000;
+let pinged = (() => {
+  const ping = new URLSearchParams(location.search).get("ping");
+  if (ping == null) return null;
+  history.replaceState(null, "", location.pathname);
+  // The test ping opens the tab and answers nothing.
+  return ping.includes(".") ? { at: Date.now(), ping } : { at: 0, ping };
+})();
+
+const answeringPing = () => Boolean(pinged && Date.now() - pinged.at < PING_FRESH_MS);
+
+/**
  * Which tab is open. One bar for the whole app since 2026-09-23: the log and
  * the day used to be two roots behind an entrance screen, and every open cost
  * a tap on the entrance before the tap on a log. With meal and drink folded
@@ -305,9 +329,10 @@ function checkedIn() {
  * see `TABS`.
  *
  * Opens on the check-in until it is done, and on `eat` after, which is where
- * well over half of a day's taps go.
+ * well over half of a day's taps go — unless a ping opened it, in which case it
+ * opens on the question the ping asked.
  */
-let tab = checkedIn() ? "eat" : "checkin";
+let tab = pinged ? "feel" : checkedIn() ? "eat" : "checkin";
 
 /** Which of `eat`'s two ladders is up. */
 let intake = "meals";
@@ -978,14 +1003,22 @@ function stepRow(step, draftValues, answer) {
     answer(step.name, options.map(([, v]) => v).filter((v) => next.has(v)));
   };
 
-  const caps = el(optsClass(options.map(([, , label]) => label)), null,
-    ...options.map(([, value, label]) =>
-      el("button.opt", {
+  // A fourth element is a gloss: a second, smaller line on the cap. Only the
+  // feel log's kinds carry one — "flat" and "drained" are words people use for
+  // each other, and the difference is the whole reason for asking — and a row
+  // of them is two across, since a gloss needs the width a third cannot give.
+  const glossed = options.some((option) => option[3]);
+  const caps = el(glossed ? "div.opts.opts-2" : optsClass(options.map(([, , label]) => label)), null,
+    ...options.map(([, value, label, gloss]) =>
+      el(gloss ? "button.opt.duo" : "button.opt", {
         class: isOn(value) ? "on" : "",
         "aria-pressed": isOn(value),
-        text: label,
+        text: gloss ? null : label,
         onclick: () => press(value),
-      }),
+      },
+        gloss ? el("span", { text: label }) : null,
+        gloss ? el("small", { text: gloss }) : null,
+      ),
     ),
   );
 
@@ -993,7 +1026,7 @@ function stepRow(step, draftValues, answer) {
   // is not like this is the meal's name, and `menuRow` is why.
   return el("div.q", null,
     el("div.q-head", null,
-      el("span.q-name", { text: step.name }),
+      el("span.q-name", { text: step.title ?? step.name }),
       step.hint ? el("span.q-hint", { text: step.hint }) : null,
     ),
     caps,
@@ -1249,7 +1282,7 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove, enric
       // `quality 3` while scrolling wrote a meal, and the only way to find out
       // was to notice the row appear. A wrong tap is now free, and the write is
       // a deliberate second thing.
-      const answer = (name, value) => {
+      const answer = (name, value, { quiet = false } = {}) => {
         // A meal's name answers four questions with one tap, and what it fills
         // in is what the laptop learned from the meals it was logged as.
         // Written *under* the tap rather than over it, so the fills land and
@@ -1266,12 +1299,16 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove, enric
         // while keeping the question — see `prunedDraft`, which is where both
         // rules live and why neither is written out here.
         answers = prunedDraft(steps, answers);
+        // Typing into the feel log's `other` box: held, and not drawn — a draw
+        // per keystroke would rebuild the box under the thumb and drop the
+        // keyboard after every letter, which is `nameBox`'s argument too.
+        if (quiet) return;
         // A value closes its row; a tag toggled on a multi-pick does not —
-        // that row closes on its own `done ›`. Un-picking an optional answer
-        // (a null) leaves the row open, since you are still choosing. What a
-        // name filled in closes too, the flags included: they were answered,
-        // just not by a tap on their own row.
-        if (value != null && !step?.multi) settle(id, name);
+        // that row closes on its own `done ›`, and so does a graded one. Un-
+        // picking an optional answer (a null) leaves the row open, since you
+        // are still choosing. What a name filled in closes too, the flags
+        // included: they were answered, just not by a tap on their own row.
+        if (value != null && !step?.multi && !step?.graded) settle(id, name);
         for (const key of Object.keys(filled)) settle(id, key, { pass: true });
         draw();
       };
@@ -1280,6 +1317,10 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove, enric
       const said = (step) => {
         const value = answers[step.name];
         if (step.menu) return value ? mealName(mealMenu(), value) : "unnamed";
+        if (step.words) return value == null ? "none" : step.words[value];
+        if (step.graded) {
+          return feelWords({ symptoms: value?.graded, note: value?.note?.trim() }) || "nothing";
+        }
         if (step.field) {
           const what = AMOUNTS.find(([n]) => n === value)?.[1];
           return what ? `${say(value)} · ${what}` : `${say(value)} ${step.field.unit}`;
@@ -1296,14 +1337,17 @@ function quickLog({ id, label, steps, path, describe, empty, rows, remove, enric
 
       const ladder = asked.map((step) => ({
         name: step.name,
-        label: step.menu ? "what" : step.name,
-        complete: !step.multi && answers[step.name] != null,
+        label: step.menu ? "what" : step.graded ? "off" : step.name,
+        complete: !step.multi && !step.graded && answers[step.name] != null,
         full: () => step.field ? amountRow(step, answers, answer)
           : step.menu ? menuRow(step, answers, answer, picker)
+          : step.graded ? gradedRow(step, answers, answer)
           : stepRow(step, answers, answer),
         mini: () => said(step),
         meter: meterOf(step, answers),
-        closer: step.multi ? { text: answers[step.name]?.length ? "done ›" : "none ›" } : null,
+        closer: step.multi ? { text: answers[step.name]?.length ? "done ›" : "none ›" }
+          : step.graded ? { text: gradedCount(answers[step.name]) ? "done ›" : "nothing ›" }
+          : null,
         skip: step.optional && !step.multi ? (answers[step.name] != null ? "keep ›" : "skip ›") : null,
       }));
 
@@ -1430,6 +1474,102 @@ function amountRow(step, answers, answer) {
     // read; the hint says so only here, where it is the answer to a question
     // you are already asking.
     el("div.row", null, box, el("button.go.small", { text: "set", onclick: typed })),
+  );
+}
+
+/** How many things a graded answer says: each symptom, and the note. */
+const gradedCount = (held) =>
+  Object.keys(held?.graded ?? {}).length + (held?.note?.trim() ? 1 : 0);
+
+/** Whether the feel log's `other` box is open. It stays open while it holds
+ *  words; this is only the state of an empty one, and it goes with the entry. */
+let feelOther = false;
+
+/**
+ * The feel log's symptoms: a set where every member also carries a grade.
+ *
+ * One tap is mild, a second moderate, a third severe, and a fourth takes it
+ * off — Jackson's 0–3, with 0 being the chip you never touched. The grade is
+ * drawn as three bars under the word, which is what makes a chip at 2 look
+ * different from one at 1 without reading it.
+ *
+ * Grouped by what each row would point at — sick, fuel, the body — because a
+ * row you can read as one kind of cause is a row you scan rather than read.
+ * The `other` box closes the row: whatever fit none of them, in a few words.
+ * It is typed into without a redraw, for the reason `nameBox` gives.
+ */
+function gradedRow(step, answers, answer) {
+  const held = answers[step.name] ?? { graded: {}, note: "" };
+  const graded = held.graded ?? {};
+  const note = held.note ?? "";
+  const open = feelOther || Boolean(note.trim());
+
+  const tap = (value) => {
+    const next = { ...graded };
+    const grade = (graded[value] ?? 0) + 1;
+    if (grade > 3) delete next[value];
+    else next[value] = grade;
+    answer(step.name, { graded: next, note });
+  };
+
+  const box = el("input.amount.feel-note", {
+    type: "text",
+    value: note,
+    maxlength: FEEL_NOTE_MAX,
+    placeholder: "say it in a few words",
+    autocomplete: "off",
+    autocapitalize: "none",
+    enterkeyhint: "done",
+    "aria-label": "something else",
+  });
+  box.addEventListener("input", () => {
+    answer(step.name, { graded, note: box.value }, { quiet: true });
+  });
+  box.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") box.blur();
+  });
+
+  return el("div.q", null,
+    el("div.q-head", null,
+      el("span.q-name", { text: step.title ?? step.name }),
+      step.hint ? el("span.q-hint", { text: step.hint }) : null,
+    ),
+    ...(step.groups ?? [["", stepOptions(step, answers)]]).flatMap(([group, rows]) => [
+      group ? el("div.q-group", { text: group }) : null,
+      el("div.opts", null,
+        ...rows.map(([, value, label]) => {
+          const grade = graded[value] ?? 0;
+          return el("button.opt.chip", {
+            class: grade ? "on" : "",
+            "aria-pressed": grade > 0,
+            "aria-label": grade ? `${label}, ${SEVERITY[grade]} — tap for more` : label,
+            onclick: () => tap(value),
+          },
+            el("span.chip-name", { text: label }),
+            el("span.sev-line", null,
+              el("span.sev", null, ...[1, 2, 3].map((i) => el("i", { class: i <= grade ? "lit" : "" }))),
+              grade ? el("span.sev-w", { text: SEVERITY[grade] }) : null,
+            ),
+          );
+        })),
+    ]),
+    el("div.q-group", { text: "none of these" }),
+    el("button.opt.other-cap", {
+      class: open ? "on" : "",
+      "aria-expanded": open,
+      text: "other…",
+      onclick: () => {
+        // An open box with words in it stays open: closing it would hide an
+        // answer the entry still carries.
+        if (note.trim()) return void box.focus();
+        feelOther = !feelOther;
+        draw();
+        // In the tap's own call stack, which is what iOS asks before it will
+        // raise a keyboard for a field that was not the thing touched.
+        if (feelOther) document.querySelector(".feel-note")?.focus();
+      },
+    }),
+    open ? box : null,
   );
 }
 
@@ -1569,6 +1709,186 @@ const BATHROOM = quickLog({
   describe: (e) => `${e.kind} · ${e.solidity ?? e.color} · ${e.volume}`,
   remove: { path: "/api/bathroom/delete", field: "entry_id" },
 });
+
+/**
+ * How you feel. The sixth log, and the only one the laptop comes and asks for —
+ * see `feelScreen` and `dashboard/feel.py`.
+ *
+ * A quick log like the three above it: the scales are rows of five, the kinds
+ * are multi-picks gated on the scale, and the symptoms are the one `graded`
+ * row. What `enrich` does is unfold that row's answer into the two fields the
+ * request model has for it, and say whether this entry is answering a ping.
+ */
+const FEEL = quickLog({
+  id: "feel",
+  label: "feel",
+  steps: FEEL_STEPS,
+  path: "/api/feel",
+  empty: "nothing logged yet today",
+  rows: () => rowsFor("/api/feel", panel?.feel_today, "/api/feel/delete"),
+  describe: (e) => [`energy ${e.energy}`, `mood ${e.mood}`, feelWords(e)].filter(Boolean).join(" · "),
+  remove: { path: "/api/feel/delete", field: "entry_id" },
+  enrich: (body) => {
+    const off = body.symptoms ?? {};
+    body.symptoms = off.graded ?? {};
+    const note = (off.note ?? "").trim().slice(0, FEEL_NOTE_MAX);
+    if (note) body.note = note;
+    body.prompted = answeringPing();
+  },
+  logged: () => {
+    feelOther = false;
+    pinged = null;
+  },
+});
+
+// --- the pings -------------------------------------------------------------------
+//
+// Twice a day the laptop pushes "how do you feel?" to this phone, at a minute
+// it draws each morning — see `dashboard/feel.py`. What lives here is the one
+// tap that says yes to that, and the line that says how today's pings went.
+
+/** `unknown` until looked at; then `unsupported`, `denied`, `off` or `on`. */
+let push = "unknown";
+
+/**
+ * Whether this phone is subscribed. Only an app on the home screen can be, on
+ * an iPhone: Safari in a tab has no `PushManager` at all, which is why the
+ * answer to "why is there no button" is written into the line rather than left
+ * as its absence.
+ *
+ * Raced against a timeout because `serviceWorker.ready` never settles on a
+ * page whose worker did not register — over plain http, say — and a promise
+ * that never settles is a line that never draws.
+ */
+async function readPush() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    push = "unsupported";
+    return draw();
+  }
+  if (Notification.permission === "denied") {
+    push = "denied";
+    return draw();
+  }
+  try {
+    const reg = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((_, no) => setTimeout(() => no(new Error("no worker")), REACH_MS)),
+    ]);
+    push = (await reg.pushManager.getSubscription()) ? "on" : "off";
+  } catch {
+    push = "unsupported";
+  }
+  draw();
+}
+
+/** A base64url string as the bytes `subscribe` wants. */
+const keyBytes = (text) => {
+  const padded = text.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (text.length % 4)) % 4);
+  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+};
+
+/**
+ * Say yes to pings: the permission, a subscription against the laptop's key,
+ * and the laptop told where to send them.
+ *
+ * `requestPermission` is the first thing awaited, and that is not tidiness —
+ * iOS only shows the prompt from inside the tap that asked for it, and an
+ * `await` on the network first would spend the tap. The two requests after it
+ * go straight to the laptop rather than through the queue: this is set up once,
+ * and it has to say at the time whether it worked.
+ */
+async function enablePings() {
+  let permission = "default";
+  try {
+    permission = await Notification.requestPermission();
+  } catch { /* an old WebKit took a callback; it is not this one */ }
+  if (permission !== "granted") {
+    push = permission === "denied" ? "denied" : "off";
+    toast("pings need notifications allowed for this app");
+    return draw();
+  }
+  try {
+    const status = await (await fetch("/api/push/key", { signal: AbortSignal.timeout(REACH_MS) })).json();
+    if (!status?.public_key) {
+      toast(`pings are not ready on the laptop — ${status?.reason ?? "no key"}`);
+      return draw();
+    }
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: keyBytes(status.public_key),
+    });
+    const saved = await fetch(`/api/push/subscribe?date=${today()}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(sub.toJSON()),
+      signal: AbortSignal.timeout(REACH_MS),
+    });
+    if (!saved.ok) throw new Error(String(saved.status));
+    push = "on";
+    toast("pings are on — two a day");
+  } catch {
+    toast("could not turn pings on — is the laptop awake?");
+  }
+  draw();
+}
+
+/** One ping now, to see that they arrive. */
+async function testPing() {
+  try {
+    const reply = await fetch("/api/push/test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(REACH_MS * 3),
+    });
+    const status = await reply.json();
+    toast(status?.sent ? "sent — it should arrive in a moment" : `nothing sent — ${status?.reason ?? "no phone is subscribed"}`);
+  } catch {
+    toast("the laptop is not answering");
+  }
+}
+
+/** A ping's state, as a word under its name. */
+const PING_WORDS = { answered: "✓", sent: "waiting on you", waiting: "later", missed: "missed" };
+
+/**
+ * The feel tab's head: which ping this is answering, how today's went, and the
+ * control that turns them on.
+ *
+ * The day's pings come off the panel, so they are as fresh as the last time the
+ * laptop answered — and the drawn minute is never among them: a ping is only a
+ * surprise if nobody can read when it is due.
+ */
+function pingLine() {
+  const pings = panel?.feel?.pings ?? [];
+  const slot = pinged?.ping?.split(".")[1];
+  const answering = answeringPing() && slot != null ? pings[Number(slot)]?.name : null;
+  const control = push === "off"
+    ? el("button.ping-go", { text: "turn pings on", onclick: enablePings })
+    : push === "on"
+      ? el("button.ping-go.quiet", { text: "test", onclick: testPing })
+      : null;
+  const why = push === "denied" ? "notifications are off for this app in Settings"
+    : push === "unsupported" ? "pings need the app on the home screen" : null;
+  return el("div.pings", null,
+    answering ? el("p.ping-now", { text: `answering the ${answering} ping` }) : null,
+    el("div.ping-row", null,
+      ...pings.map((ping) =>
+        el("span.ping", { class: ping.state },
+          el("span.ping-name", { text: ping.name }),
+          el("span.ping-state", { text: PING_WORDS[ping.state] ?? ping.state }),
+        )),
+      why ? el("span.ping-why", { text: why }) : null,
+      control,
+    ),
+  );
+}
+
+/** The feel tab. */
+function feelScreen() {
+  return [pingLine(), ...FEEL.render()];
+}
 
 const CHECKIN = checkinLog();
 const SESSION = sessionLog();
@@ -2917,6 +3237,9 @@ const TABS = [
   { id: "eat", label: "eat", render: eatScreen },
   { id: "bathroom", label: "visit", render: () => BATHROOM.render() },
   { id: "session", label: "session", render: () => SESSION.render() },
+  // The end of the day's order, because it is the question asked about the day
+  // so far — and the one the laptop comes and asks twice.
+  { id: "feel", label: "feel", render: feelScreen },
   { id: "todo", label: "todo", render: todoScreen, day: true },
   { id: "agenda", label: "agenda", render: agendaScreen, day: true },
 ];
@@ -2996,7 +3319,7 @@ function drawHeader() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v21";
+const BUILD = "log-v22";
 
 /** How long the title screen stays when nothing lifts it: the wordmark has
  *  landed by 800ms on this screen and the build stamp by 500ms. */
@@ -3349,6 +3672,18 @@ document.addEventListener("visibilitychange", () => {
   draw();
 });
 
+// A ping tapped while the app is already open. The service worker focuses this
+// window rather than opening a second one, and says which ping it was — the
+// same fact the address carries on a cold open (see `pinged`).
+navigator.serviceWorker?.addEventListener("message", (event) => {
+  const ping = String(event.data?.ping ?? "");
+  if (!event.data || !("ping" in event.data)) return;
+  pinged = ping.includes(".") ? { at: Date.now(), ping } : null;
+  hour = nowHour();
+  openTab("feel");
+  draw();
+});
+
 // `online` is deliberately not listened for. The browser's idea of online is
 // "this interface has a route", which on a phone means a coffee shop portal it
 // has not logged into and a tailnet whose other end is asleep both count. It
@@ -3409,6 +3744,9 @@ count(tab);
 // time it was reachable is on screen first, with everything logged since
 // sitting in the same list.
 draw();
+
+// Whether this phone takes pings. Local — it asks the browser, not the laptop.
+readPush();
 
 // The title screen, with the laptop off, out of the same remembered panel. The
 // call after `load` below is the live one and runs a second time; this is the

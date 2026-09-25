@@ -42,6 +42,7 @@
 
 import * as api from "../api.js";
 import { el, mount, svg } from "../dom.js";
+import { feelLabel } from "../logs.js";
 import { rerender } from "../panel.js";
 import { put, store } from "../store.js";
 
@@ -482,12 +483,92 @@ function hero(plan) {
  * `health.py` is where it will live, next to the baselines it will be built
  * out of. Nothing about that belongs on the client.
  *
- * The seam is the signature: this takes the derived block and returns a line
- * or null, and the day it stops being a placeholder is the day the argument
- * gets used.
+ * The seam is the signature: this takes the panel and returns a line, and it
+ * has stopped being a placeholder in one respect only. **A feeling you flagged
+ * on the phone speaks here** — the server's sentence about the day's latest one
+ * (see `feel.flag_line`). That is not the anomaly detection above; it is you
+ * saying something is off, which needs no model of normal to be worth a line.
+ * With nothing flagged the line says what it always said.
  */
-export function flagLine(_derived) {
-  return "everything looks normal.";
+export function flagLine(panel) {
+  return panel?.feel?.flag ?? "everything looks normal.";
+}
+
+// --- what came before a feeling ---------------------------------------------------
+
+/** Whether the lookback under the flag line is open, and which of the flagged
+ *  feel's words it is showing. Module-level for `zoomed`'s reason. */
+let looking = false;
+let lookWord = null;
+
+/** Where the server switches a word from a story to counts. `feel.MIN_FLAGS`. */
+const MIN_FLAGS = 8;
+
+/**
+ * What came before the day's latest flagged feel: every signal measured in the
+ * hours before it, against your own normal.
+ *
+ * One word at a time, because each word has its own suspects — thirst suspects
+ * the fluid log, malaise suspects resting heart rate — and the suspects are
+ * listed first, strongest first. Everything else is below them, dimmed rather
+ * than dropped: the thing that actually explains a feeling is sometimes the one
+ * nobody suspected, and a list that hid it could never teach you that. `other`
+ * has no suspects and is simply everything, ranked.
+ *
+ * Gold is the one colour here that is not about you: a gap in the drink log may
+ * be a drink nobody logged, and the tag says so rather than calling it thirst.
+ */
+function lookbackNode(look) {
+  const words = Object.keys(look.flags ?? {});
+  const word = words.includes(lookWord) ? lookWord : words[0];
+  const keys = look.suspects?.[word] ?? null;
+  const suspects = keys ? look.signals.filter((s) => keys.includes(s.key)) : look.signals;
+  const rest = keys ? look.signals.filter((s) => !keys.includes(s.key)) : [];
+  const counts = look.counts?.[word] ?? null;
+
+  const row = (signal, faded = false) =>
+    el("div.look-row", { class: faded ? "faded" : "" },
+      el("span.look-k", { text: signal.label }),
+      el("span.look-v", { text: signal.value }),
+      el("span.look-n.faint", { text: signal.normal ? `normal ${signal.normal}` : "" }),
+      el(`span.look-tag.${signal.tone}`, { text: signal.tag }),
+      signal.note ? el("span.look-note.faint", { text: signal.note }) : null,
+    );
+
+  return el("div.lookback", null,
+    el("div.look-words", null,
+      ...words.map((w) =>
+        el("button.look-word", {
+          class: w === word ? "on" : "",
+          "aria-pressed": String(w === word),
+          text: `${feelLabel(w)} · ${look.flags[w]}`,
+          title: `${look.flags[w]} flag${look.flags[w] === 1 ? "" : "s"} of this, all told`,
+          onclick: () => { lookWord = w; rerender("health"); },
+        })),
+    ),
+    counts?.length
+      ? el("div.look-counts", null,
+          ...counts
+            .filter((c) => c.flagged > 0)
+            .sort((a, b) => b.flagged / b.of - a.flagged / a.of)
+            .slice(0, 3)
+            .map((c) => el("div.small", {
+              text: `${look.signals.find((s) => s.key === c.key)?.label ?? c.key} was off before `
+                + `${c.flagged} of ${c.of} ${feelLabel(word)} flags — against ${c.otherwise} of `
+                + `${c.of_other} other feels`,
+            })))
+      : null,
+    el("div.look-table", null,
+      ...suspects.map((s) => row(s)),
+      rest.length ? el("div.look-rest.faint", { text: `not on the list for ${feelLabel(word)}` }) : null,
+      ...rest.map((s) => row(s, true)),
+    ),
+    counts?.length
+      ? null
+      : el("div.small.faint", {
+          text: `one flag is a story, not a finding — counts start once a word has ${MIN_FLAGS}`,
+        }),
+  );
 }
 
 // --- the rail ----------------------------------------------------------------
@@ -517,7 +598,7 @@ export function flagLine(_derived) {
  * blanking these zones would be the panel going quiet through exactly the
  * weeks it was rebuilt to fill.
  */
-function zoneNode(zone, score) {
+function zoneNode(zone, score, landing = null) {
   const open = zoomed === zone.id;
   const has = score.value != null;
   const scored = score.inputs?.filter((i) => i.value != null) ?? [];
@@ -543,6 +624,10 @@ function zoneNode(zone, score) {
     // from "not logged: meals", and before this pass both rendered as a
     // shorter strip.
     score.note ? el("div.zone-note.small.faint", { text: score.note }) : null,
+    // How the load is landing — the week's jump beside today's energy, off the
+    // feel log. Under the load bar and not inside it: feel is not an input to
+    // load, and averaging the two would make a hard week read as an easy one.
+    landing ? el("div.zone-landing.small.dim", { text: landing }) : null,
     open ? zoomNode(score) : null,
   );
 }
@@ -868,7 +953,8 @@ export default {
     const panel = store.state.health;
     const d = panel.derived;
     const lines = verdicts(d);
-    const flag = flagLine(d);
+    const flag = flagLine(panel);
+    const look = panel.feel?.lookback ?? null;
 
     mount(node,
       // The camp leads. Once there is a fight on the calendar, "how long have
@@ -877,15 +963,26 @@ export default {
       // countdown needs no history to be honest.
       hero(panel.plan),
 
-      // One line, always, and for now always the same one. See `flagLine`.
-      flag ? el("div.flag.small.dim", { text: flag }) : null,
+      // One line, always. See `flagLine`. With a flagged feel behind it the
+      // line is a button, and what it opens is what came before that feel.
+      look
+        ? el("button.flag.flag-go.small", {
+            "aria-expanded": String(looking),
+            onclick: () => { looking = !looking; rerender("health"); },
+          },
+            el("span", { text: flag }),
+            el("span.flag-more.faint", { text: looking ? "▴ what came before" : "▾ what came before" }),
+          )
+        : el("div.flag.small.dim", { text: flag }),
+      look && looking ? lookbackNode(look) : null,
 
       el("div.divider"),
 
       // The rail: four bars on the left, two trends on the right.
       el("div.rail", null,
         el("div.zones", null,
-          ...ZONES.map((zone) => zoneNode(zone, d[zone.id] ?? {})),
+          ...ZONES.map((zone) => zoneNode(zone, d[zone.id] ?? {},
+            zone.id === "load" ? panel.feel?.landing : null)),
         ),
         trends(d),
       ),

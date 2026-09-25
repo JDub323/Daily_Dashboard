@@ -483,6 +483,33 @@ focus_interval_minutes = 5
 
 token_dir = "~/.garminconnect"
 
+[feel]
+# The feel log's two pings a day. Each window draws a random minute every
+# morning -- so it cannot be braced for -- and at that minute the laptop pushes
+# a notification to every phone that said yes to them on the feel tab. Tapping
+# it opens the app on that tab. A feel logged inside a window, before its ping,
+# cancels the ping; a window that closes with nothing in it is recorded as
+# missed, never as fine. Each answered window is a bonus point on the day.
+#
+# The laptop has to be awake to send one. Asleep through the drawn minute, the
+# ping goes out late if the window is still open. Needs `pywebpush`:
+#
+#     wsl -e bash -lc "cd '<repo>' && . ./venv.sh && \$PY -m pip install -e '.[push]'"
+#
+# Without it the pings still appear on the dashboard as a nudge, and nowhere
+# else.
+pings = true
+
+[[feel.windows]]
+name = "midday"
+start = "11:30"
+end = "14:30"
+
+[[feel.windows]]
+name = "evening"
+start = "17:00"
+end = "20:00"
+
 [calendar]
 # argv, not a shell string -- see feeds.gcalcli. `wsl -e` is prepended
 # automatically when the server runs on Windows.

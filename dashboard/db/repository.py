@@ -31,6 +31,7 @@ from ..models.common import (
     EntrySource,
     Game,
     HealthMetric,
+    Low,
     MathOutcome,
     MathStatus,
     MealFlag,
@@ -40,9 +41,12 @@ from ..models.common import (
     Provenance,
     SessionKind,
     Stool,
+    Symptom,
+    Tired,
     Track,
     UrineColor,
     Volume,
+    canonical_feel,
     canonical_flags,
     canonical_tags,
 )
@@ -2756,6 +2760,150 @@ class Repository:
             (_iso(start), _iso(before)),
         ).fetchall()
         return self._drinks(rows)
+
+    # -- how you feel --------------------------------------------------------
+
+    def _feels(self, rows: Sequence[sqlite3.Row]) -> list[d.FeelLog]:
+        """Attach each row's words, in one more query -- `_drinks`'s pattern,
+        and the same reason for fetching flat and ordering here: the two kinds
+        of word and the symptoms each come back in their enum's order."""
+        if not rows:
+            return []
+        ids = [r["id"] for r in rows]
+        tags: dict[int, list[tuple[str, int | None]]] = {entry_id: [] for entry_id in ids}
+        holes = ",".join("?" * len(ids))
+        for feel_id, tag, severity in self.conn.execute(
+            f"SELECT feel_id, tag, severity FROM feel_tag WHERE feel_id IN ({holes})", ids
+        ):
+            tags[feel_id].append((tag, severity))
+        out = []
+        for r in rows:
+            words = dict(tags[r["id"]])
+            out.append(
+                d.FeelLog(
+                    **{**dict(r), "prompted": bool(r["prompted"])},
+                    tired=canonical_feel([w for w in words if w in Tired.__members__], Tired),
+                    low=canonical_feel([w for w in words if w in Low.__members__], Low),
+                    symptoms={
+                        s: words[s.value] for s in Symptom if words.get(s.value) is not None
+                    },
+                )
+            )
+        return out
+
+    def add_feel(
+        self,
+        date: dt.date,
+        hour: int,
+        energy: int,
+        mood: int,
+        *,
+        minute: int | None = None,
+        tired: Iterable[Tired] = (),
+        low: Iterable[Low] = (),
+        symptoms: dict[Symptom, int] | None = None,
+        note: str | None = None,
+        prompted: bool = False,
+    ) -> d.FeelLog:
+        """Append one feel, with its words. The request model has already held
+        the kinds to their scales; the table holds the severities to the
+        symptoms.
+
+        One transaction, which the drink log does without: a feel whose words
+        failed to land would be a malaise filed as a fine afternoon, and that is
+        the one row this log must not have."""
+        with transaction(self.conn):
+            row = self.conn.execute(
+                "INSERT INTO feel_log (date, hour, minute, energy, mood, note, prompted) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                (_iso(date), hour, minute, energy, mood, note or None, int(prompted)),
+            ).fetchone()
+            words: list[tuple[int, str, int | None]] = [
+                (row["id"], Tired(w).value, None) for w in tired
+            ] + [(row["id"], Low(w).value, None) for w in low] + [
+                (row["id"], Symptom(s).value, int(n)) for s, n in (symptoms or {}).items()
+            ]
+            self.conn.executemany(
+                "INSERT INTO feel_tag (feel_id, tag, severity) VALUES (?, ?, ?)", words
+            )
+        return self._feels(
+            self.conn.execute("SELECT * FROM feel_log WHERE id = ?", (row["id"],)).fetchall()
+        )[0]
+
+    def delete_feel(self, entry_id: int) -> bool:
+        # The words go with it through ON DELETE CASCADE, as a drink's tags do.
+        cur = self.conn.execute("DELETE FROM feel_log WHERE id = ?", (entry_id,))
+        return cur.rowcount > 0
+
+    def feel_on(self, date: dt.date) -> list[d.FeelLog]:
+        rows = self.conn.execute(
+            "SELECT * FROM feel_log WHERE date = ? ORDER BY hour, minute, id", (_iso(date),)
+        ).fetchall()
+        return self._feels(rows)
+
+    def feel_history(self, days: int, before: dt.date) -> list[d.FeelLog]:
+        """The trailing window, oldest first -- windowed like the other logs."""
+        start = before - dt.timedelta(days=days - 1)
+        rows = self.conn.execute(
+            "SELECT * FROM feel_log WHERE date BETWEEN ? AND ? ORDER BY date, hour, minute, id",
+            (_iso(start), _iso(before)),
+        ).fetchall()
+        return self._feels(rows)
+
+    def feel_pings(self, date: dt.date) -> dict[int, tuple[str, str | None]]:
+        """`{slot: (due, sent)}` for one day -- empty until the scheduler has
+        drawn it."""
+        return {
+            slot: (due, sent)
+            for slot, due, sent in self.conn.execute(
+                "SELECT slot, due, sent FROM feel_ping WHERE date = ? ORDER BY slot",
+                (_iso(date),),
+            )
+        }
+
+    def draw_pings(self, date: dt.date, dues: Sequence[str]) -> dict[int, tuple[str, str | None]]:
+        """Put the day's drawn minutes down, unless they already are.
+
+        `INSERT OR IGNORE`, so a second draw -- a restart halfway through the
+        day, or two threads racing at midnight -- keeps the first one. The
+        minute is only a secret if it is drawn once."""
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO feel_ping (date, slot, due) VALUES (?, ?, ?)",
+            [(_iso(date), slot, due) for slot, due in enumerate(dues)],
+        )
+        return self.feel_pings(date)
+
+    def mark_ping_sent(self, date: dt.date, slot: int, at: str) -> None:
+        self.conn.execute(
+            "UPDATE feel_ping SET sent = ? WHERE date = ? AND slot = ? AND sent IS NULL",
+            (at, _iso(date), slot),
+        )
+
+    def add_push_subscription(
+        self, endpoint: str, p256dh: str, auth: str, origin: str | None, added: dt.date
+    ) -> int:
+        """Keep one phone's subscription; the same endpoint again replaces its
+        keys, which is what a browser re-subscribing hands over. Returns how
+        many are kept."""
+        self.conn.execute(
+            "INSERT INTO push_subscription (endpoint, p256dh, auth, origin, added) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT (endpoint) DO UPDATE SET "
+            "p256dh = excluded.p256dh, auth = excluded.auth, origin = excluded.origin",
+            (endpoint, p256dh, auth, origin, _iso(added)),
+        )
+        return len(self.push_subscriptions())
+
+    def push_subscriptions(self) -> list[dict[str, str | None]]:
+        return [
+            dict(r)
+            for r in self.conn.execute(
+                "SELECT endpoint, p256dh, auth, origin FROM push_subscription ORDER BY added"
+            )
+        ]
+
+    def drop_push_subscription(self, endpoint: str) -> None:
+        """A phone that has gone -- the push service answered 404 or 410."""
+        self.conn.execute("DELETE FROM push_subscription WHERE endpoint = ?", (endpoint,))
 
     def daylog(self, date: dt.date) -> str | None:
         row = self.conn.execute("SELECT text FROM daylog WHERE date = ?", (_iso(date),)).fetchone()

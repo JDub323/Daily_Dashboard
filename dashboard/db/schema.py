@@ -2328,6 +2328,102 @@ MIGRATIONS: list[tuple[int, str]] = [
             FROM meal_log WHERE preset IS NOT NULL;
         """,
     ),
+    (
+        39,
+        """
+        -- How you feel, through the day -- the sixth log.
+        --
+        -- He asked for it on a tired, malaise-y afternoon: some way to flag
+        -- it so that later he could see what it goes with. The morning
+        -- check-in could not be it. Its five items are about last night and
+        -- the training ahead, and it is answered once, before the day has
+        -- happened.
+        --
+        -- **Two numbers on every row, including the fine ones.** Energy and
+        -- mood, 1-5, 5 the good end on both. They are the two axes most mood
+        -- research starts from, and they come apart -- wired and miserable,
+        -- tired and content. They are required rather than optional because
+        -- they are what makes correlation possible at all: a log that only
+        -- gets written when something is wrong has no baseline to be wrong
+        -- against. The twice-daily pings (`feel_ping`) exist to collect the
+        -- fine rows.
+        CREATE TABLE feel_log (
+            id        INTEGER PRIMARY KEY,
+            date      TEXT NOT NULL CHECK (date IS strftime('%Y-%m-%d', date)),
+            hour      INTEGER NOT NULL CHECK (hour BETWEEN 0 AND 23),
+            minute    INTEGER CHECK (minute IS NULL OR minute BETWEEN 0 AND 59),
+            energy    INTEGER NOT NULL CHECK (energy BETWEEN 1 AND 5),
+            mood      INTEGER NOT NULL CHECK (mood BETWEEN 1 AND 5),
+            -- The `other` box: whatever fit none of the words. Identity in
+            -- migration 33's sense -- grouped by and read back, never scored
+            -- -- so a length CHECK and nothing else.
+            note      TEXT CHECK (note IS NULL OR length(note) BETWEEN 1 AND 64),
+            -- Whether it was answered from a ping or offered unasked. The two
+            -- are different kinds of sample -- one is the baseline, one is the
+            -- event -- and an analysis that cannot tell them apart will find
+            -- that every feeling you flag was a bad one.
+            prompted  INTEGER NOT NULL DEFAULT 0 CHECK (prompted IN (0, 1))
+        ) STRICT;
+
+        CREATE INDEX feel_log_date ON feel_log (date);
+
+        -- The words, as a set -- composition, so CHECKed, for migration 33's
+        -- reason: every one of them is counted by the lookback. Two kinds of
+        -- word share the table and the CHECK below keeps them apart: a *kind*
+        -- (what kind of tired, what kind of low) has no severity, and a
+        -- *symptom* always has one, 1 to 3. The Jackson scale's 0 is the row
+        -- not being here.
+        --
+        -- What SQLite cannot say across two tables is that a tired-kind needs
+        -- energy at 2 or under; `FeelRequest` refuses a body where they
+        -- disagree, which is the same arrangement `SessionRequest` has with
+        -- `focus` and `kind`.
+        CREATE TABLE feel_tag (
+            feel_id   INTEGER NOT NULL REFERENCES feel_log (id) ON DELETE CASCADE,
+            tag       TEXT NOT NULL CHECK (tag IN (
+                          'sleepy', 'drained', 'malaise', 'flat',
+                          'down', 'on_edge', 'irritable',
+                          'sore_throat', 'stuffy', 'cough', 'feverish', 'achy',
+                          'headache', 'shaky', 'dizzy', 'hungry', 'thirsty',
+                          'nauseous', 'gut', 'sore', 'hurt', 'foggy')),
+            severity  INTEGER CHECK (severity IS NULL OR severity BETWEEN 1 AND 3),
+            CHECK ((severity IS NULL) = (tag IN (
+                'sleepy', 'drained', 'malaise', 'flat', 'down', 'on_edge', 'irritable'))),
+            PRIMARY KEY (feel_id, tag)
+        ) STRICT;
+
+        -- The day's pings: which minute each window drew, and whether it went.
+        --
+        -- Stored rather than recomputed because the minute is random -- drawn
+        -- fresh every morning so it cannot be braced for, which is the
+        -- standard design for this kind of sampling -- and a restart halfway
+        -- through a window must not draw it again. `slot` is the window's
+        -- place in `[feel].windows`. Whether a ping was *answered* is not a
+        -- column: it is read off `feel_log`, so the two cannot disagree.
+        CREATE TABLE feel_ping (
+            date  TEXT NOT NULL CHECK (date IS strftime('%Y-%m-%d', date)),
+            slot  INTEGER NOT NULL CHECK (slot BETWEEN 0 AND 3),
+            due   TEXT NOT NULL CHECK (due IS strftime('%H:%M', due) AND due < '24:00'),
+            sent  TEXT CHECK (sent IS NULL OR (sent IS strftime('%H:%M', sent)
+                                               AND sent < '24:00')),
+            PRIMARY KEY (date, slot)
+        ) STRICT, WITHOUT ROWID;
+
+        -- Where to send a ping: one row per phone that said yes.
+        --
+        -- The three strings a browser's `PushSubscription` hands over, stored
+        -- as given. `origin` is the page it came from, and it is kept because
+        -- the push service wants a contact claim in every request and the
+        -- app's own https address is the honest one to give it.
+        CREATE TABLE push_subscription (
+            endpoint  TEXT PRIMARY KEY CHECK (length(endpoint) BETWEEN 10 AND 2048),
+            p256dh    TEXT NOT NULL CHECK (length(p256dh) BETWEEN 10 AND 256),
+            auth      TEXT NOT NULL CHECK (length(auth) BETWEEN 4 AND 64),
+            origin    TEXT CHECK (origin IS NULL OR length(origin) <= 256),
+            added     TEXT NOT NULL CHECK (added IS strftime('%Y-%m-%d', added))
+        ) STRICT, WITHOUT ROWID;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)

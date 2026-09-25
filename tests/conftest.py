@@ -49,6 +49,9 @@ def settings(tmp_path) -> Settings:
                     "interests": str(tmp_path / "interests.md"),
                     # Written by every test that posts a tally.
                     "usage": str(tmp_path / "usage.json"),
+                    # Made on first use by anything that asks for the push key,
+                    # and a credential: never the real one.
+                    "push_key": str(tmp_path / "push_key.pem"),
                 }
             ),
             "server": cfg.server.model_copy(update={"log_file": None, "open_browser": False}),
@@ -57,6 +60,10 @@ def settings(tmp_path) -> Settings:
             # time. The tests that want a fitted classifier stub the history and
             # let the lazy fit on first use do it.
             "calendar": cfg.calendar.model_copy(update={"warm_on_start": False}),
+            # Otherwise every app the suite builds starts the ping thread, which
+            # reads the real clock and would push to real phones. The tests that
+            # want pings switch them on and drive `feel.tick` by hand.
+            "feel": cfg.feel.model_copy(update={"pings": False}),
         }
     )
 

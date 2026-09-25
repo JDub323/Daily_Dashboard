@@ -1072,6 +1072,52 @@ def _plain_words(
     return None if value is None else f"{value:g} {suffix}"
 
 
+def feel_row(entry: d.FeelLog) -> float:
+    """One feel as 0-100: energy and mood, each 1-5, together. Symptoms are not
+    in it and never will be -- a sore throat is not a number between 0 and
+    100, and they go to the flag line instead."""
+    return (entry.energy + entry.mood - 2) / 8 * 100
+
+
+def feel_score(feels: Sequence[d.FeelLog], today: dt.date) -> float | None:
+    """Today's feel as 0-100, or None when nothing was logged today.
+
+    As answered for the first fortnight of the log, then against your own
+    normal the way the watch's scalars are -- 50 at your usual day, 2 SD to
+    the ends. The switch is the same `MIN_ENTRIES_FOR_BASELINE` the watch uses,
+    counted in days with a feel on them, because a 3-and-3 is only average if
+    that is what your days are.
+    """
+    todays = [feel_row(entry) for entry in feels if entry.date == today]
+    if not todays:
+        return None
+    now = statistics.fmean(todays)
+    start = today - dt.timedelta(days=BASELINE_DAYS - 1)
+    days: dict[dt.date, list[float]] = {}
+    for entry in feels:
+        if start <= entry.date < today:
+            days.setdefault(entry.date, []).append(feel_row(entry))
+    if len(days) < MIN_ENTRIES_FOR_BASELINE:
+        return now
+    means = [statistics.fmean(values) for values in days.values()]
+    spread = statistics.pstdev(means)
+    if spread == 0:
+        return now
+    return _clamp(50.0 + (now - statistics.fmean(means)) / spread * 25.0)
+
+
+def _feel_words(feels: Sequence[d.FeelLog], today: dt.date) -> str | None:
+    todays = [entry for entry in feels if entry.date == today]
+    if not todays:
+        return None
+    if len(todays) == 1:
+        one = todays[0]
+        return f"energy {one.energy} · mood {one.mood} at {one.at}"
+    energy = statistics.fmean(entry.energy for entry in todays)
+    mood = statistics.fmean(entry.mood for entry in todays)
+    return f"energy {energy:.1f} · mood {mood:.1f}, {len(todays)} today"
+
+
 def recovery_score(
     hrv: Sequence[tuple[dt.date, float]],
     rhr: Sequence[tuple[dt.date, float]],
@@ -1080,10 +1126,11 @@ def recovery_score(
     stress: Sequence[tuple[dt.date, float]],
     readiness: Sequence[d.Readiness],
     today: dt.date,
+    feels: Sequence[d.FeelLog] = (),
 ) -> api.ZoneScore:
     """Am I recovering -- the first of the tab's three questions.
 
-    Six inputs, and they fall into two groups that behave differently in the
+    Seven inputs, and the first five fall into two groups that behave differently in the
     first weeks of a series, which is what this function is really built
     around.
 
@@ -1102,6 +1149,11 @@ def recovery_score(
     the one input that can disagree with the rest: a sleep score of 88 against
     a sleep quality of 2 is a diagnostic and not noise, and the two sitting in
     one zoom is the only way that disagreement is ever seen.
+
+    The seventh is the feel log, which is the check-in's argument carried
+    through the day: self-report tracks the training response more closely
+    than heart rate or HRV do (Saw, Main & Gastin 2016), and unlike the
+    check-in it is asked after the day has happened rather than before.
     """
     row = _readiness_on(readiness, today)
     stress_today = _today(stress, today)
@@ -1153,6 +1205,13 @@ def recovery_score(
             None if row is None else row.score * 4.0,
             absent=InputState.not_logged,
             reading=None if row is None else f"{row.score} of 25 this morning",
+        ),
+        _input(
+            "feel",
+            "feel",
+            feel_score(feels, today),
+            absent=InputState.not_logged,
+            reading=_feel_words(feels, today),
         ),
     ])
 

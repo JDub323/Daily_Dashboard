@@ -5,6 +5,8 @@
 state.json
 metrics.jsonl
 usage.json
+# the key the feel pings are signed with -- a credential, made on first use.
+push_key.pem
 
 # pre-migration snapshots of the above — irreplaceable, never committed
 backups/

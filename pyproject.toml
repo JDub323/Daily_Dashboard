@@ -38,6 +38,11 @@ dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.6"]
 # 2026 auth change). A hard dependency on it would mean the day it breaks
 # again is a day the dashboard does not start.
 garmin = ["garminconnect>=0.2.25"]
+# The feel pings: Web Push, signed with a key made on first use. Optional and
+# lazily imported in `dashboard/feel.py` for the reason garmin is -- a ping that
+# cannot be sent is a nudge on the dashboard instead, never a server that will
+# not start.
+push = ["pywebpush>=2.0"]
 # The proof textbook, read two ways. `pypdf` parses the contents into
 # `proofbook.json`, once per book. `pymupdf` renders pages to PNGs for
 # `./batch.sh --render-pages`, which is how the overnight job actually reads a

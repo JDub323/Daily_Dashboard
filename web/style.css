@@ -774,6 +774,43 @@ svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(-
    not see. It occupies its slot now so that it is already part of the shape
    when it starts having something to say. */
 .flag { margin: var(--s2) 0 var(--s1); }
+/* With a flagged feel behind it the line is a button that opens what came
+   before. It keeps the line's own look -- a sentence, not a control -- and
+   says it opens in the faint words after it. */
+.flag-go {
+  display: flex; flex-wrap: wrap; gap: 0 var(--s3); align-items: baseline;
+  width: 100%; padding: 0; background: none; border: none; text-align: left;
+  font: inherit; font-size: var(--t-meta); color: var(--fg); cursor: pointer;
+  text-transform: none; letter-spacing: normal;
+}
+.flag-go:hover .flag-more { color: var(--accent); }
+
+/* ---- what came before a feeling ----
+   The lookback under the flag line: the feeling's words as a row of toggles,
+   then every signal from the hours before it as one line each. Capped in height
+   with its own scroll for the zoom's reason -- the tab fits 1080p, and a long
+   list must not be the thing that stops it. */
+.lookback { margin: var(--s1) 0 var(--s2); display: flex; flex-direction: column;
+            gap: var(--s2); max-height: 260px; overflow-y: auto; }
+.look-words { display: flex; flex-wrap: wrap; gap: var(--s1); }
+.look-word { font: inherit; font-size: var(--t-meta); padding: 2px var(--s2);
+             background: none; color: var(--dim); cursor: pointer;
+             border: 1px solid var(--border); border-radius: var(--r-sm); }
+.look-word.on { color: var(--fg); border-color: var(--accent-dim); }
+.look-counts { display: flex; flex-direction: column; gap: 2px; }
+.look-table { display: flex; flex-direction: column; }
+.look-row { display: grid; grid-template-columns: minmax(0, 11em) minmax(0, 1fr) auto auto;
+            gap: 0 var(--s3); align-items: baseline; padding: 3px 0;
+            border-bottom: 1px solid var(--border-soft); font-size: var(--t-meta); }
+.look-row.faded { opacity: .55; }
+.look-v { font-variant-numeric: tabular-nums; }
+.look-note { grid-column: 2 / -1; }
+.look-rest { font-size: var(--t-meta); padding: var(--s2) 0 2px; }
+.look-tag { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+.look-tag.hi { color: var(--bad); }
+.look-tag.mid { color: color-mix(in srgb, var(--bad) 65%, var(--fg)); }
+.look-tag.lo { color: var(--ok); }
+.look-tag.check { color: var(--gold-text); }
 
 /* ---- the rail ----
    Four bars on the left, two trends on the right. `minmax(0, …)` on the first
@@ -828,6 +865,7 @@ svg text { font: var(--t-meta) "Cascadia Code", Consolas, monospace; fill: var(-
    something you have not typed yet, and "no watch data: hrv" is a different
    morning from "not logged: meals". A dash says neither. */
 .zone-note { line-height: 1.4; }
+.zone-landing { line-height: 1.4; }
 
 /* The lit border for an open zoom, on the left, matching the ladder cursor
    this card used to carry. Cyan because it means *current* — this is where you

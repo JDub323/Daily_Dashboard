@@ -751,6 +751,7 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   --hue-bathroom: #c98f5a; --lit-bathroom: #dcb188; --off-bathroom: #a9896c;
   --hue-checkin:  #8f8fd6; --lit-checkin:  #b3b3e6; --off-checkin:  #8789b7;
   --hue-session:  #d2705f; --lit-session:  #e69a8c; --off-session:  #af766f;
+  --hue-feel:     #d97aa5; --lit-feel:     #eba9c7; --off-feel:     #b48398;
 
   --hue-todo:     #bd80c6; --lit-todo:     #d5a8dc; --off-todo:     #a280ad;
   --hue-owed:     #4fb8a2; --lit-owed:     #86d5c4; --off-owed:     #60a198;
@@ -763,6 +764,7 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 #shell[data-tab="bathroom"] { --tab: var(--hue-bathroom); --tab-text: var(--lit-bathroom); }
 #shell[data-tab="checkin"]  { --tab: var(--hue-checkin);  --tab-text: var(--lit-checkin); }
 #shell[data-tab="session"]  { --tab: var(--hue-session);  --tab-text: var(--lit-session); }
+#shell[data-tab="feel"]     { --tab: var(--hue-feel);     --tab-text: var(--lit-feel); }
 #shell[data-tab="todo"]     { --tab: var(--hue-todo);     --tab-text: var(--lit-todo); }
 #shell[data-tab="owed"]     { --tab: var(--hue-owed);     --tab-text: var(--lit-owed); }
 #shell[data-tab="agenda"]    { --tab: var(--hue-agenda);    --tab-text: var(--lit-agenda); }
@@ -780,6 +782,7 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
 .tab[data-log="bathroom"] { color: var(--off-bathroom); }
 .tab[data-log="checkin"]  { color: var(--off-checkin); }
 .tab[data-log="session"]  { color: var(--off-session); }
+.tab[data-log="feel"]     { color: var(--off-feel); }
 .tab[data-log="todo"]     { color: var(--off-todo); }
 .tab[data-log="owed"]     { color: var(--off-owed); }
 .tab[data-log="agenda"]    { color: var(--off-agenda); }
@@ -1439,3 +1442,81 @@ body.booting #shell, body.splash-up #shell { visibility: hidden; }
   .lad, .lad-body { animation: none !important; }
   .lad[inert] { display: none; }
 }
+
+/* --- the feel log -----------------------------------------------------------
+   Rose, the widest gap left on the wheel: between the todo list's orchid and
+   the session log's coral, and far from the gold that means "stale". `--off-feel`
+   measures 6.1:1 on the bar's #0c0f16.
+
+   Seven caps in the morning, before the check-in leaves the bar, and at seven a
+   375px screen gives each 53.6px — under the 57.8px `CHECK-IN` needs at .10em.
+   So the type tightens only while there are seven; at six it is the rule above
+   unchanged. */
+.tabs:has(> .tab:nth-child(7)) .tab { font-size: 8px; letter-spacing: .02em; }
+
+/* A cap with a second line: the kinds of tired and of low. The gloss is body
+   type, not display — it is read, once, and then recognised by its word. */
+.opt.duo {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 5px; min-height: 58px;
+}
+.opt small {
+  font: 400 10.5px/1.2 "Cascadia Code", Consolas, monospace;
+  letter-spacing: 0; text-transform: none; color: var(--faint);
+}
+.opt.on small { color: color-mix(in srgb, var(--tab-text) 80%, transparent); }
+
+/* The symptoms. Three bars under each word are the grade: one tap lights one,
+   and the grade's word sits beside them. One fixed-height line for both, so a
+   chip does not grow when it is tapped — the row under your thumb must not
+   move — and not two, since this is the tallest question on the phone and the
+   one most often scrolled. */
+.q-group {
+  margin: var(--s3) 0 6px;
+  font-family: var(--font-display); font-weight: 700; font-size: 8.5px;
+  letter-spacing: .24em; text-transform: uppercase; color: var(--faint);
+}
+.q-head + .q-group { margin-top: 0; }
+.opt.chip {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 5px; min-height: 50px; padding-block: 6px; letter-spacing: .08em;
+}
+.sev-line { display: flex; align-items: center; gap: 6px; height: 10px; }
+.sev { display: flex; gap: 3px; }
+.sev i { width: 9px; height: 3px; background: color-mix(in srgb, var(--tab) 20%, transparent); }
+.sev i.lit { background: var(--tab); box-shadow: 0 0 6px color-mix(in srgb, var(--tab) 60%, transparent); }
+.sev-w {
+  font: 500 9.5px/1 "Cascadia Code", Consolas, monospace;
+  letter-spacing: .02em; text-transform: none; color: var(--tab-text);
+}
+.opt.other-cap { display: block; width: 100%; min-height: 40px; }
+.feel-note { display: block; width: 100%; margin-top: var(--s2); }
+
+/* The pings: which one this open is answering, how today's went, and the one
+   control that turns them on. A line, not a card — it is about the log, not
+   part of it. */
+.pings { margin-bottom: var(--s4); }
+.ping-now {
+  margin: 0 0 var(--s2);
+  font-family: var(--font-display); font-weight: 700; font-size: 10px;
+  letter-spacing: .16em; text-transform: uppercase; color: var(--tab-text);
+}
+.ping-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
+.ping { display: inline-flex; gap: 6px; align-items: baseline; font-size: var(--t-meta); color: var(--faint); }
+.ping-name {
+  font-family: var(--font-display); font-weight: 700; font-size: 9px;
+  letter-spacing: .16em; text-transform: uppercase;
+}
+.ping.answered { color: var(--tab-text); }
+.ping.sent { color: var(--fg); }
+.ping.missed .ping-state { color: var(--gold-text); }
+.ping-why { font-size: var(--t-meta); color: var(--faint); }
+.ping-go {
+  margin-left: auto; min-height: 32px; padding: 0 var(--s3);
+  font-family: var(--font-display); font-weight: 700; font-size: 9px;
+  letter-spacing: .14em; text-transform: uppercase;
+  color: var(--tab-text); background: none; border-radius: 0; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--tab) 50%, transparent);
+  touch-action: manipulation;
+}
+.ping-go.quiet { color: var(--faint); border-color: var(--border); }

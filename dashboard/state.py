@@ -20,6 +20,7 @@ from typing import NamedTuple
 
 from . import (
     content,
+    feel,
     garmin,
     health,
     investigate,
@@ -801,6 +802,11 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
 
     fluid = health.fluid_mean(drinks, today)
     sweat_week = health.scalar_mean(sweat, today)
+
+    # How you feel: a month of it for the recovery input's baseline, and today's
+    # rows for the phone's list and for everything `feel.panel` adds.
+    feels = repo.feel_history(health.BASELINE_DAYS + 1, before=today)
+    feels_today = [entry for entry in feels if entry.date == today]
     caffeine = health.caffeine_mean(drinks, today)
     alcohol = health.alcohol_week(drinks, today)
 
@@ -847,6 +853,21 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
 
     vo2 = health.vo2max_trend(vo2max, today)
 
+    feel_panel = feel.panel(
+        cfg,
+        repo,
+        today,
+        feel.Context(
+            sessions=sessions, readiness=entries, hrv=hrv, rhr=rhr, sleep=sleep,
+            sleep_score=sleep_score, battery=battery, stress=stress, sweat=sweat,
+            meals=meals, drinks=drinks, visits=visits,
+        ),
+        feels_today,
+        week=week,
+        prev_week=prev_week,
+        rhr_run=health.scalar_run(rhr, today, above=True),
+    )
+
     return api.HealthPanel(
         series=health_series(repo),
         readiness_today=repo.readiness(today),
@@ -854,6 +875,8 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
         bathroom_today=repo.bathroom_on(today),
         meals_today=repo.meals_on(today),
         drinks_today=repo.drinks_on(today),
+        feel_today=feels_today,
+        feel=feel_panel,
         meal_menu=menu.meal_menu(repo.meal_names(), repo.named_meals(today), today),
         loads=sorted(loads.items()),
         derived=api.HealthDerived(
@@ -867,7 +890,7 @@ def health_panel(cfg: Settings, repo: Repository, today: dt.date) -> api.HealthP
             # so the zoom can draw them -- see the section head in `health.py`
             # for why a panel that refused composites now ships four.
             recovery=health.recovery_score(
-                hrv, rhr, sleep_score, battery, stress, entries, today
+                hrv, rhr, sleep_score, battery, stress, entries, today, feels
             ),
             load=health.load_score(sessions, plan_open, len(owed), jump, today),
             fuel=health.fuel_score(meals, balance, today),

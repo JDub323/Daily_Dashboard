@@ -326,6 +326,19 @@ export function dayTasks(s) {
       points: 1,
     },
     { id: "log", label: "day log", done: Boolean(s.daylog), panel: "log", points: 1 },
+    // The feel pings, a point each. The log exists to be correlated, and a log
+    // answered only on bad afternoons has no baseline to correlate against —
+    // so answering on the fine ones is the part worth paying for. A window
+    // answered before its ping went out counts: you said it unasked, which is
+    // what the ping was for. Absent when pings are off, since a point nobody
+    // can ask you for is not on offer.
+    ...(s.health.feel?.pings ?? []).map((ping) => ({
+      id: `feel:${ping.name}`,
+      label: `feel · ${ping.name}`,
+      done: ping.state === "answered",
+      panel: "health",
+      points: 1,
+    })),
     {
       // The one self-report on the list, and priced as the short sitting it
       // is. It exists because the panel is otherwise the same card whether or

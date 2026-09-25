@@ -118,6 +118,13 @@ class PathSettings(Base):
 
     Validated below as *not* living under `static`, which would publish it."""
 
+    push_key: str = "push_key.pem"
+    """The private key the feel pings are signed with -- VAPID, in the push
+    standard's terms. Made on first use and gitignored: it is a credential, and
+    `config.toml` is tracked. Losing it only means every phone has to say yes to
+    pings once more, since a subscription is bound to the key it was made
+    against."""
+
     proofbook: str = "proofbook.json"
     """The proof textbook's contents, parsed once by `dashboard.proofbook`.
 
@@ -863,6 +870,65 @@ class GarminSettings(Base):
     repository on purpose."""
 
 
+_CLOCK = r"^([01][0-9]|2[0-3]):[0-5][0-9]$"
+
+
+class FeelWindow(Base):
+    """One stretch of the day a ping may land in, at a minute drawn each
+    morning. `start`/`end` are local `HH:MM`, the laptop's clock -- the one
+    place in the server that reads it, see `dashboard/feel.py`."""
+
+    name: str = Field(min_length=1, max_length=16, pattern=r"^[a-z]+$")
+    start: str = Field(pattern=_CLOCK)
+    end: str = Field(pattern=_CLOCK)
+
+    @property
+    def span(self) -> tuple[int, int]:
+        """Minutes past midnight, start and end."""
+        (sh, sm), (eh, em) = (map(int, t.split(":")) for t in (self.start, self.end))
+        return sh * 60 + sm, eh * 60 + em
+
+
+class FeelSettings(Base):
+    """The feel log's pings. See `dashboard/feel.py`.
+
+    Off unless switched on, so a fresh clone -- or the tests -- never start a
+    thread that talks to Apple's push service.
+    """
+
+    pings: bool = False
+    """Draw a minute in each window every morning and push a ping to every
+    phone that said yes. Also what puts the pings on the day's list as points:
+    a point you cannot be asked for is not on offer."""
+
+    windows: list[FeelWindow] = Field(
+        default_factory=lambda: [
+            FeelWindow(name="midday", start="11:30", end="14:30"),
+            FeelWindow(name="evening", start="17:00", end="20:00"),
+        ],
+        max_length=4,
+    )
+    """In the order they fall. Two, at his choice: once in the middle of the day
+    and once toward its end. Four is the table's ceiling and far past what anyone
+    answers honestly."""
+
+    @model_validator(mode="after")
+    def _windows_in_order(self) -> FeelSettings:
+        """Each window a real stretch, in order, none overlapping -- a feel
+        logged at one time must answer at most one ping."""
+        last = -1
+        for window in self.windows:
+            start, end = window.span
+            if end - start < 30:
+                raise ValueError(f"[feel] window {window.name!r} is under half an hour")
+            if start <= last:
+                raise ValueError(f"[feel] window {window.name!r} starts before the last ends")
+            last = end
+        if len({window.name for window in self.windows}) != len(self.windows):
+            raise ValueError("[feel] window names must differ")
+        return self
+
+
 class CalendarSettings(Base):
     command: list[str] = Field(default_factory=lambda: ["gcalcli", "--nocolor"])
     cache_seconds: int = Field(default=300, ge=0)
@@ -1040,6 +1106,7 @@ class Settings(Base):
     markets: MarketSettings = Field(default_factory=MarketSettings)
     portfolio: PortfolioSettings = Field(default_factory=PortfolioSettings)
     garmin: GarminSettings = Field(default_factory=GarminSettings)
+    feel: FeelSettings = Field(default_factory=FeelSettings)
     calendar: CalendarSettings = Field(default_factory=CalendarSettings)
     todo: TodoSettings = Field(default_factory=TodoSettings)
     news: NewsSettings = Field(default_factory=NewsSettings)

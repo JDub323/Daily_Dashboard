@@ -1,4 +1,4 @@
-// What the five logs ask. Nothing here knows how any of it is drawn.
+// What the six logs ask. Nothing here knows how any of it is drawn.
 //
 // These tables used to live one per panel, beside the code that rendered them.
 // Then there were two things rendering them — the desktop cards and the phone
@@ -568,6 +568,134 @@ export const toStored = (key, shown) => (INVERTED.has(key) ? 6 - shown : shown);
 /** What a stored value means on screen. Its own inverse — 6-(6-n) is n. */
 export const toShown = (key, stored) => (INVERTED.has(key) ? 6 - stored : stored);
 
+// --- how you feel -------------------------------------------------------------
+//
+// Two scales on every row and a handful of words, and the reasoning for each
+// part is in migration 39 and on the enums in `common.py`. The short version,
+// for a reader of this file: energy and mood are separate because they come
+// apart; "what kind of tired" is asked because tired hides four different
+// things with four different causes; the symptoms are graded because "sick"
+// and "very sick" are one word at two strengths.
+//
+// Both scales count up toward the good answer and are stored that way — there
+// is no `INVERTED` here, and none is needed.
+
+/** `[key, value, label]`, digits so the row draws as a scale and its answered
+ *  line as a meter. The words are for the line and for the ends of the row. */
+export const FEEL_ENERGY = [1, 2, 3, 4, 5].map((n) => [String(n), n, String(n)]);
+export const FEEL_MOOD = FEEL_ENERGY;
+
+export const ENERGY_WORDS = { 1: "empty", 2: "low", 3: "ok", 4: "good", 5: "charged" };
+export const MOOD_WORDS = { 1: "awful", 2: "low", 3: "ok", 4: "good", 5: "great" };
+
+/**
+ * `[key, value, label, gloss]` — the gloss is a second, smaller line on the
+ * cap, because "flat" and "drained" are words people use for each other and
+ * the difference is the whole point of asking. `Tired` in `common.py` is the
+ * same four in the same order.
+ */
+export const TIRED_KINDS = [
+  [null, "sleepy", "sleepy", "could nap"],
+  [null, "drained", "drained", "body out of gas"],
+  [null, "malaise", "malaise", "off, sick-tired"],
+  [null, "flat", "flat", "can’t be bothered"],
+];
+
+/** `Low` in `common.py`. With the energy scale and `foggy`, the BRUMS's six. */
+export const LOW_KINDS = [
+  [null, "down", "down", "sad, heavy"],
+  [null, "on_edge", "on edge", "tense, anxious"],
+  [null, "irritable", "irritable", "short fuse"],
+];
+
+/**
+ * `[group, [[key, value, label], ...]]` — the symptoms, in `Symptom` order,
+ * in three rows of three-across so a row is one kind of cause. The grouping is
+ * presentation only; the server knows the words and not the rows.
+ */
+export const SYMPTOM_GROUPS = [
+  ["sick", [
+    [null, "sore_throat", "sore throat"], [null, "stuffy", "stuffy"], [null, "cough", "cough"],
+    [null, "feverish", "feverish"], [null, "achy", "achy"], [null, "headache", "headache"],
+  ]],
+  ["fuel", [
+    [null, "shaky", "shaky"], [null, "dizzy", "dizzy"], [null, "hungry", "hungry"],
+    [null, "thirsty", "thirsty"], [null, "nauseous", "nauseous"], [null, "gut", "gut"],
+  ]],
+  ["body & head", [
+    [null, "sore", "sore"], [null, "hurt", "hurt"], [null, "foggy", "foggy"],
+  ]],
+];
+
+export const SYMPTOMS = SYMPTOM_GROUPS.flatMap(([, rows]) => rows);
+
+/** 1–3, and a fourth tap takes the symptom off. Jackson's 0 is not tapping. */
+export const SEVERITY = { 1: "mild", 2: "moderate", 3: "severe" };
+
+/** The `other` box's limit. `FEEL_NOTE_MAX` in `common.py` is the same number. */
+export const FEEL_NOTE_MAX = 40;
+
+/**
+ * The feel log's questions.
+ *
+ * The two follow-ups are `when`-gated off the scale above them, which is what
+ * makes them free on a fine afternoon: energy at 3 never asks what kind of
+ * tired. Move energy back up from 2 and `prunedDraft` takes the kinds with it,
+ * which is also the rule `FeelRequest` refuses a body for breaking.
+ *
+ * `graded` is the one new kind of step: a set where each member also carries a
+ * grade. Its answer is `{ graded: {symptom: 1-3}, note: "" }` — the note rides
+ * with it because the `other` box is the last chip on that row, not a question
+ * of its own. Like `multi`, it is answered from the moment it is drawn: nothing
+ * off is the ordinary answer.
+ */
+export const FEEL_STEPS = [
+  { name: "energy", hint: "1 empty · 5 charged", options: FEEL_ENERGY, words: ENERGY_WORDS },
+  { name: "mood", hint: "1 awful · 5 great", options: FEEL_MOOD, words: MOOD_WORDS },
+  {
+    name: "tired",
+    title: "what kind of tired",
+    hint: "any that fit",
+    multi: true,
+    options: TIRED_KINDS,
+    when: (draft) => draft.energy != null && draft.energy <= 2,
+  },
+  {
+    name: "low",
+    title: "what kind of low",
+    hint: "any that fit",
+    multi: true,
+    options: LOW_KINDS,
+    when: (draft) => draft.mood != null && draft.mood <= 2,
+  },
+  {
+    name: "symptoms",
+    title: "anything off?",
+    hint: "tap again = worse",
+    graded: true,
+    options: SYMPTOMS,
+    groups: SYMPTOM_GROUPS,
+  },
+];
+
+/** The words for one of the feel log's stored values, whichever list it is in. */
+export function feelLabel(value) {
+  for (const [, v, label] of [...TIRED_KINDS, ...LOW_KINDS, ...SYMPTOMS]) {
+    if (v === value) return label;
+  }
+  if (value === "tired" || value === "low" || value === "other") return value;
+  return String(value ?? "").replace(/_/g, " ");
+}
+
+/** One stored feel row, in words: `malaise, drained · headache (moderate)`. */
+export function feelWords(entry) {
+  const kinds = [...(entry.tired ?? []), ...(entry.low ?? [])].map(feelLabel);
+  const off = Object.entries(entry.symptoms ?? {}).map(([symptom, grade]) =>
+    `${feelLabel(symptom)}${grade > 1 ? ` (${SEVERITY[grade]})` : ""}`);
+  if (entry.note) off.push(`“${entry.note}”`);
+  return [kinds.join(", "), off.join(", ")].filter(Boolean).join(" · ");
+}
+
 // --- a training session -----------------------------------------------------
 
 /** `kind: key`. Alphabetical collision resolved once, here: sparring is `s`,
@@ -1055,6 +1183,15 @@ export const prunedDraft = (steps, draft) => {
   for (const [name, held] of Object.entries(draft)) {
     if (!live.has(name)) continue;
     const step = asked.find((one) => one.name === name);
+    if (step.graded) {
+      // The feel log's symptoms: filtered like a `multi`, member by member,
+      // and the note it carries kept whatever the options say.
+      const offered = new Set(stepOptions(step, draft).map(([, value]) => value));
+      const graded = Object.fromEntries(
+        Object.entries(held?.graded ?? {}).filter(([value]) => offered.has(value)));
+      out[name] = { graded, note: held?.note ?? "" };
+      continue;
+    }
     if (!step.options) {
       out[name] = held;
       continue;
@@ -1082,7 +1219,7 @@ export const prunedDraft = (steps, draft) => {
  */
 export const missingSteps = (steps, draft) =>
   applicableSteps(steps, draft).filter(
-    (step) => !step.multi && !step.optional && draft[step.name] == null,
+    (step) => !step.multi && !step.graded && !step.optional && draft[step.name] == null,
   );
 
 /**

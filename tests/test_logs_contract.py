@@ -32,12 +32,16 @@ from pydantic import TypeAdapter
 
 from dashboard.models import api
 from dashboard.models.common import (
+    FEEL_NOTE_MAX,
     MEAL_LABEL_MAX,
     SESSION_FOCUS,
     DrinkName,
     DrinkTag,
+    Low,
     MealFlag,
     MealSlug,
+    Symptom,
+    Tired,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -75,6 +79,13 @@ console.log(JSON.stringify({
   combinations: [...m.DRINK_NAMES.entries()].map(([key, names]) => [key, names.length]),
   quality: Object.keys(m.QUALITY_ANCHOR).map(Number),
   rpe: Object.keys(m.RPE_ANCHOR).map(Number),
+  tired: m.TIRED_KINDS.map(([, value]) => value),
+  low: m.LOW_KINDS.map(([, value]) => value),
+  symptoms: m.SYMPTOMS.map(([, value]) => value),
+  grouped: m.SYMPTOM_GROUPS.flatMap(([, rows]) => rows.map(([, value]) => value)),
+  severity: Object.keys(m.SEVERITY).map(Number),
+  feelNoteMax: m.FEEL_NOTE_MAX,
+  energy: m.FEEL_ENERGY.map(([, value]) => value),
 }));
 """
 
@@ -189,3 +200,34 @@ def test_quality_and_rpe_are_deliberately_different_scales(tables: dict) -> None
     """
     assert len(tables["quality"]) == 5
     assert len(tables["rpe"]) == 10
+
+
+# --- the feel log -------------------------------------------------------------------
+
+
+def test_the_kinds_of_tired_and_of_low_are_the_same_words(tables: dict) -> None:
+    """In order: the server canonicalises to enum order and the phone draws in
+    table order, so the two must be one order for a row to read back as it was
+    tapped."""
+    assert tables["tired"] == [kind.value for kind in Tired]
+    assert tables["low"] == [kind.value for kind in Low]
+
+
+def test_every_symptom_the_phone_offers_the_server_takes(tables: dict) -> None:
+    assert tables["symptoms"] == [symptom.value for symptom in Symptom]
+    # The groups are presentation, and every symptom is in exactly one.
+    assert sorted(tables["grouped"]) == sorted(symptom.value for symptom in Symptom)
+
+
+def test_the_grades_are_the_request_models(tables: dict) -> None:
+    grade = api.FeelRequest.model_fields["symptoms"]
+    assert tables["severity"] == [1, 2, 3], grade
+
+
+def test_the_other_box_stops_where_the_request_model_does(tables: dict) -> None:
+    assert tables["feelNoteMax"] == FEEL_NOTE_MAX
+
+
+def test_the_feel_scales_offer_what_the_server_takes(tables: dict) -> None:
+    for value in tables["energy"]:
+        api.FeelRequest(date="2026-09-23", hour=9, energy=value, mood=value)

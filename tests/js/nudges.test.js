@@ -151,3 +151,25 @@ describe("wantsTodo", () => {
     assert.equal(wantsTodo({ hour: 9 }, ["due-today"]), true);
   });
 });
+
+describe("the feel ping at the desk", () => {
+  const pinged = (state) => {
+    store.state = { health: { meals_today: [], feel: { pings: [{ name: "evening", state }] } } };
+    return { now: new Date(), hour: 18, tasks: [], todo: null };
+  };
+
+  it("asks while a ping is out and unanswered", () => {
+    const card = on(verdicts(pinged("sent")), "feel-ping");
+    assert.equal(card.do, "raise");
+    assert.match(card.text, /evening ping/);
+  });
+
+  it("settles the moment a feel lands", () => {
+    assert.deepEqual(on(verdicts(pinged("answered"), ["feel-ping"]), "feel-ping"),
+      { id: "feel-ping", do: "settle" });
+  });
+
+  it("says nothing before a ping has gone out", () => {
+    assert.equal(on(verdicts(pinged("waiting")), "feel-ping"), undefined);
+  });
+});

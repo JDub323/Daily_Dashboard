@@ -822,6 +822,98 @@ def canonical_flags(flags: Iterable[str]) -> list[MealFlag]:
     return sorted({MealFlag(flag) for flag in flags}, key=order.index)
 
 
+# --- how you feel ----------------------------------------------------------
+#
+# The feel log is two scales and a handful of words, and the words are split
+# three ways because they answer three different questions. See migration 39
+# for the whole argument; the short version is that "tired" hides which of four
+# things you are, and each of the four points at a different cause.
+
+
+class Tired(StrEnum):
+    """What kind of tired -- asked only when energy is 1 or 2.
+
+    Four because sleepiness and fatigue are different states with different
+    causes (Shen, Barbera & Shapiro 2006), and a single "tired" hides which one
+    you have. Each points at a different suspect: `sleepy` at the night, and at
+    the dip after a meal; `drained` at the load and the food; `malaise` at
+    illness or overreaching; `flat` at mood. `malaise` is his word, kept as his.
+    """
+
+    sleepy = "sleepy"
+    drained = "drained"
+    malaise = "malaise"
+    flat = "flat"
+
+
+class Low(StrEnum):
+    """What kind of low -- asked only when mood is 1 or 2.
+
+    With the energy scale and `foggy`, these are the six factors of the BRUMS,
+    the athletes' short form of the POMS (Terry et al. 1999): vigour and
+    fatigue are the energy scale's two ends, and these are depression, tension
+    and anger. POMS mood disturbance is the classic early marker of
+    overtraining (Morgan et al. 1987), which is why the feel log sits next to
+    the load model rather than off on its own.
+    """
+
+    down = "down"
+    on_edge = "on_edge"
+    irritable = "irritable"
+
+
+class Symptom(StrEnum):
+    """Anything off, each graded 1-3 -- mild, moderate, severe.
+
+    The first six are the Jackson cold scale's symptoms and its 0-3 grading
+    (Jackson et al. 1958), collapsed from eight: sneezing and the two nasal
+    items are `stuffy`, and malaise lives under `Tired` where the energy scale
+    already asks about it. Not tapping a chip is the scale's 0.
+
+    The fuel row is the low-blood-sugar cluster plus thirst, which the meal and
+    drink logs can check directly. `hurt` is pain, as opposed to training
+    soreness -- in a fight camp the one worth catching early.
+
+    `dehydrated` is deliberately not here. It is a conclusion, and the fluid log
+    and the urine colour are what decide it; what you can report is the thirst.
+    """
+
+    sore_throat = "sore_throat"
+    stuffy = "stuffy"
+    cough = "cough"
+    feverish = "feverish"
+    achy = "achy"
+    headache = "headache"
+    shaky = "shaky"
+    dizzy = "dizzy"
+    hungry = "hungry"
+    thirsty = "thirsty"
+    nauseous = "nauseous"
+    gut = "gut"
+    sore = "sore"
+    hurt = "hurt"
+    foggy = "foggy"
+
+
+SICK = frozenset({
+    Symptom.sore_throat, Symptom.stuffy, Symptom.cough, Symptom.feverish, Symptom.achy,
+})
+"""The symptoms that say "a cold" rather than "a bad day". Read by the flag
+line, together with `Tired.malaise`, to decide whether to say so."""
+
+FEEL_NOTE_MAX = 40
+"""How long the `other` box may be. The phone's box stops at the same number;
+`logs.js` carries it as `FEEL_NOTE_MAX` and the contract test holds them level."""
+
+
+def canonical_feel(words: Iterable[str], enum: type[StrEnum]) -> list:
+    """One entry's kinds, deduplicated and put in their enum's order -- what
+    `canonical_tags` is for drinks, for the same reason: a row written by the
+    phone and one written by a script read back identically."""
+    order = list(enum)
+    return sorted({enum(word) for word in words}, key=order.index)
+
+
 class Game(StrEnum):
     wordle = "wordle"
     pokedoku = "pokedoku"

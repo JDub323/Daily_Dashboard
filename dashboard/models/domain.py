@@ -21,6 +21,7 @@ from .common import (
     DrinkTag,
     EntrySource,
     HealthMetric,
+    Low,
     MathStatus,
     MealFlag,
     MealSize,
@@ -32,6 +33,8 @@ from .common import (
     Score,
     SessionKind,
     Stool,
+    Symptom,
+    Tired,
     Track,
     UrineColor,
     Url,
@@ -910,6 +913,57 @@ class DrinkLog(Base):
     @property
     def at(self) -> str:
         return f"{self.hour:02d}:{self.minute or 0:02d}"
+
+
+class FeelLog(Base):
+    """How you felt, at one moment of the day. See migration 39.
+
+    `energy` and `mood` are 1-5 with 5 the good end on both, and they are on
+    every row -- the fine ones are what the flagged ones are compared against.
+    `tired` is only ever non-empty when energy is 2 or under and `low` when mood
+    is; `FeelRequest` is what holds that. `symptoms` maps each one tapped to its
+    grade, 1 mild to 3 severe, and is in `Symptom` order.
+    """
+
+    id: int
+    date: dt.date
+    hour: int = Field(ge=0, le=23)
+    minute: int | None = Field(default=None, ge=0, le=59)
+    """Set only by the phone's `exact time` button, as on the other logs."""
+    energy: int = Field(ge=1, le=5)
+    mood: int = Field(ge=1, le=5)
+    tired: list[Tired] = Field(default_factory=list)
+    low: list[Low] = Field(default_factory=list)
+    symptoms: dict[Symptom, int] = Field(default_factory=dict)
+    note: str | None = None
+    """What fit none of the words. Read back and grouped, never scored."""
+    prompted: bool = False
+    """Answered from a ping rather than offered unasked."""
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def at(self) -> str:
+        return f"{self.hour:02d}:{self.minute or 0:02d}"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def words(self) -> list[str]:
+        """Every word on the row, kinds then symptoms, plus `other` when the
+        box was used -- what the lookback groups by."""
+        out = [str(word) for word in (*self.tired, *self.low, *self.symptoms)]
+        return [*out, "other"] if self.note else out
+
+    @property
+    def flagged(self) -> bool:
+        """Whether this row says something is off: a word, or either scale at
+        2 or under. A 3-and-3 with nothing tapped is a fine row -- a baseline."""
+        return bool(self.words) or self.energy <= 2 or self.mood <= 2
+
+    @property
+    def minute_of_day(self) -> int:
+        """When it was, in minutes past midnight. A remembered hour is taken
+        at its half, which is the least wrong single guess about it."""
+        return self.hour * 60 + (self.minute if self.minute is not None else 30)
 
 
 class PrescribedBlock(Base):
