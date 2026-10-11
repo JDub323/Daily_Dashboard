@@ -24,7 +24,7 @@ import * as api from "./api.js";
 import { dayTasks, optional, required, score } from "./day.js";
 import { el, mount } from "./dom.js";
 import { focusPanel, markDone } from "./panel.js";
-import { completionWrite, store } from "./store.js";
+import { completionWrite, paused, store } from "./store.js";
 
 /** Today's tasks, in the order the day asks for them. What the cheatsheet
  *  counts, and what `n` walks. */
@@ -61,6 +61,14 @@ export function openNextUnfinished() {
 }
 
 export async function renderChips() {
+  // Paused, the day asks for nothing, so there is nothing to count and no row
+  // to write. Writing 0/5 would put a failed day on the heatmap for every day
+  // the dashboard was switched off; writing nothing leaves those days looking
+  // like the ones it was not opened, which is what they are.
+  if (paused()) {
+    mount(document.querySelector("#st-completion"), el("span.faint", { text: "paused" }));
+    return;
+  }
   const list = chipTasks();
   // The ring counts the required ones and nothing else. Rows already in
   // `day_completion` keep the total they were written with, so the heatmap and

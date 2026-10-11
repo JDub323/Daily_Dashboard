@@ -41,7 +41,7 @@ import tricks from "./panels/tricks.js";
 import word from "./panels/word.js";
 import { initPulse } from "./pulse.js";
 import { initSplash, onSplashDismiss, paintSplash, showSplash } from "./splash.js";
-import { dayHasTurned, loadState, store, subscribe } from "./store.js";
+import { dayHasTurned, loadState, paused, store, subscribe } from "./store.js";
 import { initTabs, onTabChange } from "./tabs.js";
 import { initModal, onModalClose, toast } from "./ui.js";
 
@@ -151,8 +151,13 @@ async function loadConfig() {
   // segment with nothing after the colon reads as a value that failed to load.
   const phase = store.config.phase ?? "";
   $("#hdr-phase").textContent = phase ? `phase: ${phase}` : "";
-  $("#hdr-topic").textContent = `topic: ${store.config.topic}`;
+  // The topic is the math tab's, and a header naming a week's topic over a
+  // dashboard with no math on it reads as a page that failed to load the rest.
+  $("#hdr-topic").textContent = paused() ? "paused" : `topic: ${store.config.topic}`;
 }
+
+/** The home tab, alone, while the dashboard is paused — see `paused`. */
+const HOME = ["home"];
 
 /**
  * Topic links, in the background.
@@ -162,6 +167,7 @@ async function loadConfig() {
  * taking the boot down with it.
  */
 function loadTopic() {
+  if (paused()) return Promise.resolve();
   return api
     .get("/api/topic", { date: api.today() })
     .then((topic) => {
@@ -204,7 +210,7 @@ async function rollOver() {
   // Before the redraw, as at boot: the new day's cells go straight to their
   // busy line rather than showing a button for the second it takes the answer
   // to arrive. This is also the retry for a gather that failed yesterday.
-  gatherDailies();
+  if (!paused()) gatherDailies();
   invalidateHistory();
   invalidateTrickArchive();
   resetCollapse();
@@ -282,7 +288,14 @@ async function boot() {
     if (reason === "wake" || reason === "idle") refreshLive();
   });
 
-  initTabs();
+  // Before the tabs, because the config is what says how many there are.
+  try {
+    await loadConfig();
+  } catch {
+    toast("could not load config — is the server running?");
+  }
+
+  initTabs(paused() ? HOME : null);
   initModal();
   initNav();
   onModalClose(renderChips);
@@ -290,12 +303,6 @@ async function boot() {
   // on that tab's first panel rather than leaving it on a card you can no
   // longer see.
   onTabChange(resetToTab);
-
-  try {
-    await loadConfig();
-  } catch {
-    toast("could not load config — is the server running?");
-  }
 
   await loadState();
 
@@ -309,9 +316,15 @@ async function boot() {
   // already its busy line. Deliberately not awaited: the word is a generation
   // of a few seconds and the puzzle is a round trip to lichess, and neither is
   // a reason for the rest of the dashboard to sit blank.
-  gatherDailies();
+  //
+  // Not while paused: the word is paid for, the puzzle opens an attempt and the
+  // theorem draw ages the deck, and none of their panels is on screen.
+  if (!paused()) gatherDailies();
 
-  register(...PANELS);
+  // Paused, only the home tab's panels are registered: the others have no pane
+  // to mount into, and a panel that is not registered is one every `rerender`
+  // and `focusPanel` aimed at it already passes over.
+  register(...(paused() ? PANELS.filter((panel) => HOME.includes(panel.tab)) : PANELS));
   mountAll();
   resetToTab();
 

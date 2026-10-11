@@ -37,6 +37,7 @@ import { nudgeCount, openNudge } from "./nudges.js";
 import { focusPanel, panelEnter, panelKey } from "./panel.js";
 import { ZOOMS, zoom } from "./panels/health.js";
 import { splashOpen } from "./splash.js";
+import { paused } from "./store.js";
 import { TABS, activateNth, cycle } from "./tabs.js";
 import { openModal, toast } from "./ui.js";
 
@@ -100,7 +101,11 @@ const BINDINGS = [
     run: (e) => cycle(e.shiftKey ? -1 : 1),
   },
   {
-    keys: ["1", "…", String(TABS.length)],
+    // A getter, because the pause can leave one tab on the bar after this
+    // table is built, and "1 … 6" over a bar of one is a legend that is wrong.
+    get keys() {
+      return TABS.length > 1 ? ["1", "…", String(TABS.length)] : ["1"];
+    },
     hint: "jump straight to a section",
     match: (e) => /^[1-9]$/.test(e.key) && Number(e.key) <= TABS.length,
     run: (e) => activateNth(Number(e.key)),
@@ -166,7 +171,8 @@ const BINDINGS = [
     hint: "open the next thing you have not done today",
     match: (e) => e.key === "n",
     run: () => {
-      if (!openNextUnfinished()) toast("everything is done — nice day ✦", "info");
+      if (paused()) toast("the dashboard is paused — nothing is owed", "info");
+      else if (!openNextUnfinished()) toast("everything is done — nice day ✦", "info");
     },
   },
   {

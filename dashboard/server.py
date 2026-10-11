@@ -154,7 +154,7 @@ async def lifespan(app: FastAPI):
     # The feel pings. The one thread here that runs on the laptop's clock rather
     # than on a request -- see the head of `dashboard/feel.py` for why that is
     # the one place the server may ask what time it is.
-    pings = feel.start(cfg, app.state.db) if cfg.feel.pings else None
+    pings = feel.start(cfg, app.state.db) if cfg.feel.pings and not cfg.paused else None
     log.info("dashboard ready on http://%s:%s", cfg.server.host, cfg.server.port)
     if cfg.portfolio.enabled:
         # Logged because the failure it prevents is silent and confusing: at
@@ -688,6 +688,7 @@ def _register(app: FastAPI) -> None:
             topic=cfg.math.topic_for(date),
             phase=program.phase if program else "",
             tickers=cfg.markets.tickers,
+            paused=cfg.paused,
         )
 
     @app.get("/api/state")
@@ -1229,6 +1230,7 @@ def _register(app: FastAPI) -> None:
             todo=state.todo_panel(cfg, repo, date),
             events=got_events,
             calendar_reached=reached,
+            paused=cfg.paused,
         )
 
     # -- math --------------------------------------------------------------

@@ -1940,6 +1940,8 @@ class ConfigResponse(Base):
     #: so a fresh clone with no training.toml is not headed by a stray colon.
     phase: str = ""
     tickers: list[str]
+    #: `paused` in config.toml: the laptop draws the home tab and nothing else.
+    paused: bool = False
 
 
 # --- spend -----------------------------------------------------------------
@@ -2401,6 +2403,14 @@ class DayPanel(Base):
     whole reason it is here: a day with nothing on it and a day nobody could
     read are the same list and completely different facts, and the phone is
     the client least able to guess which it is looking at.
+    """
+
+    paused: bool = False
+    """`paused` in config.toml. The phone draws only its todo and agenda tabs.
+
+    Here rather than on the health panel because this is the payload the phone
+    keeps across a rollover, so a phone that has not reached the laptop today
+    still opens on the right bar.
     """
 
 

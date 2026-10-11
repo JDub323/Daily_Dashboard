@@ -59,6 +59,38 @@ def test_the_topic_follows_the_browsers_week(client, settings):
     assert this == settings.math.rotation[0]
 
 
+def test_the_pause_reaches_both_clients_and_stops_the_pings(settings, monkeypatch):
+    """`paused` is one switch, so both clients have to hear it from the server
+    rather than each keeping a list of their own -- and the one thing the
+    server does on its own clock, the feel pings, must not start under it.
+
+    Builds its own app, for the reason the garmin switch test does: a test
+    about a switch sets the switch, rather than inheriting this week's
+    `config.toml`.
+    """
+    from fastapi.testclient import TestClient
+
+    from dashboard import feel
+    from dashboard.server import create_app
+
+    started: list[bool] = []
+    monkeypatch.setattr(feel, "start", lambda cfg, db: started.append(True))
+    _calendar(monkeypatch, [])
+    paused = settings.model_copy(
+        update={"paused": True, "feel": settings.feel.model_copy(update={"pings": True})}
+    )
+    with TestClient(create_app(paused), raise_server_exceptions=False) as client:
+        assert client.get("/api/config", params={"date": DATE}).json()["paused"] is True
+        assert client.get("/api/day", params={"date": DATE}).json()["paused"] is True
+    assert started == []
+
+
+def test_the_dashboard_is_not_paused_by_default(client, monkeypatch):
+    _calendar(monkeypatch, [])
+    assert client.get("/api/config", params={"date": DATE}).json()["paused"] is False
+    assert client.get("/api/day", params={"date": DATE}).json()["paused"] is False
+
+
 def test_state_requires_a_date(client):
     """The browser is the authority on "today"; the server must not guess."""
     response = client.get("/api/state")

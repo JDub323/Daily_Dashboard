@@ -1094,6 +1094,22 @@ class TopicEntry(Base):
 
 
 class Settings(Base):
+    paused: bool = False
+    """The whole dashboard turned off but for the calendar and the todo list.
+
+    One switch rather than a dozen per-feature ones, because it is one decision
+    -- "not now" -- and turning it back on has to be one line too. While it is
+    set the laptop draws the home tab alone, the phone draws only `todo` and
+    `agenda`, nothing is gathered at boot, no completion row is written (so the
+    heatmap shows the gap as days the dashboard was not opened, not as days
+    that were failed), and the feel pings do not start. The Garmin sync keeps
+    running: it costs nothing, and the watch's history is the one record that
+    would otherwise have a hole in it.
+
+    The two overnight routines are scheduled tasks and live outside this file;
+    `config.toml` says which ones to turn back on beside the switch.
+    """
+
     server: ServerSettings = Field(default_factory=ServerSettings)
     paths: PathSettings = Field(default_factory=PathSettings)
     llm: LlmSettings

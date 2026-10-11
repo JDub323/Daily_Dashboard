@@ -64,6 +64,10 @@ def settings(tmp_path) -> Settings:
             # reads the real clock and would push to real phones. The tests that
             # want pings switch them on and drive `feel.tick` by hand.
             "feel": cfg.feel.model_copy(update={"pings": False}),
+            # The real file's switch is a fact about this week, not about the
+            # code. A suite run while the dashboard is paused must test the
+            # dashboard, not the pause.
+            "paused": False,
         }
     )
 

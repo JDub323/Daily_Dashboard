@@ -7,6 +7,23 @@
 #
 # Relative paths resolve against this file's directory.
 
+# The whole dashboard off but for the calendar and the todo list. Paused
+# 2026-10-11, with no end date set.
+#
+# While true: the laptop shows the home tab alone (the week, the todo list, the
+# year), the phone shows only `todo` and `agenda`, nothing is fetched or paid
+# for at boot, no completion row is written, the feel pings do not start, and
+# the only reminders left are the todo list's. The Garmin sync keeps running.
+#
+# Turning it back on is three things, not one:
+#   1. set this to false and restart the server (it is read once, at boot);
+#   2. re-enable the two scheduled tasks it switched off --
+#      `daily-trick-of-the-day` and `weekly-math-week`;
+#   3. expect a gap: `weekly-math-week` only ever writes the *coming* Sunday's
+#      week, so a week it slept through has no math in it whenever the pause
+#      ends. Re-enabled by Saturday night, the next week is whole.
+paused = true
+
 [server]
 # Every interface, so the phone log at /m is reachable over Tailscale. It was
 # loopback-only by decision and the decision has not changed -- what changed is

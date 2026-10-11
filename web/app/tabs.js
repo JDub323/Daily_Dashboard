@@ -27,8 +27,12 @@ import { $, el } from "./dom.js";
  *
  * `blurb` is the one line under the hero on an otherwise-empty tab; `bg` names
  * the backdrop in web/assets/bg/.
+ *
+ * `let`, and narrowed by `initTabs` while the dashboard is paused. An export is
+ * a live binding, so the digit keys and the cheatsheet count what is on the
+ * bar rather than what was on it before the pause.
  */
-export const TABS = [
+export let TABS = [
   { id: "home", label: "home", blurb: "everything, counted" },
   // Health sits at 2 because it is the tab the day is *read* on. It used to be
   // the tab the day was answered on — the check-in in the morning, the session
@@ -43,7 +47,7 @@ export const TABS = [
   { id: "markets", label: "markets", blurb: "quotes and the money pages" },
 ];
 
-const byId = new Map(TABS.map((tab) => [tab.id, tab]));
+let byId = new Map(TABS.map((tab) => [tab.id, tab]));
 
 let active = TABS[0].id;
 const listeners = new Set();
@@ -102,7 +106,16 @@ export function activateNth(n) {
   if (tab) activate(tab.id);
 }
 
-export function initTabs() {
+/**
+ * Build the bar and the panes. `only`, when given, is the ids to keep — the
+ * pause's home tab. A tab left out has no button and no pane, so `activate`
+ * refuses it rather than finding a pane that is not there.
+ */
+export function initTabs(only = null) {
+  if (only) {
+    TABS = TABS.filter((tab) => only.includes(tab.id));
+    byId = new Map(TABS.map((tab) => [tab.id, tab]));
+  }
   const bar = $("#tabbar");
   const panes = $("#panes");
 

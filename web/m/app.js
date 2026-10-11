@@ -241,6 +241,14 @@ const heldDay = recallDay();
  *  `dayFor` and `stillTrue`. */
 let day = heldDay?.day ?? null;
 
+/**
+ * Is the dashboard paused? `paused` in the laptop's config.toml: the bar is
+ * `todo` and `agenda` and nothing else. Read off the day rather than the health
+ * panel because the day is the copy kept across a rollover — a phone that has
+ * not reached the laptop this morning still opens on the right bar.
+ */
+const paused = () => Boolean(day?.paused);
+
 /** When that was heard, ISO, or null. */
 let dayHeard = heldDay?.at ?? null;
 
@@ -332,7 +340,7 @@ const answeringPing = () => Boolean(pinged && Date.now() - pinged.at < PING_FRES
  * well over half of a day's taps go — unless a ping opened it, in which case it
  * opens on the question the ping asked.
  */
-let tab = pinged ? "feel" : checkedIn() ? "eat" : "checkin";
+let tab = paused() ? "todo" : pinged ? "feel" : checkedIn() ? "eat" : "checkin";
 
 /** Which of `eat`'s two ladders is up. */
 let intake = "meals";
@@ -3232,14 +3240,16 @@ const TABS = [
     render: () => CHECKIN.render(),
     // Kept while it is the tab on screen, so reopening it from the date to
     // fix an answer puts a lit cap under it; leaving it is what lets it go.
-    shown: () => !checkedIn() || tab === "checkin",
+    shown: () => !paused() && (!checkedIn() || tab === "checkin"),
   },
-  { id: "eat", label: "eat", render: eatScreen },
-  { id: "bathroom", label: "visit", render: () => BATHROOM.render() },
-  { id: "session", label: "session", render: () => SESSION.render() },
+  // The logs leave the bar while the dashboard is paused; the day's two lists
+  // are the half of it that stays on.
+  { id: "eat", label: "eat", render: eatScreen, shown: () => !paused() },
+  { id: "bathroom", label: "visit", render: () => BATHROOM.render(), shown: () => !paused() },
+  { id: "session", label: "session", render: () => SESSION.render(), shown: () => !paused() },
   // The end of the day's order, because it is the question asked about the day
   // so far — and the one the laptop comes and asks twice.
-  { id: "feel", label: "feel", render: feelScreen },
+  { id: "feel", label: "feel", render: feelScreen, shown: () => !paused() },
   { id: "todo", label: "todo", render: todoScreen, day: true },
   { id: "agenda", label: "agenda", render: agendaScreen, day: true },
 ];
@@ -3277,6 +3287,8 @@ function dayState() {
   const due = day
     ? todoRows().filter((i) => !i.done && i.due_date && i.due_date <= today()).length
     : 0;
+  // Paused, the day asks for nothing, so only the list has a count to give.
+  if (paused()) return due ? `${due} due` : "";
   return [
     checkedIn() ? "check-in ✓" : null,
     // No "done" after it: with the check-in's tick and a due count beside it,
@@ -3301,7 +3313,8 @@ function drawHeader() {
     el("span.day-date", { text: dayLabel() }),
     state ? el("span.day-state", { text: state }) : null,
   );
-  node.onclick = () => openTab("checkin");
+  // Paused, there is no check-in to go back to.
+  node.onclick = paused() ? null : () => openTab("checkin");
 }
 
 /**
@@ -3319,7 +3332,7 @@ function drawHeader() {
  * is a classic worker and cannot import a module — so `shell.test.js` fails if
  * they ever drift, which makes the bump a thing you cannot half-do.
  */
-const BUILD = "log-v22";
+const BUILD = "log-v23";
 
 /** How long the title screen stays when nothing lifts it: the wordmark has
  *  landed by 800ms on this screen and the build stamp by 500ms. */
@@ -3517,6 +3530,10 @@ function draw() {
   // the ladder", or coming back to a log would replay its motions.
   ladderWas = ladderNow;
   ladderNow = null;
+  // The one guard for every way onto a log while paused: a cold open from a
+  // cached day, the morning's return to the check-in, a ping tapped, and the
+  // day arriving from the laptop with the switch on.
+  if (paused() && !onDayTab(tab)) tab = "todo";
   const screen = TABS.find((one) => one.id === tab) ?? TABS[1];
   // `root` survives as an attribute only: the stylesheet hides the hour on
   // the day's tabs, where there is nothing to file against it.

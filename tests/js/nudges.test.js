@@ -173,3 +173,26 @@ describe("the feel ping at the desk", () => {
     assert.equal(on(verdicts(pinged("waiting")), "feel-ping"), undefined);
   });
 });
+
+describe("the pause", () => {
+  // Late enough that every rule's clock has come round, with the whole day
+  // undone and two pieces of homework late: everything here would speak.
+  const day = (paused) => ({
+    ...ctx({ hour: 21, meals: 0, tasks: [owed("checkin"), owed("math")] }),
+    todo: [{ title: "pset 4", done: false, due_date: "2000-01-01" }],
+    paused,
+  });
+
+  it("leaves only the todo list a voice", () => {
+    assert.deepEqual(verdicts(day(true)).map((v) => v.id), ["overdue"]);
+    // And the same day unpaused is not a quiet one, so the line above is the
+    // pause doing it rather than a day with nothing to say.
+    assert.ok(verdicts(day(false)).length > 1);
+  });
+
+  it("takes down what was already up when it began", () => {
+    const out = verdicts(day(true), ["checkin", "meal-lunch"]);
+    assert.deepEqual(on(out, "checkin"), { id: "checkin", do: "settle" });
+    assert.deepEqual(on(out, "meal-lunch"), { id: "meal-lunch", do: "settle" });
+  });
+});

@@ -13,6 +13,14 @@ export const store = {
   topic: null,
 };
 
+/**
+ * Is the dashboard paused? `paused` in config.toml: the home tab alone, nothing
+ * gathered, nothing counted, no reminders but the todo list's. False until the
+ * config has loaded, which is also what a config that failed to load gets — a
+ * dashboard that could not be told it is paused shows everything.
+ */
+export const paused = () => Boolean(store.config.paused);
+
 const listeners = new Set();
 
 /** Panels that must re-render when a *different* panel changes shared data. */

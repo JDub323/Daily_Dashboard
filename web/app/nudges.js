@@ -53,7 +53,7 @@ import { el } from "./dom.js";
 import { squareMeals } from "./logs.js";
 import { focusPanel } from "./panel.js";
 import { splashOpen } from "./splash.js";
-import { store } from "./store.js";
+import { paused, store } from "./store.js";
 
 /** How often the rules are evaluated. Not how often they fire — every rule
  *  has its own repeat interval, and most of them are hours. */
@@ -266,6 +266,13 @@ export function verdicts(ctx, showing = []) {
   const out = [];
   for (const rule of RULES) {
     const up = showing.includes(rule.id);
+    // Paused, only the todo list may still speak — it is the half of the
+    // dashboard that is still on. Anything else already up goes the way a
+    // finished one does, since the day it was about has stopped asking.
+    if (ctx.paused && rule.panel !== "todo") {
+      if (up) out.push({ id: rule.id, do: "settle" });
+      continue;
+    }
     // A rule whose input did not arrive says nothing this pass, and — the half
     // that is new and easy to get wrong — retracts nothing either. An empty due
     // list and a due list that could not be fetched are the same value, and
@@ -462,7 +469,7 @@ export async function checkNudges() {
     // is nothing due" are different answers, and only one of them is allowed to
     // take a card down.
     const todo = wantsTodo({ hour }, up) ? await todoItems() : null;
-    const ctx = { now, hour, tasks, todo };
+    const ctx = { now, hour, tasks, todo, paused: paused() };
 
     for (const verdict of verdicts(ctx, up)) {
       if (verdict.do === "raise") raise(verdict);
