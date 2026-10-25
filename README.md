@@ -22,26 +22,27 @@ A few rules shaped every feature:
   in a single SQLite file and has no accounts. That isn't a placeholder for a
   multi-user version; the simplicity is the point.
 - **Keyboard first.** Every tab, panel and log is reachable without the mouse,
-  and the mouse still works.
+  and the mouse still works. Vim keybinds are life.
 - **Numbers have to earn their place.** A derived figure shows nothing until
   there is enough history for it to mean something, and the panel says *which*
   input is missing rather than drawing a zero.
 - **Cheap to run.** Expensive generation, such as the week's math problems,
   happens in an overnight batch on a Claude subscription. The live API calls
   are a few small requests, each logged with its cost, so the daily spend is
-  measured rather than guessed.
+  recorded.
 
 ## What's in it
 
 The dashboard is six tabs, each with one main panel that says what the tab is
-for and smaller panels beneath it.
+for and smaller panels beneath it. NOTE: Politics tab is set for removal.
 
 ### Home: calendar and coursework
 
 The week grid is drawn from Google Calendar through
 [gcalcli](https://github.com/insanum/gcalcli). Under it is a quick-add box
 that takes plain lines of text, one item per line, and works out the title,
-day, time and recurrence locally. A small scikit-learn classifier, trained on
+day, time and recurrence locally. I made this wrapper since the gcalcli commands
+were too janky/boilerplate in my experience. A small scikit-learn classifier, trained on
 the account's own event history, suggests which calendar each item belongs
 on. Items in the "homework" and "test" calendars become a due list, and
 ticking one off deletes its event, but only when exactly one event matches. A
@@ -50,9 +51,6 @@ year heatmap shows which days were completed.
 Reminders in the corner cover things still outstanding: an unlogged meal,
 the morning check-in, an overdue assignment. Each one has a cooldown so it
 never becomes something I learn to dismiss.
-
-*Why:* coursework lives in Google Calendar, but adding to it was slow and the
-calendar had no notion of something being *done*.
 
 ### Health: training and recovery
 
@@ -97,7 +95,7 @@ Alongside the problem are a "trick of the day" (one technique with a set of
 problems that use it) and a theorem-recall deck that I build by adding
 theorems as I meet them.
 
-*Why:* I'm preparing for competition math, and without a rating it is easy to
+*Why:* I'm preparing for the Putnam, and without a rating it is easy to
 drift toward problems that feel productive but are too easy. Proofs are rated
 in their own bucket so that honest proof scores don't drag down the ratings
 that set the difficulty of the computational days.
